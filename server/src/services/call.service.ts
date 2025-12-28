@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import getSupabaseClient from '../config/supabase';
 import ariClientInstance from '../ari/client';
 import aiPipelineService from './ai/pipeline.service';

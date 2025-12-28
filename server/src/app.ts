@@ -34,7 +34,7 @@ const limiter = rateLimit({
 
 app.use('/api', limiter);
 
-app.use((req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, _res: Response, next: NextFunction) => {
   logger.info('Incoming request', {
     method: req.method,
     path: req.path,
@@ -54,7 +54,7 @@ app.use('/api/recordings', express.static(recordingsPath, {
 
 app.use('/api', routes);
 
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'AI Telephony Backend API',
@@ -70,7 +70,8 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error:', {
     error: error.message,
     stack: error.stack,

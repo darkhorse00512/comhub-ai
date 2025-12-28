@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 import config from '../config';
 import callService from '../services/call.service';
 import ariClientInstance from '../ari/client';
+import bulkCallingService from '../services/bulk-calling.service';
 
 export interface SocketUser {
   userId: string;
@@ -56,6 +57,24 @@ class SocketService {
 
       socket.on('call:message', async (data: { callSessionId: string; message: string }) => {
         await this.handleCallMessage(socket, data);
+      });
+
+      // Bulk call events
+      socket.on('bulk-call:subscribe', (data: { jobId: string }) => {
+        socket.join(`bulk-job:${data.jobId}`);
+        logger.info('Client subscribed to bulk job', { socketId: socket.id, jobId: data.jobId });
+      });
+
+      socket.on('bulk-call:unsubscribe', (data: { jobId: string }) => {
+        socket.leave(`bulk-job:${data.jobId}`);
+        logger.info('Client unsubscribed from bulk job', { socketId: socket.id, jobId: data.jobId });
+      });
+
+      socket.on('bulk-call:get-status', async (data: { jobId: string }) => {
+        const job = bulkCallingService.getBulkCallJob(data.jobId);
+        if (job) {
+          socket.emit('bulk-call:status', { job });
+        }
       });
 
       socket.on('disconnect', () => {
@@ -200,7 +219,6 @@ class SocketService {
 
       await callService.addCallMessage(callSessionId, 'user', message);
 
-      const history = callService.getConversationHistory(callSessionId);
       const aiResponse = await callService.processUserAudio(callSessionId, Buffer.from(message));
 
       socket.emit('call:ai-response', {
@@ -243,7 +261,7 @@ class SocketService {
   }
 
   private setupARIEventBridge(): void {
-    ariClientInstance.on('stasisStart', (event, channel) => {
+    ariClientInstance.on('stasisStart', (_event, channel) => {
       logger.info('ARI: Stasis start event', { channelId: channel.id });
       this.io?.emit('ari:stasis-start', {
         channelId: channel.id,
@@ -251,7 +269,7 @@ class SocketService {
       });
     });
 
-    ariClientInstance.on('channelStateChange', (event, channel) => {
+    ariClientInstance.on('channelStateChange', (_event, channel) => {
       logger.debug('ARI: Channel state changed', {
         channelId: channel.id,
         state: channel.state,
@@ -282,6 +300,13 @@ class SocketService {
     if (this.io) {
       this.io.emit(event, data);
       logger.debug('Event emitted to all clients', { event });
+    }
+  }
+
+  emitToBulkJob(jobId: string, event: string, data: any): void {
+    if (this.io) {
+      this.io.to(`bulk-job:${jobId}`).emit(event, data);
+      logger.debug('Event emitted to bulk job', { jobId, event });
     }
   }
 

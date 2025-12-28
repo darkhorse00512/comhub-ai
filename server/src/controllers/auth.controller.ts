@@ -1,12 +1,14 @@
 import { Request, Response } from "express";
-import getSupabaseClient from "../config/supabase";
+import getSupabaseClient, { Database } from "../config/supabase";
 import AuthUtils from "../utils/auth";
 import logger from "../utils/logger";
+
+type UserRow = Database['public']['Tables']['users']['Row'];
 
 export class AuthController {
   async register(req: Request, res: Response): Promise<void> {
     try {
-      const { email, password, supabaseUserId } = req.body;
+      const { email, supabaseUserId } = req.body;
 
       if (!email) {
         res.status(400).json({ error: "Email is required" });
@@ -19,7 +21,7 @@ export class AuthController {
         .from("users")
         .select("id")
         .eq("email", email)
-        .single();
+        .single() as { data: UserRow | null };
 
       if (existingUser) {
         // User exists, return token for login
@@ -53,13 +55,13 @@ export class AuthController {
         .from("users")
         .insert(newUserData)
         .select()
-        .single();
+        .single() as { data: UserRow | null; error: any };
 
-      if (error) {
+      if (error || !newUser) {
         logger.error("Failed to create user:", error);
         res.status(500).json({
           error: "Registration failed",
-          details: error.message,
+          details: error?.message || "Unknown error",
         });
         return;
       }
@@ -148,7 +150,7 @@ export class AuthController {
         .from("users")
         .select("*")
         .eq("email", userEmail)
-        .single();
+        .single() as { data: UserRow | null; error: any };
 
       // If user doesn't exist, create one
       if (error || !user) {
@@ -165,13 +167,13 @@ export class AuthController {
           .from("users")
           .insert(newUserData)
           .select()
-          .single();
+          .single() as { data: UserRow | null; error: any };
 
-        if (insertError) {
+        if (insertError || !newUser) {
           logger.error("Failed to create user:", insertError);
           res.status(500).json({
             error: "Failed to create user",
-            details: insertError.message,
+            details: insertError?.message || "Unknown error",
           });
           return;
         }
@@ -249,7 +251,7 @@ export class AuthController {
         .from("users")
         .select("*")
         .eq("id", userId)
-        .single();
+        .single() as { data: UserRow | null; error: any };
 
       if (error || !user) {
         res.status(404).json({ error: "User not found" });

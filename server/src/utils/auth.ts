@@ -22,9 +22,12 @@ export class AuthUtils {
 
   static generateToken(payload: Omit<JWTPayload, 'iat' | 'exp'>): string {
     try {
-      const token = jwt.sign(payload, config.jwt.secret, {
-        expiresIn: config.jwt.expiresIn,
-      });
+      // Use type assertion for expiresIn to work with jsonwebtoken's StringValue type
+      const token = jwt.sign(
+        payload,
+        config.jwt.secret,
+        { expiresIn: config.jwt.expiresIn } as jwt.SignOptions
+      );
 
       logger.debug('JWT token generated', { userId: payload.userId });
 

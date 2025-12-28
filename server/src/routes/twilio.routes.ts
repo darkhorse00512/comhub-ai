@@ -5,14 +5,16 @@ import { validate, schemas } from '../middleware/validation.middleware';
 
 const router = Router();
 
+// Twilio Webhooks (no auth - called by Twilio)
 router.post('/voice', twilioController.handleVoiceWebhook);
-
+router.post('/outbound-voice', twilioController.handleOutboundVoice);
+router.post('/handle-recording', twilioController.handleRecording);
 router.post('/status', twilioController.handleStatusCallback);
-
+router.post('/bulk-status', twilioController.handleBulkStatusCallback);
 router.post('/sip-forward', twilioController.handleSIPForward);
-
 router.post('/bridge', twilioController.handleBridge);
 
+// API Endpoints (require auth)
 router.post(
   '/call',
   authMiddleware,

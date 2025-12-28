@@ -3,7 +3,7 @@ import config from '../config';
 import logger from '../utils/logger';
 
 class TwilioSIPService {
-  private client: twilio.Twilio;
+  private client: twilio.Twilio | null = null;
 
   constructor() {
     if (config.twilio.accountSid && config.twilio.authToken) {

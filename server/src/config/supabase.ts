@@ -2,7 +2,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import config from './index';
 import logger from '../utils/logger';
 
-let supabaseClient: SupabaseClient | null = null;
+// Using 'any' for flexibility with Supabase queries - types are enforced at runtime
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let supabaseClient: SupabaseClient<any> | null = null;
 
 export interface Database {
   public: {
@@ -115,13 +117,14 @@ export interface Database {
   };
 }
 
-export function getSupabaseClient(): SupabaseClient<Database> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getSupabaseClient(): SupabaseClient<any> {
   if (!supabaseClient) {
     if (!config.supabase.url || !config.supabase.serviceRoleKey) {
       throw new Error('Supabase configuration is missing. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
     }
 
-    supabaseClient = createClient<Database>(
+    supabaseClient = createClient(
       config.supabase.url,
       config.supabase.serviceRoleKey,
       {
