@@ -21,14 +21,17 @@ async function startServer(): Promise<void> {
     socketService.initialize(server);
     logger.info('Socket.IO initialized');
 
-    try {
-      await ariClientInstance.connect();
-      await ariClientInstance.startApplication();
-      logger.info('Asterisk ARI client connected and application started');
-    } catch (error) {
-      logger.error('Failed to connect to Asterisk ARI:', error);
-      logger.warn('Server will continue without ARI integration');
-    }
+    // Try to connect to ARI, but don't block server startup
+    (async () => {
+      try {
+        await ariClientInstance.connect();
+        await ariClientInstance.startApplication();
+        logger.info('Asterisk ARI client connected and application started');
+      } catch (error) {
+        logger.error('Failed to connect to Asterisk ARI:', error);
+        logger.warn('Server will continue without ARI integration');
+      }
+    })();
 
     server.listen(config.server.port, () => {
       logger.info(`Server is running on port ${config.server.port}`);

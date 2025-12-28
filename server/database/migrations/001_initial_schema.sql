@@ -68,6 +68,17 @@ CREATE POLICY "Users can update their own data"
   ON users FOR UPDATE
   USING (auth.uid() = id);
 
+-- Allow service role to manage users (for backend operations)
+CREATE POLICY "Service role can manage users"
+  ON users FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+-- Allow users to be created (for registration)
+CREATE POLICY "Allow user registration"
+  ON users FOR INSERT
+  WITH CHECK (true);
+
 -- RLS Policies for call_sessions table
 CREATE POLICY "Users can view their own call sessions"
   ON call_sessions FOR SELECT
@@ -80,6 +91,12 @@ CREATE POLICY "Users can insert their own call sessions"
 CREATE POLICY "Users can update their own call sessions"
   ON call_sessions FOR UPDATE
   USING (auth.uid() = user_id);
+
+-- Allow service role to manage call sessions (for backend operations)
+CREATE POLICY "Service role can manage call sessions"
+  ON call_sessions FOR ALL
+  USING (true)
+  WITH CHECK (true);
 
 -- RLS Policies for call_messages table
 CREATE POLICY "Users can view messages from their calls"
@@ -102,6 +119,12 @@ CREATE POLICY "Users can insert messages to their calls"
     )
   );
 
+-- Allow service role to manage call messages (for backend operations)
+CREATE POLICY "Service role can manage call messages"
+  ON call_messages FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
 -- RLS Policies for call_recordings table
 CREATE POLICY "Users can view recordings from their calls"
   ON call_recordings FOR SELECT
@@ -122,6 +145,12 @@ CREATE POLICY "Users can insert recordings to their calls"
       AND call_sessions.user_id = auth.uid()
     )
   );
+
+-- Allow service role to manage call recordings (for backend operations)
+CREATE POLICY "Service role can manage call recordings"
+  ON call_recordings FOR ALL
+  USING (true)
+  WITH CHECK (true);
 
 -- Create a storage bucket for call recordings (execute separately in Supabase dashboard)
 -- INSERT INTO storage.buckets (id, name, public) VALUES ('call-recordings', 'call-recordings', false);

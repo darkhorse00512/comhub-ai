@@ -2,6 +2,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 import config from './config';
 import logger from './utils/logger';
 import routes from './routes';
@@ -41,6 +42,15 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   });
   next();
 });
+
+// Serve recording files statically
+const recordingsPath = path.join(__dirname, '../recordings/calls');
+app.use('/api/recordings', express.static(recordingsPath, {
+  setHeaders: (res) => {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+  }
+}));
 
 app.use('/api', routes);
 

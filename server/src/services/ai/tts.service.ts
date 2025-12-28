@@ -4,6 +4,7 @@ import logger from '../../utils/logger';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
+import recordingService from '../recording.service';
 
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
@@ -125,6 +126,9 @@ class TTSService {
       const outputPath = path.join(recordingsDir, filename);
 
       await this.textToSpeechFile(text, outputPath);
+
+      // Register this audio segment with the recording service
+      recordingService.addAudioSegment(callId, outputPath, 'ai');
 
       return outputPath;
     } catch (error) {

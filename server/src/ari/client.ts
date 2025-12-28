@@ -45,11 +45,18 @@ class ARIClient extends EventEmitter {
         app: config.asterisk.appName,
       });
 
-      this.client = await ariClient.connect(
+      // Add timeout to prevent hanging
+      const connectPromise = ariClient.connect(
         config.asterisk.ariUrl,
         config.asterisk.ariUsername,
         config.asterisk.ariPassword
       );
+
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('ARI connection timeout')), 5000);
+      });
+
+      this.client = await Promise.race([connectPromise, timeoutPromise]) as any;
 
       this.isConnected = true;
       logger.info('Successfully connected to Asterisk ARI');
@@ -58,6 +65,7 @@ class ARIClient extends EventEmitter {
       this.emit('connected');
     } catch (error) {
       logger.error('Failed to connect to Asterisk ARI:', error);
+      logger.warn('Server will continue without ARI integration');
       this.scheduleReconnect();
       throw error;
     }
@@ -125,6 +133,9 @@ class ARIClient extends EventEmitter {
   }
 
   private scheduleReconnect(): void {
+    // Disable auto-reconnect to reduce log noise when ARI is not available
+    // Uncomment to enable reconnection attempts
+    /*
     if (this.reconnectInterval) return;
 
     this.reconnectInterval = setInterval(async () => {
@@ -139,6 +150,7 @@ class ARIClient extends EventEmitter {
         logger.error('Reconnection attempt failed:', error);
       }
     }, 5000);
+    */
   }
 
   async startApplication(): Promise<void> {

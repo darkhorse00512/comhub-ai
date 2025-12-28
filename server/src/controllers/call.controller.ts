@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import callService from '../services/call.service';
+import recordingService from '../services/recording.service';
 import logger from '../utils/logger';
 import socketService from '../sockets';
 
@@ -66,13 +67,14 @@ export class CallController {
         return;
       }
 
-      await callService.endCall(callSessionId);
+      const recordingUrl = await callService.endCall(callSessionId);
 
-      socketService.emitToUser(userId, 'call:ended', { callSessionId });
+      socketService.emitToUser(userId, 'call:ended', { callSessionId, recordingUrl });
 
       res.status(200).json({
         success: true,
         message: 'Call ended successfully',
+        recordingUrl,
       });
     } catch (error) {
       logger.error('Failed to end call:', error);
@@ -93,6 +95,10 @@ export class CallController {
       }
 
       const callSessions = await callService.getUserCallSessions(userId);
+      
+      // Get recording URLs for all call sessions
+      const callIds = callSessions.map(s => s.id);
+      const recordings = await recordingService.getRecordingsForCalls(callIds);
 
       res.status(200).json({
         success: true,
@@ -104,6 +110,7 @@ export class CallController {
           calleeNumber: session.calleeNumber,
           startedAt: session.startedAt,
           endedAt: session.endedAt,
+          recordingUrl: recordings.get(session.id) || null,
         })),
       });
     } catch (error) {
@@ -210,7 +217,17 @@ export class CallController {
         return;
       }
 
-      const callSession = callService.getActiveCall(callSessionId);
+      // First try to get from active calls (in memory)
+      let callSession = callService.getActiveCall(callSessionId);
+      
+      // If not in memory, try to get from database
+      if (!callSession) {
+        const sessions = await callService.getUserCallSessions(userId);
+        const dbSession = sessions.find(s => s.id === callSessionId);
+        if (dbSession) {
+          callSession = dbSession;
+        }
+      }
 
       if (!callSession) {
         res.status(404).json({ error: 'Call session not found' });
@@ -221,6 +238,9 @@ export class CallController {
         res.status(403).json({ error: 'Forbidden' });
         return;
       }
+
+      // Get recording URL if exists
+      const recordingUrl = await recordingService.getRecordingUrlFromDb(callSessionId);
 
       res.status(200).json({
         success: true,
@@ -233,12 +253,13 @@ export class CallController {
           startedAt: callSession.startedAt,
           endedAt: callSession.endedAt,
           channelId: callSession.channelId,
+          recordingUrl,
         },
       });
     } catch (error) {
-      logger.error('Failed to get active call:', error);
+      logger.error('Failed to get call:', error);
       res.status(500).json({
-        error: 'Failed to get active call',
+        error: 'Failed to get call',
         details: error instanceof Error ? error.message : 'Unknown error',
       });
     }

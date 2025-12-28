@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import getSupabaseClient from '../config/supabase';
 import ariClientInstance from '../ari/client';
 import aiPipelineService from './ai/pipeline.service';
+import recordingService from './recording.service';
 import logger from '../utils/logger';
 import { ChatMessage } from './ai/gpt.service';
 
@@ -241,16 +242,27 @@ class CallService {
         phoneNumber
       );
 
-      const endpoint = `PJSIP/${phoneNumber}`;
-      const channel = await ariClientInstance.originateCall(endpoint);
+      // Check if ARI is connected for real telephony
+      if (ariClientInstance.isClientConnected()) {
+        const endpoint = `PJSIP/${phoneNumber}`;
+        const channel = await ariClientInstance.originateCall(endpoint);
 
-      await this.updateCallStatus(callSession.id, 'active', channel.id);
+        await this.updateCallStatus(callSession.id, 'active', channel.id);
 
-      logger.info('Outbound call initiated', {
-        callSessionId: callSession.id,
-        phoneNumber,
-        channelId: channel.id,
-      });
+        logger.info('Outbound call initiated via ARI', {
+          callSessionId: callSession.id,
+          phoneNumber,
+          channelId: channel.id,
+        });
+      } else {
+        // AI-only mode: Create session without ARI
+        await this.updateCallStatus(callSession.id, 'active', `ai-session-${callSession.id}`);
+
+        logger.info('AI-only call session initiated (no ARI)', {
+          callSessionId: callSession.id,
+          phoneNumber,
+        });
+      }
 
       return callSession;
     } catch (error) {
@@ -287,20 +299,31 @@ class CallService {
     }
   }
 
-  async endCall(callSessionId: string): Promise<void> {
+  async endCall(callSessionId: string): Promise<string | null> {
     try {
       const callSession = this.activeCalls.get(callSessionId);
       if (!callSession) {
-        throw new Error('Call session not found');
+        // Try to end call from database if not in active calls (e.g. after server restart)
+        await this.updateCallStatus(callSessionId, 'ended');
+        logger.info('Call ended (from database)', { callSessionId });
+        return null;
       }
 
-      if (callSession.channelId) {
+      // Only try to hangup via ARI if connected and not an AI-only session
+      if (callSession.channelId && 
+          ariClientInstance.isClientConnected() && 
+          !callSession.channelId.startsWith('ai-session-')) {
         await ariClientInstance.hangupChannel(callSession.channelId);
       }
 
+      // Finalize recording - combine all audio segments into final file
+      const recordingUrl = await recordingService.finalizeRecording(callSessionId);
+      
       await this.updateCallStatus(callSessionId, 'ended');
 
-      logger.info('Call ended', { callSessionId });
+      logger.info('Call ended', { callSessionId, recordingUrl });
+      
+      return recordingUrl;
     } catch (error) {
       logger.error('Failed to end call:', error);
       throw error;
