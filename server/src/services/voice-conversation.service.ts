@@ -5,9 +5,11 @@ import ttsService from './ai/tts.service';
 import sttService from './ai/stt.service';
 import gptService, { ChatMessage } from './ai/gpt.service';
 import getSupabaseClient from '../config/supabase';
+import storageService from './storage.service';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
@@ -263,8 +265,8 @@ class VoiceConversationService {
   private generateGreetingTwiML(audioUrl: string): string {
     const response = new VoiceResponse();
 
-    // Play greeting
-    response.play(this.getPublicAudioUrl(audioUrl));
+    // Play greeting (audioUrl is now a public Supabase URL)
+    response.play(audioUrl);
 
     // Record user response with silence detection
     response.record({
@@ -286,8 +288,8 @@ class VoiceConversationService {
   private generatePlayAndRecordTwiML(audioUrl: string): string {
     const response = new VoiceResponse();
 
-    // Play AI response
-    response.play(this.getPublicAudioUrl(audioUrl));
+    // Play AI response (audioUrl is now a public Supabase URL)
+    response.play(audioUrl);
 
     // Record next user response
     response.record({
@@ -318,25 +320,24 @@ class VoiceConversationService {
     callSessionId: string,
     type: string
   ): Promise<string> {
-    const audioDir = path.join(__dirname, '../../recordings/calls', callSessionId);
-    if (!fs.existsSync(audioDir)) {
-      fs.mkdirSync(audioDir, { recursive: true });
+    try {
+      // Generate audio using TTS
+      const audioBuffer = await ttsService.textToSpeech(text);
+
+      // Upload to Supabase Storage and get public URL
+      const publicUrl = await storageService.uploadAudio(audioBuffer, callSessionId, type);
+
+      logger.info('Audio generated and uploaded', {
+        callSessionId,
+        type,
+        url: publicUrl,
+      });
+
+      return publicUrl;
+    } catch (error) {
+      logger.error('Failed to generate and save audio:', error);
+      throw error;
     }
-
-    const filename = `${type}_${Date.now()}.mp3`;
-    const audioPath = path.join(audioDir, filename);
-
-    await ttsService.textToSpeechFile(text, audioPath);
-
-    return audioPath;
-  }
-
-  private getPublicAudioUrl(localPath: string): string {
-    // Convert local path to public URL
-    // Extract relative path from recordings directory
-    const recordingsDir = path.join(__dirname, '../../recordings');
-    const relativePath = path.relative(recordingsDir, localPath).replace(/\\/g, '/');
-    return `${config.server.apiBaseUrl}/api/recordings/${relativePath}`;
   }
 
   private async downloadAndTranscribe(recordingUrl: string): Promise<string> {
@@ -344,8 +345,7 @@ class VoiceConversationService {
       // Add .wav extension and wait for Twilio to finalize recording
       const audioUrl = `${recordingUrl}.wav`;
 
-      // Download the recording
-      const axios = (await import('axios')).default;
+      // Download the recording from Twilio
       const response = await axios.get(audioUrl, {
         responseType: 'arraybuffer',
         auth: {
@@ -363,7 +363,7 @@ class VoiceConversationService {
 
       fs.writeFileSync(tempPath, Buffer.from(response.data));
 
-      // Transcribe
+      // Transcribe using OpenAI Whisper
       const transcription = await sttService.transcribeAudio(tempPath);
 
       // Clean up temp file
@@ -389,7 +389,7 @@ class VoiceConversationService {
           call_session_id: callSessionId,
           role,
           content,
-          audio_url: audioUrl ? this.getPublicAudioUrl(audioUrl) : null,
+          audio_url: audioUrl || null, // audioUrl is already a public URL
         });
     } catch (error) {
       logger.error('Failed to save message:', error);

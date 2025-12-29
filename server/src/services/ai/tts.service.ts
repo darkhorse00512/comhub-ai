@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import recordingService from '../recording.service';
+import storageService from '../storage.service';
 
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
@@ -117,20 +118,26 @@ class TTSService {
 
   async generateAudioForCall(text: string, callId: string): Promise<string> {
     try {
+      // Generate audio buffer
+      const audioBuffer = await this.textToSpeech(text);
+
+      // Upload to Supabase Storage and get public URL
+      const publicUrl = await storageService.uploadAudio(audioBuffer, callId, 'tts');
+
+      // Also save locally for recording service
       const recordingsDir = path.join(__dirname, '../../../recordings/tts');
       if (!fs.existsSync(recordingsDir)) {
         fs.mkdirSync(recordingsDir, { recursive: true });
       }
-
-      const filename = `${callId}_${Date.now()}.mp3`;
-      const outputPath = path.join(recordingsDir, filename);
-
-      await this.textToSpeechFile(text, outputPath);
+      const localPath = path.join(recordingsDir, `${callId}_${Date.now()}.mp3`);
+      fs.writeFileSync(localPath, audioBuffer);
 
       // Register this audio segment with the recording service
-      recordingService.addAudioSegment(callId, outputPath, 'ai');
+      recordingService.addAudioSegment(callId, localPath, 'ai');
 
-      return outputPath;
+      logger.info('Audio generated and uploaded to Supabase', { callId, url: publicUrl });
+
+      return publicUrl;
     } catch (error) {
       logger.error('Failed to generate audio for call:', error);
       throw error;
