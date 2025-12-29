@@ -245,7 +245,8 @@ class CallService {
       // Priority 1: Use Twilio if configured
       if (twilioSIPService.isConfigured()) {
         try {
-          const call = await twilioSIPService.makeCall(phoneNumber);
+          // Pass the callSessionId so the webhook can use the existing session
+          const call = await twilioSIPService.makeCall(phoneNumber, undefined, callSession.id);
           await this.updateCallStatus(callSession.id, 'active', call.sid);
 
           logger.info('Outbound call initiated via Twilio', {

@@ -14,17 +14,22 @@ class TwilioSIPService {
     }
   }
 
-  async makeCall(to: string, from?: string): Promise<any> {
+  async makeCall(to: string, from?: string, callSessionId?: string): Promise<any> {
     if (!this.client) {
       throw new Error('Twilio client not initialized');
     }
 
     try {
+      // Build webhook URL with session ID if provided
+      const webhookUrl = callSessionId
+        ? `${config.server.apiBaseUrl}/api/twilio/outbound-voice?sessionId=${callSessionId}`
+        : `${config.server.apiBaseUrl}/api/twilio/outbound-voice`;
+
       // Use outbound-voice webhook which starts AI conversation when call is answered
       const call = await this.client.calls.create({
         to,
         from: from || config.twilio.phoneNumber,
-        url: `${config.server.apiBaseUrl}/api/twilio/outbound-voice`,
+        url: webhookUrl,
         statusCallback: `${config.server.apiBaseUrl}/api/twilio/status`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
         machineDetection: 'Enable', // Detect voicemail

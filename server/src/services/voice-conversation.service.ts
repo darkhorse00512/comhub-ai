@@ -98,31 +98,64 @@ class VoiceConversationService {
   async startOutboundConversation(
     callSid: string,
     calleeNumber: string,
-    userId: string
+    userId: string,
+    existingSessionId?: string
   ): Promise<string> {
     try {
-      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId });
+      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId, existingSessionId });
 
-      // Create call session in database
-      const { data: callSession, error } = await this.supabase
-        .from('call_sessions')
-        .insert({
-          user_id: userId,
-          status: 'active',
-          direction: 'outbound',
-          caller_number: config.twilio.phoneNumber,
-          callee_number: calleeNumber,
-          channel_id: callSid,
-        })
-        .select()
-        .single();
+      let callSession: any;
 
-      if (error) {
-        logger.error('Failed to create call session in database:', error);
-        throw error;
+      // Try to use existing session if provided
+      if (existingSessionId) {
+        const { data: existingSession, error: fetchError } = await this.supabase
+          .from('call_sessions')
+          .select('*')
+          .eq('id', existingSessionId)
+          .single();
+
+        if (existingSession && !fetchError) {
+          // Update the existing session with callSid and set status to active
+          const { data: updatedSession, error: updateError } = await this.supabase
+            .from('call_sessions')
+            .update({
+              channel_id: callSid,
+              status: 'active',
+            })
+            .eq('id', existingSessionId)
+            .select()
+            .single();
+
+          if (updatedSession && !updateError) {
+            callSession = updatedSession;
+            logger.info('Using existing call session', { callSessionId: callSession.id, userId: callSession.user_id });
+          }
+        }
       }
 
-      logger.info('Call session created in database', { callSessionId: callSession.id });
+      // If no existing session found/used, create new one
+      if (!callSession) {
+        const { data: newSession, error } = await this.supabase
+          .from('call_sessions')
+          .insert({
+            user_id: userId,
+            status: 'active',
+            direction: 'outbound',
+            caller_number: config.twilio.phoneNumber,
+            callee_number: calleeNumber,
+            channel_id: callSid,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          logger.error('Failed to create call session in database:', error);
+          throw error;
+        }
+
+        callSession = newSession;
+        logger.info('Created new call session in database', { callSessionId: callSession.id });
+      }
 
       // Initialize conversation state
       const conversation: ActiveConversation = {

@@ -54,6 +54,17 @@ app.use('/api/recordings', express.static(recordingsPath, {
   }
 }));
 
+// Serve audio files for Twilio (fallback when Supabase storage unavailable)
+const audioPath = path.join(__dirname, '../public/audio');
+app.use('/audio', express.static(audioPath, {
+  setHeaders: (res) => {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    // Allow Twilio to access audio files
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+}));
+
 app.use('/api', routes);
 
 app.get('/', (_req: Request, res: Response) => {

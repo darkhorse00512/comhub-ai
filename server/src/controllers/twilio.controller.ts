@@ -43,7 +43,7 @@ export class TwilioController {
   async handleOutboundVoice(req: Request, res: Response): Promise<void> {
     try {
       const { CallSid, To, From, CallStatus, AnsweredBy } = req.body;
-      const { jobId } = req.query;
+      const { jobId, sessionId } = req.query;
 
       logger.info('=== OUTBOUND VOICE WEBHOOK TRIGGERED ===', {
         callSid: CallSid,
@@ -52,6 +52,7 @@ export class TwilioController {
         status: CallStatus,
         answeredBy: AnsweredBy,
         jobId,
+        sessionId,
         body: req.body,
       });
 
@@ -72,13 +73,15 @@ export class TwilioController {
       const job = jobId ? bulkCallingService.getBulkCallJob(jobId as string) : null;
       const userId = job?.userId || 'system';
 
-      logger.info('Starting AI conversation for outbound call', { callSid: CallSid, userId });
+      logger.info('Starting AI conversation for outbound call', { callSid: CallSid, userId, sessionId });
 
       // Start AI conversation - this generates greeting audio and TwiML
+      // Pass sessionId if available so we can use existing call session
       const twiml = await voiceConversationService.startOutboundConversation(
         CallSid,
         To,
-        userId
+        userId,
+        sessionId as string | undefined
       );
 
       logger.info('TwiML generated for outbound call', { callSid: CallSid, twiml: twiml.substring(0, 500) });
