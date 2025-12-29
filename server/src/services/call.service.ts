@@ -1,5 +1,6 @@
 import getSupabaseClient from '../config/supabase';
 import ariClientInstance from '../ari/client';
+import twilioSIPService from '../twilio/sip.service';
 import aiPipelineService from './ai/pipeline.service';
 import recordingService from './recording.service';
 import logger from '../utils/logger';
@@ -241,27 +242,51 @@ class CallService {
         phoneNumber
       );
 
-      // Check if ARI is connected for real telephony
-      if (ariClientInstance.isClientConnected()) {
-        const endpoint = `PJSIP/${phoneNumber}`;
-        const channel = await ariClientInstance.originateCall(endpoint);
+      // Priority 1: Use Twilio if configured
+      if (twilioSIPService.isConfigured()) {
+        try {
+          const call = await twilioSIPService.makeCall(phoneNumber);
+          await this.updateCallStatus(callSession.id, 'active', call.sid);
 
-        await this.updateCallStatus(callSession.id, 'active', channel.id);
+          logger.info('Outbound call initiated via Twilio', {
+            callSessionId: callSession.id,
+            phoneNumber,
+            callSid: call.sid,
+          });
 
-        logger.info('Outbound call initiated via ARI', {
-          callSessionId: callSession.id,
-          phoneNumber,
-          channelId: channel.id,
-        });
-      } else {
-        // AI-only mode: Create session without ARI
-        await this.updateCallStatus(callSession.id, 'active', `ai-session-${callSession.id}`);
-
-        logger.info('AI-only call session initiated (no ARI)', {
-          callSessionId: callSession.id,
-          phoneNumber,
-        });
+          return callSession;
+        } catch (twilioError) {
+          logger.error('Twilio call failed, trying fallback:', twilioError);
+        }
       }
+
+      // Priority 2: Use ARI if connected (Asterisk)
+      if (ariClientInstance.isClientConnected()) {
+        try {
+          const endpoint = `PJSIP/${phoneNumber}`;
+          const channel = await ariClientInstance.originateCall(endpoint);
+
+          await this.updateCallStatus(callSession.id, 'active', channel.id);
+
+          logger.info('Outbound call initiated via ARI', {
+            callSessionId: callSession.id,
+            phoneNumber,
+            channelId: channel.id,
+          });
+
+          return callSession;
+        } catch (ariError) {
+          logger.error('ARI call failed:', ariError);
+        }
+      }
+
+      // Priority 3: AI-only mode (no real call)
+      await this.updateCallStatus(callSession.id, 'active', `ai-session-${callSession.id}`);
+
+      logger.info('AI-only call session initiated (no telephony backend)', {
+        callSessionId: callSession.id,
+        phoneNumber,
+      });
 
       return callSession;
     } catch (error) {
@@ -308,20 +333,35 @@ class CallService {
         return null;
       }
 
-      // Only try to hangup via ARI if connected and not an AI-only session
-      if (callSession.channelId && 
-          ariClientInstance.isClientConnected() && 
-          !callSession.channelId.startsWith('ai-session-')) {
-        await ariClientInstance.hangupChannel(callSession.channelId);
+      // Skip hangup for AI-only sessions
+      if (callSession.channelId && !callSession.channelId.startsWith('ai-session-')) {
+        // Try Twilio first (if channelId looks like a Twilio CallSid starting with 'CA')
+        if (callSession.channelId.startsWith('CA') && twilioSIPService.isConfigured()) {
+          try {
+            await twilioSIPService.endCall(callSession.channelId);
+            logger.info('Call ended via Twilio', { callSessionId, callSid: callSession.channelId });
+          } catch (twilioError) {
+            logger.error('Failed to end Twilio call:', twilioError);
+          }
+        }
+        // Otherwise try ARI (Asterisk)
+        else if (ariClientInstance.isClientConnected()) {
+          try {
+            await ariClientInstance.hangupChannel(callSession.channelId);
+            logger.info('Call ended via ARI', { callSessionId, channelId: callSession.channelId });
+          } catch (ariError) {
+            logger.error('Failed to end ARI call:', ariError);
+          }
+        }
       }
 
       // Finalize recording - combine all audio segments into final file
       const recordingUrl = await recordingService.finalizeRecording(callSessionId);
-      
+
       await this.updateCallStatus(callSessionId, 'ended');
 
       logger.info('Call ended', { callSessionId, recordingUrl });
-      
+
       return recordingUrl;
     } catch (error) {
       logger.error('Failed to end call:', error);
