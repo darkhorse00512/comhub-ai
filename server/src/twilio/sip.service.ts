@@ -20,15 +20,18 @@ class TwilioSIPService {
     }
 
     try {
+      // Use outbound-voice webhook which starts AI conversation when call is answered
       const call = await this.client.calls.create({
         to,
         from: from || config.twilio.phoneNumber,
-        url: `${config.server.apiBaseUrl}/api/twilio/voice`,
+        url: `${config.server.apiBaseUrl}/api/twilio/outbound-voice`,
         statusCallback: `${config.server.apiBaseUrl}/api/twilio/status`,
         statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        machineDetection: 'Enable', // Detect voicemail
+        machineDetectionTimeout: 5,
       });
 
-      logger.info('Twilio call created', {
+      logger.info('Twilio outbound call created', {
         callSid: call.sid,
         to,
         from: from || config.twilio.phoneNumber,

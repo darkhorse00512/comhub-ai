@@ -44,11 +44,13 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 // Serve recording files statically
-const recordingsPath = path.join(__dirname, '../recordings/calls');
+const recordingsPath = path.join(__dirname, '../recordings');
 app.use('/api/recordings', express.static(recordingsPath, {
   setHeaders: (res) => {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Accept-Ranges', 'bytes');
+    // Allow Twilio to access recordings
+    res.setHeader('Access-Control-Allow-Origin', '*');
   }
 }));
 
