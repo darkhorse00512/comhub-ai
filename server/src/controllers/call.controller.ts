@@ -270,22 +270,24 @@ export class CallController {
   async testInboundCall(req: Request, res: Response): Promise<void> {
     try {
       const userId = (req as any).user?.userId;
+      const { phoneNumber } = req.body;
 
       if (!userId) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
-      logger.info('Testing inbound call', { userId });
+      logger.info('Testing inbound call', { userId, phoneNumber });
 
       // Create a test call session and generate greeting
-      const result = await voiceConversationService.testInboundCall(userId);
+      // If phoneNumber is provided, make an actual Twilio call
+      const result = await voiceConversationService.testInboundCall(userId, phoneNumber);
 
       res.status(200).json({
         success: true,
         callSessionId: result.callSessionId,
-        audioUrl: result.audioUrl,
-        message: result.greetingMessage,
+        callSid: result.callSid,
+        message: result.message,
       });
     } catch (error) {
       logger.error('Failed to test inbound call:', error);

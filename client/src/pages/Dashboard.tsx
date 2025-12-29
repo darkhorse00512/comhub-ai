@@ -24,6 +24,7 @@ const Dashboard = () => {
   const { status, isMuted, duration, startCall, endCall, toggleMute } = useCall();
   const { messages, clearMessages } = useSocket();
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [testPhoneNumber, setTestPhoneNumber] = useState("");
   const [copied, setCopied] = useState(false);
   const [callMode, setCallMode] = useState<"outbound" | "inbound">("outbound");
   const [isTestingInbound, setIsTestingInbound] = useState(false);
@@ -62,10 +63,19 @@ const Dashboard = () => {
     }
   };
 
-  const handleTestInboundCall = async () => {
+  const handleTestInboundCall = async (withPhoneCall: boolean = false) => {
     setIsTestingInbound(true);
     try {
-      const result = await api.testInboundCall();
+      // Format phone number if provided
+      let formattedNumber: string | undefined;
+      if (withPhoneCall && testPhoneNumber.trim()) {
+        formattedNumber = testPhoneNumber.trim();
+        if (!formattedNumber.startsWith("+")) {
+          formattedNumber = "+" + formattedNumber;
+        }
+      }
+
+      const result = await api.testInboundCall(formattedNumber);
       if (result.error) {
         toast({
           title: "Test failed",
@@ -74,9 +84,13 @@ const Dashboard = () => {
         });
       } else {
         toast({
-          title: "Test call started!",
-          description: "AI greeting has been generated. Check call history to see the result.",
+          title: "Test successful!",
+          description: result.data?.message || "Check call history to see the result.",
         });
+        // Navigate to history after a short delay
+        if (!withPhoneCall) {
+          setTimeout(() => navigate("/history"), 2000);
+        }
       }
     } catch (error) {
       toast({
@@ -273,17 +287,17 @@ const Dashboard = () => {
                 {/* Inbound Call Test Instructions */}
                 {status === "idle" && callMode === "inbound" && (
                   <div className="space-y-4">
-                    {/* Test from Website */}
+                    {/* Quick Test from Website */}
                     <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
                       <div className="flex items-center gap-2 mb-2">
                         <PhoneIncoming className="w-5 h-5 text-green-500" />
-                        <span className="font-medium text-foreground">Test from Website</span>
+                        <span className="font-medium text-foreground">Quick Test (Simulated)</span>
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
-                        Click the button below to simulate an inbound call and test the AI greeting:
+                        Simulate a full conversation: AI greeting → User message → AI response
                       </p>
                       <Button
-                        onClick={handleTestInboundCall}
+                        onClick={() => handleTestInboundCall(false)}
                         disabled={isTestingInbound}
                         className="w-full bg-green-500 hover:bg-green-600 text-white"
                       >
@@ -295,20 +309,57 @@ const Dashboard = () => {
                         ) : (
                           <>
                             <PhoneIncoming className="w-4 h-4 mr-2" />
-                            Simulate Inbound Call
+                            Run Quick Test
                           </>
                         )}
                       </Button>
                     </div>
 
-                    {/* Test from Phone */}
-                    <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                    {/* Full Test - Call My Phone */}
+                    <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
                       <div className="flex items-center gap-2 mb-2">
-                        <Phone className="w-5 h-5 text-primary" />
-                        <span className="font-medium text-foreground">Test from Your Phone</span>
+                        <Phone className="w-5 h-5 text-blue-500" />
+                        <span className="font-medium text-foreground">Full Test (Call My Phone)</span>
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
-                        Or call this number from your phone:
+                        AI will call your phone, say greeting, and listen for your response:
+                      </p>
+                      <div className="space-y-3">
+                        <Input
+                          type="tel"
+                          placeholder="Your phone: +491234567890"
+                          value={testPhoneNumber}
+                          onChange={(e) => setTestPhoneNumber(e.target.value)}
+                          className="text-base"
+                        />
+                        <Button
+                          onClick={() => handleTestInboundCall(true)}
+                          disabled={isTestingInbound || !testPhoneNumber.trim()}
+                          className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                        >
+                          {isTestingInbound ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Calling...
+                            </>
+                          ) : (
+                            <>
+                              <Phone className="w-4 h-4 mr-2" />
+                              Call My Phone
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Manual Test - Call Twilio Number */}
+                    <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <PhoneIncoming className="w-5 h-5 text-primary" />
+                        <span className="font-medium text-foreground">Manual Test (Call Us)</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        Or call this number directly from your phone:
                       </p>
                       <div className="flex items-center gap-2">
                         <code className="flex-1 p-3 bg-background rounded-lg text-lg font-mono text-foreground select-all">
@@ -332,10 +383,10 @@ const Dashboard = () => {
                     <div className="space-y-2 text-sm text-muted-foreground">
                       <p className="font-medium text-foreground">What happens:</p>
                       <ol className="list-decimal list-inside space-y-1">
-                        <li>AI generates a greeting message</li>
-                        <li>Audio is saved to Supabase Storage</li>
-                        <li>Call session and messages are saved to history</li>
-                        <li>You can view the result in Call History</li>
+                        <li>AI generates a greeting and speaks it</li>
+                        <li>AI listens for your response (full test only)</li>
+                        <li>AI generates and speaks a response</li>
+                        <li>All audio saved to Supabase, viewable in History</li>
                       </ol>
                     </div>
                   </div>

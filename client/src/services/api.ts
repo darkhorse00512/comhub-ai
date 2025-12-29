@@ -439,24 +439,27 @@ export const api = {
   },
 
   // Test inbound call - simulates an inbound call for testing
-  async testInboundCall(): Promise<ApiResponse<{ callSessionId: string; audioUrl: string }>> {
+  // If phoneNumber is provided, makes an actual Twilio call to that number
+  async testInboundCall(phoneNumber?: string): Promise<ApiResponse<{ callSessionId: string; callSid: string; message: string }>> {
     try {
       const headers = await getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/calls/test-inbound`, {
         method: "POST",
         headers,
+        body: JSON.stringify({ phoneNumber }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to test inbound call");
+        throw new Error(errorData.error || errorData.details || "Failed to test inbound call");
       }
 
       const data = await response.json();
       return {
         data: {
           callSessionId: data.callSessionId,
-          audioUrl: data.audioUrl,
+          callSid: data.callSid,
+          message: data.message,
         },
         error: null,
       };

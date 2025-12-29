@@ -460,26 +460,105 @@ class VoiceConversationService {
     return newUser.id;
   }
 
-  // Test inbound call - simulates an inbound call for testing
-  async testInboundCall(userId: string): Promise<{
+  // Test inbound call - creates a real Twilio call to test the full flow
+  async testInboundCall(userId: string, phoneNumber?: string): Promise<{
     callSessionId: string;
-    audioUrl: string;
-    greetingMessage: string;
+    callSid: string;
+    message: string;
   }> {
     try {
-      logger.info('=== TESTING INBOUND CALL ===', { userId });
+      logger.info('=== TESTING INBOUND CALL (FULL TEST) ===', { userId, phoneNumber });
 
-      // Create a test call session
-      const testCallSid = `test_${uuidv4()}`;
+      // Import Twilio service
+      const twilioSIPService = (await import('../twilio/sip.service')).default;
+
+      if (!twilioSIPService.isConfigured()) {
+        throw new Error('Twilio is not configured. Please set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env');
+      }
+
+      // If no phone number provided, call the Twilio number itself (will fail but test the flow)
+      // Or better: create a test session without actual call for quick testing
+      if (!phoneNumber) {
+        // Quick test - just generate greeting and save to database
+        const testCallSid = `test_${uuidv4()}`;
+        const { data: callSession, error } = await this.supabase
+          .from('call_sessions')
+          .insert({
+            user_id: userId,
+            status: 'active',
+            direction: 'inbound',
+            caller_number: 'test-user',
+            callee_number: config.twilio.phoneNumber,
+            channel_id: testCallSid,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          logger.error('Failed to create test call session:', error);
+          throw error;
+        }
+
+        // Generate greeting audio
+        const greetingAudioUrl = await this.generateAndSaveAudio(
+          this.GREETING_MESSAGE,
+          callSession.id,
+          'greeting'
+        );
+
+        // Save greeting message
+        await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
+
+        // Generate a sample user response for testing
+        const testUserMessage = "Hello, I'm testing the AI assistant.";
+        await this.saveMessage(callSession.id, 'user', testUserMessage);
+
+        // Generate AI response
+        const aiResponse = await gptService.generateResponse(testUserMessage, [
+          { role: 'assistant', content: this.GREETING_MESSAGE },
+          { role: 'user', content: testUserMessage },
+        ]);
+
+        // Generate AI response audio
+        const responseAudioUrl = await this.generateAndSaveAudio(
+          aiResponse.text,
+          callSession.id,
+          'response'
+        );
+
+        // Save AI response
+        await this.saveMessage(callSession.id, 'ai', aiResponse.text, responseAudioUrl);
+
+        // Mark call as ended
+        await this.supabase
+          .from('call_sessions')
+          .update({
+            status: 'ended',
+            ended_at: new Date().toISOString(),
+          })
+          .eq('id', callSession.id);
+
+        logger.info('Test inbound call completed (quick test)', {
+          callSessionId: callSession.id,
+        });
+
+        return {
+          callSessionId: callSession.id,
+          callSid: testCallSid,
+          message: 'Test completed! Check call history to see the greeting and AI response.',
+        };
+      }
+
+      // Full test - make actual Twilio call
+      // Create call session first
       const { data: callSession, error } = await this.supabase
         .from('call_sessions')
         .insert({
           user_id: userId,
-          status: 'active',
-          direction: 'inbound',
-          caller_number: '+1234567890', // Test caller
-          callee_number: config.twilio.phoneNumber,
-          channel_id: testCallSid,
+          status: 'ringing',
+          direction: 'outbound', // We're calling out to test
+          caller_number: config.twilio.phoneNumber,
+          callee_number: phoneNumber,
         })
         .select()
         .single();
@@ -489,38 +568,25 @@ class VoiceConversationService {
         throw error;
       }
 
-      logger.info('Test call session created', { callSessionId: callSession.id });
+      // Make the actual Twilio call
+      const call = await twilioSIPService.makeCall(phoneNumber, undefined, callSession.id);
 
-      // Generate greeting audio and upload to Supabase
-      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
-      const greetingAudioUrl = await this.generateAndSaveAudio(
-        this.GREETING_MESSAGE,
-        callSession.id,
-        'greeting'
-      );
-      logger.info('Greeting audio generated and uploaded', { url: greetingAudioUrl });
-
-      // Save greeting message to database
-      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
-
-      // Mark the call as ended (test completed)
+      // Update session with call SID
       await this.supabase
         .from('call_sessions')
-        .update({
-          status: 'ended',
-          ended_at: new Date().toISOString(),
-        })
+        .update({ channel_id: call.sid })
         .eq('id', callSession.id);
 
-      logger.info('Test inbound call completed', {
+      logger.info('Test call initiated', {
         callSessionId: callSession.id,
-        audioUrl: greetingAudioUrl,
+        callSid: call.sid,
+        to: phoneNumber,
       });
 
       return {
         callSessionId: callSession.id,
-        audioUrl: greetingAudioUrl,
-        greetingMessage: this.GREETING_MESSAGE,
+        callSid: call.sid,
+        message: `Calling ${phoneNumber}... Answer the call to test the AI greeting.`,
       };
     } catch (error) {
       logger.error('Failed to test inbound call:', error);
