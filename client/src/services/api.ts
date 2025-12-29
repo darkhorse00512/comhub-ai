@@ -240,15 +240,19 @@ export const api = {
   },
 
   async startCall(
-    phoneNumber?: string
+    phoneNumber: string
   ): Promise<ApiResponse<{ callId: string; callSession: any }>> {
     try {
+      if (!phoneNumber) {
+        throw new Error("Phone number is required");
+      }
+
       const headers = await getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/calls/initiate`, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          phoneNumber: phoneNumber || "+1234567890", // Default for AI-only calls
+          phoneNumber,
         }),
       });
 

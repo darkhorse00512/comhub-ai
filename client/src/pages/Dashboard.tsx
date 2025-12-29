@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useCall } from "@/hooks/useCall";
 import { useSocket } from "@/hooks/useSocket";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { LogOut, History, Phone, Settings, Users } from "lucide-react";
@@ -19,6 +20,7 @@ const Dashboard = () => {
   const { toast } = useToast();
   const { status, isMuted, duration, startCall, endCall, toggleMute } = useCall();
   const { messages, clearMessages } = useSocket();
+  const [phoneNumber, setPhoneNumber] = useState("");
 
   useEffect(() => {
     if (!loading && !user) {
@@ -27,11 +29,26 @@ const Dashboard = () => {
   }, [user, loading, navigate]);
 
   const handleStartCall = async () => {
+    if (!phoneNumber.trim()) {
+      toast({
+        title: "Phone number required",
+        description: "Please enter a phone number to call",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Format phone number - add + if not present
+    let formattedNumber = phoneNumber.trim();
+    if (!formattedNumber.startsWith("+")) {
+      formattedNumber = "+" + formattedNumber;
+    }
+
     try {
-      await startCall(); // Start call (no phone number = AI-only call)
+      await startCall(formattedNumber);
       toast({
         title: "Call started",
-        description: "You're now connected to the AI assistant",
+        description: `Calling ${formattedNumber}...`,
       });
     } catch (error) {
       toast({
@@ -138,7 +155,26 @@ const Dashboard = () => {
               transition={{ delay: 0.1 }}
               className="glass rounded-2xl p-8 shadow-elevated"
             >
-              <div className="space-y-8">
+              <div className="space-y-6">
+                {/* Phone Number Input */}
+                {status === "idle" && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">
+                      Phone Number to Call
+                    </label>
+                    <Input
+                      type="tel"
+                      placeholder="e.g. +4915888656842"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="text-lg"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter phone number with country code (e.g. +49 for Germany)
+                    </p>
+                  </div>
+                )}
+
                 <CallVisualizer status={status} />
                 <CallStatusDisplay status={status} duration={duration} />
                 <CallControls
