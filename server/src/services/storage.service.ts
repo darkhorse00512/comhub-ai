@@ -1,4 +1,5 @@
 import getSupabaseClient from '../config/supabase';
+import config from '../config';
 import logger from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -12,6 +13,8 @@ class StorageService {
     if (this.bucketInitialized) return;
 
     try {
+      logger.info('Checking Supabase storage bucket...');
+
       // Check if bucket exists
       const { data: buckets, error: listError } = await this.supabase
         .storage
@@ -19,13 +22,15 @@ class StorageService {
 
       if (listError) {
         logger.error('Failed to list buckets:', listError);
-        throw listError;
+        // Don't throw - try to create anyway
       }
 
       const bucketExists = buckets?.some(b => b.name === BUCKET_NAME);
+      logger.info(`Bucket '${BUCKET_NAME}' exists: ${bucketExists}`);
 
       if (!bucketExists) {
         // Create bucket with public access for Twilio to fetch audio
+        logger.info(`Creating bucket '${BUCKET_NAME}'...`);
         const { error: createError } = await this.supabase
           .storage
           .createBucket(BUCKET_NAME, {
@@ -34,12 +39,16 @@ class StorageService {
             allowedMimeTypes: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg'],
           });
 
-        if (createError && !createError.message.includes('already exists')) {
-          logger.error('Failed to create bucket:', createError);
-          throw createError;
+        if (createError) {
+          if (createError.message.includes('already exists')) {
+            logger.info(`Bucket '${BUCKET_NAME}' already exists`);
+          } else {
+            logger.error('Failed to create bucket:', createError);
+            // Don't throw - maybe bucket exists but we couldn't list it
+          }
+        } else {
+          logger.info(`Storage bucket '${BUCKET_NAME}' created successfully`);
         }
-
-        logger.info(`Storage bucket '${BUCKET_NAME}' created`);
       }
 
       this.bucketInitialized = true;

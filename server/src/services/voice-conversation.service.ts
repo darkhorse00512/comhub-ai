@@ -101,6 +101,8 @@ class VoiceConversationService {
     userId: string
   ): Promise<string> {
     try {
+      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId });
+
       // Create call session in database
       const { data: callSession, error } = await this.supabase
         .from('call_sessions')
@@ -115,7 +117,12 @@ class VoiceConversationService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        logger.error('Failed to create call session in database:', error);
+        throw error;
+      }
+
+      logger.info('Call session created in database', { callSessionId: callSession.id });
 
       // Initialize conversation state
       const conversation: ActiveConversation = {
@@ -131,24 +138,27 @@ class VoiceConversationService {
 
       this.activeConversations.set(callSid, conversation);
 
-      // Generate greeting audio
-      const greetingAudioPath = await this.generateAndSaveAudio(
+      // Generate greeting audio and upload to Supabase
+      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
+      const greetingAudioUrl = await this.generateAndSaveAudio(
         this.GREETING_MESSAGE,
         callSession.id,
         'greeting'
       );
+      logger.info('Greeting audio generated', { url: greetingAudioUrl });
 
       // Save greeting message to database
-      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioPath);
+      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: this.GREETING_MESSAGE });
 
       // Generate TwiML for greeting + recording
-      const twiml = this.generateGreetingTwiML(greetingAudioPath);
+      const twiml = this.generateGreetingTwiML(greetingAudioUrl);
 
-      logger.info('Outbound conversation started', {
+      logger.info('Outbound conversation started successfully', {
         callSid,
         callSessionId: callSession.id,
         calleeNumber,
+        audioUrl: greetingAudioUrl,
       });
 
       return twiml;

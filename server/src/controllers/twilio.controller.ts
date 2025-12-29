@@ -39,18 +39,20 @@ export class TwilioController {
     }
   }
 
-  // Handle outbound call pickup (for bulk calling)
+  // Handle outbound call pickup - this is called when call is answered
   async handleOutboundVoice(req: Request, res: Response): Promise<void> {
     try {
-      const { CallSid, To, CallStatus, AnsweredBy } = req.body;
+      const { CallSid, To, From, CallStatus, AnsweredBy } = req.body;
       const { jobId } = req.query;
 
-      logger.info('Outbound call answered', {
+      logger.info('=== OUTBOUND VOICE WEBHOOK TRIGGERED ===', {
         callSid: CallSid,
         to: To,
+        from: From,
         status: CallStatus,
         answeredBy: AnsweredBy,
         jobId,
+        body: req.body,
       });
 
       // Check if it's a machine (voicemail)
@@ -66,16 +68,20 @@ export class TwilioController {
         return;
       }
 
-      // Get user ID from the job
+      // Get user ID from bulk job or use system user
       const job = jobId ? bulkCallingService.getBulkCallJob(jobId as string) : null;
       const userId = job?.userId || 'system';
 
-      // Start AI conversation
+      logger.info('Starting AI conversation for outbound call', { callSid: CallSid, userId });
+
+      // Start AI conversation - this generates greeting audio and TwiML
       const twiml = await voiceConversationService.startOutboundConversation(
         CallSid,
         To,
         userId
       );
+
+      logger.info('TwiML generated for outbound call', { callSid: CallSid, twiml: twiml.substring(0, 500) });
 
       // Update bulk calling service with session ID
       const conversation = voiceConversationService.getConversation(CallSid);
