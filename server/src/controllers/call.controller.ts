@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import callService from '../services/call.service';
 import recordingService from '../services/recording.service';
+import voiceConversationService from '../services/voice-conversation.service';
 import logger from '../utils/logger';
 import socketService from '../sockets';
 
@@ -219,7 +220,7 @@ export class CallController {
 
       // First try to get from active calls (in memory)
       let callSession = callService.getActiveCall(callSessionId);
-      
+
       // If not in memory, try to get from database
       if (!callSession) {
         const sessions = await callService.getUserCallSessions(userId);
@@ -260,6 +261,36 @@ export class CallController {
       logger.error('Failed to get call:', error);
       res.status(500).json({
         error: 'Failed to get call',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Test inbound call - simulates an inbound call for testing AI greeting
+  async testInboundCall(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      logger.info('Testing inbound call', { userId });
+
+      // Create a test call session and generate greeting
+      const result = await voiceConversationService.testInboundCall(userId);
+
+      res.status(200).json({
+        success: true,
+        callSessionId: result.callSessionId,
+        audioUrl: result.audioUrl,
+        message: result.greetingMessage,
+      });
+    } catch (error) {
+      logger.error('Failed to test inbound call:', error);
+      res.status(500).json({
+        error: 'Failed to test inbound call',
         details: error instanceof Error ? error.message : 'Unknown error',
       });
     }

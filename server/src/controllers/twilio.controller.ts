@@ -3,6 +3,7 @@ import voiceConversationService from '../services/voice-conversation.service';
 import bulkCallingService from '../services/bulk-calling.service';
 import twilioSIPService from '../twilio/sip.service';
 import logger from '../utils/logger';
+import getSupabaseClient from '../config/supabase';
 
 export class TwilioController {
   // Handle incoming calls to Twilio number - Main entry point for inbound calls
@@ -58,7 +59,30 @@ export class TwilioController {
 
       // Check if it's a machine (voicemail)
       if (AnsweredBy === 'machine_start' || AnsweredBy === 'machine_end_beep') {
-        logger.info('Call answered by machine, hanging up', { callSid: CallSid });
+        logger.info('Call answered by machine, updating session and hanging up', { callSid: CallSid, sessionId });
+
+        // Update the call session to mark it as ended with machine detection
+        if (sessionId) {
+          const supabase = getSupabaseClient();
+          await supabase
+            .from('call_sessions')
+            .update({
+              status: 'ended',
+              ended_at: new Date().toISOString(),
+              channel_id: CallSid,
+            })
+            .eq('id', sessionId);
+
+          // Save a message indicating machine was detected
+          await supabase
+            .from('call_messages')
+            .insert({
+              call_session_id: sessionId,
+              role: 'ai',
+              content: '[Call answered by voicemail/machine - automatically ended]',
+            });
+        }
+
         res.type('text/xml');
         res.send(`
           <?xml version="1.0" encoding="UTF-8"?>

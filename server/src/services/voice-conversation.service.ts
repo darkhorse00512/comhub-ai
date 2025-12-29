@@ -459,6 +459,74 @@ class VoiceConversationService {
     if (createError) throw createError;
     return newUser.id;
   }
+
+  // Test inbound call - simulates an inbound call for testing
+  async testInboundCall(userId: string): Promise<{
+    callSessionId: string;
+    audioUrl: string;
+    greetingMessage: string;
+  }> {
+    try {
+      logger.info('=== TESTING INBOUND CALL ===', { userId });
+
+      // Create a test call session
+      const testCallSid = `test_${uuidv4()}`;
+      const { data: callSession, error } = await this.supabase
+        .from('call_sessions')
+        .insert({
+          user_id: userId,
+          status: 'active',
+          direction: 'inbound',
+          caller_number: '+1234567890', // Test caller
+          callee_number: config.twilio.phoneNumber,
+          channel_id: testCallSid,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to create test call session:', error);
+        throw error;
+      }
+
+      logger.info('Test call session created', { callSessionId: callSession.id });
+
+      // Generate greeting audio and upload to Supabase
+      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
+      const greetingAudioUrl = await this.generateAndSaveAudio(
+        this.GREETING_MESSAGE,
+        callSession.id,
+        'greeting'
+      );
+      logger.info('Greeting audio generated and uploaded', { url: greetingAudioUrl });
+
+      // Save greeting message to database
+      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
+
+      // Mark the call as ended (test completed)
+      await this.supabase
+        .from('call_sessions')
+        .update({
+          status: 'ended',
+          ended_at: new Date().toISOString(),
+        })
+        .eq('id', callSession.id);
+
+      logger.info('Test inbound call completed', {
+        callSessionId: callSession.id,
+        audioUrl: greetingAudioUrl,
+      });
+
+      return {
+        callSessionId: callSession.id,
+        audioUrl: greetingAudioUrl,
+        greetingMessage: this.GREETING_MESSAGE,
+      };
+    } catch (error) {
+      logger.error('Failed to test inbound call:', error);
+      throw error;
+    }
+  }
 }
 
 export const voiceConversationService = new VoiceConversationService();

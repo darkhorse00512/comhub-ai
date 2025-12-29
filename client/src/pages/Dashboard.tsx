@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { LogOut, History, Phone, Settings, Users, PhoneIncoming, Copy, Check } from "lucide-react";
+import { LogOut, History, Phone, Settings, Users, PhoneIncoming, Copy, Check, Loader2 } from "lucide-react";
 import CallControls from "@/components/CallControls";
 import CallStatusDisplay from "@/components/CallStatus";
 import ChatWindow from "@/components/ChatWindow";
 import CallVisualizer from "@/components/CallVisualizer";
 import { Link } from "react-router-dom";
+import { api } from "@/services/api";
 
 const TWILIO_PHONE_NUMBER = "+4915888656842";
 
@@ -25,22 +26,66 @@ const Dashboard = () => {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [copied, setCopied] = useState(false);
   const [callMode, setCallMode] = useState<"outbound" | "inbound">("outbound");
+  const [isTestingInbound, setIsTestingInbound] = useState(false);
 
   const copyPhoneNumber = async () => {
     try {
-      await navigator.clipboard.writeText(TWILIO_PHONE_NUMBER);
+      // Try clipboard API first
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(TWILIO_PHONE_NUMBER);
+      } else {
+        // Fallback for non-HTTPS or older browsers
+        const textArea = document.createElement("textarea");
+        textArea.value = TWILIO_PHONE_NUMBER;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        textArea.remove();
+      }
       setCopied(true);
       toast({
         title: "Copied!",
         description: "Phone number copied to clipboard",
       });
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } catch (err) {
+      console.error("Copy failed:", err);
       toast({
         title: "Failed to copy",
         description: "Please copy the number manually",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleTestInboundCall = async () => {
+    setIsTestingInbound(true);
+    try {
+      const result = await api.testInboundCall();
+      if (result.error) {
+        toast({
+          title: "Test failed",
+          description: result.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Test call started!",
+          description: "AI greeting has been generated. Check call history to see the result.",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Test failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTestingInbound(false);
     }
   };
 
@@ -228,16 +273,45 @@ const Dashboard = () => {
                 {/* Inbound Call Test Instructions */}
                 {status === "idle" && callMode === "inbound" && (
                   <div className="space-y-4">
-                    <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                    {/* Test from Website */}
+                    <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
                       <div className="flex items-center gap-2 mb-2">
-                        <PhoneIncoming className="w-5 h-5 text-primary" />
-                        <span className="font-medium text-foreground">Test Inbound Call</span>
+                        <PhoneIncoming className="w-5 h-5 text-green-500" />
+                        <span className="font-medium text-foreground">Test from Website</span>
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
-                        Call this number from your phone to test the AI assistant:
+                        Click the button below to simulate an inbound call and test the AI greeting:
+                      </p>
+                      <Button
+                        onClick={handleTestInboundCall}
+                        disabled={isTestingInbound}
+                        className="w-full bg-green-500 hover:bg-green-600 text-white"
+                      >
+                        {isTestingInbound ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Testing...
+                          </>
+                        ) : (
+                          <>
+                            <PhoneIncoming className="w-4 h-4 mr-2" />
+                            Simulate Inbound Call
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Test from Phone */}
+                    <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Phone className="w-5 h-5 text-primary" />
+                        <span className="font-medium text-foreground">Test from Your Phone</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        Or call this number from your phone:
                       </p>
                       <div className="flex items-center gap-2">
-                        <code className="flex-1 p-3 bg-background rounded-lg text-lg font-mono text-foreground">
+                        <code className="flex-1 p-3 bg-background rounded-lg text-lg font-mono text-foreground select-all">
                           {TWILIO_PHONE_NUMBER}
                         </code>
                         <Button
@@ -254,13 +328,14 @@ const Dashboard = () => {
                         </Button>
                       </div>
                     </div>
+
                     <div className="space-y-2 text-sm text-muted-foreground">
-                      <p className="font-medium text-foreground">How to test:</p>
+                      <p className="font-medium text-foreground">What happens:</p>
                       <ol className="list-decimal list-inside space-y-1">
-                        <li>Call the number above from your phone</li>
-                        <li>Wait for the AI to greet you</li>
-                        <li>Speak your question or message</li>
-                        <li>The AI will respond with voice</li>
+                        <li>AI generates a greeting message</li>
+                        <li>Audio is saved to Supabase Storage</li>
+                        <li>Call session and messages are saved to history</li>
+                        <li>You can view the result in Call History</li>
                       </ol>
                     </div>
                   </div>

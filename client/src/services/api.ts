@@ -437,6 +437,34 @@ export const api = {
       return { data: null, error: (error as Error).message };
     }
   },
+
+  // Test inbound call - simulates an inbound call for testing
+  async testInboundCall(): Promise<ApiResponse<{ callSessionId: string; audioUrl: string }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/calls/test-inbound`, {
+        method: "POST",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to test inbound call");
+      }
+
+      const data = await response.json();
+      return {
+        data: {
+          callSessionId: data.callSessionId,
+          audioUrl: data.audioUrl,
+        },
+        error: null,
+      };
+    } catch (error) {
+      console.error("Error testing inbound call:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
 };
 
 export type { CallHistoryItem, ApiResponse };
