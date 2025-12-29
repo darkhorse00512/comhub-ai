@@ -1,16 +1,12 @@
 import getSupabaseClient from '../config/supabase';
-import config from '../config';
 import logger from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs';
-import path from 'path';
 
 const BUCKET_NAME = 'call-recordings';
 
 class StorageService {
   private supabase = getSupabaseClient();
   private bucketInitialized = false;
-  private supabaseAvailable = true;
 
   async ensureBucketExists(): Promise<void> {
     if (this.bucketInitialized) return;
@@ -25,14 +21,13 @@ class StorageService {
 
       if (listError) {
         logger.error('Failed to list buckets:', listError);
-        // If we can't list buckets, Supabase storage might not be properly configured
-        this.supabaseAvailable = false;
+        throw new Error(`Supabase storage error: ${listError.message}`);
       }
 
       const bucketExists = buckets?.some(b => b.name === BUCKET_NAME);
       logger.info(`Bucket '${BUCKET_NAME}' exists: ${bucketExists}`);
 
-      if (!bucketExists && this.supabaseAvailable) {
+      if (!bucketExists) {
         // Create bucket with public access for Twilio to fetch audio
         logger.info(`Creating bucket '${BUCKET_NAME}'...`);
         const { error: createError } = await this.supabase
@@ -48,7 +43,7 @@ class StorageService {
             logger.info(`Bucket '${BUCKET_NAME}' already exists`);
           } else {
             logger.error('Failed to create bucket:', createError);
-            this.supabaseAvailable = false;
+            throw new Error(`Failed to create bucket: ${createError.message}`);
           }
         } else {
           logger.info(`Storage bucket '${BUCKET_NAME}' created successfully`);
@@ -56,11 +51,10 @@ class StorageService {
       }
 
       this.bucketInitialized = true;
-      logger.info(`Storage bucket '${BUCKET_NAME}' ready, supabaseAvailable: ${this.supabaseAvailable}`);
+      logger.info(`Storage bucket '${BUCKET_NAME}' ready`);
     } catch (error) {
       logger.error('Failed to ensure bucket exists:', error);
-      this.supabaseAvailable = false;
-      this.bucketInitialized = true;
+      throw error;
     }
   }
 
@@ -74,62 +68,42 @@ class StorageService {
     const uniqueId = uuidv4().slice(0, 8);
     const filename = `${callSessionId}/${type}_${Date.now()}_${uniqueId}.mp3`;
 
-    // Always save locally first for serving
-    const localDir = path.join(__dirname, '../../public/audio', callSessionId);
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir, { recursive: true });
-    }
-    const localFilename = `${type}_${Date.now()}_${uniqueId}.mp3`;
-    const localPath = path.join(localDir, localFilename);
-    fs.writeFileSync(localPath, audioBuffer);
+    logger.info('Uploading audio to Supabase Storage...', {
+      filename,
+      callSessionId,
+      type,
+      bufferSize: audioBuffer.length,
+    });
 
-    // Local URL that can be served by Express
-    const localUrl = `${config.server.apiBaseUrl}/audio/${callSessionId}/${localFilename}`;
-    logger.info('Audio saved locally', { localPath, localUrl });
+    const { error } = await this.supabase
+      .storage
+      .from(BUCKET_NAME)
+      .upload(filename, audioBuffer, {
+        contentType: 'audio/mpeg',
+        upsert: true,
+      });
 
-    // Try Supabase upload if available
-    if (this.supabaseAvailable) {
-      try {
-        const { data, error } = await this.supabase
-          .storage
-          .from(BUCKET_NAME)
-          .upload(filename, audioBuffer, {
-            contentType: 'audio/mpeg',
-            upsert: true,
-          });
-
-        if (error) {
-          logger.error('Failed to upload audio to Supabase:', error);
-          // Fall back to local URL
-          return localUrl;
-        }
-
-        // Get public URL
-        const { data: urlData } = this.supabase
-          .storage
-          .from(BUCKET_NAME)
-          .getPublicUrl(filename);
-
-        const publicUrl = urlData.publicUrl;
-
-        logger.info('Audio uploaded to Supabase Storage', {
-          filename,
-          callSessionId,
-          type,
-          url: publicUrl,
-        });
-
-        return publicUrl;
-      } catch (error) {
-        logger.error('Failed to upload audio to Supabase:', error);
-        // Fall back to local URL
-        return localUrl;
-      }
+    if (error) {
+      logger.error('Failed to upload audio to Supabase:', error);
+      throw new Error(`Supabase upload failed: ${error.message}`);
     }
 
-    // Return local URL if Supabase not available
-    logger.info('Using local audio URL (Supabase not available)', { url: localUrl });
-    return localUrl;
+    // Get public URL
+    const { data: urlData } = this.supabase
+      .storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filename);
+
+    const publicUrl = urlData.publicUrl;
+
+    logger.info('Audio uploaded to Supabase Storage successfully', {
+      filename,
+      callSessionId,
+      type,
+      url: publicUrl,
+    });
+
+    return publicUrl;
   }
 
   async deleteCallRecordings(callSessionId: string): Promise<void> {

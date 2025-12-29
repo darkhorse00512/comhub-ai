@@ -4,7 +4,6 @@ import logger from '../../utils/logger';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
-import recordingService from '../recording.service';
 import storageService from '../storage.service';
 
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
@@ -123,17 +122,6 @@ class TTSService {
 
       // Upload to Supabase Storage and get public URL
       const publicUrl = await storageService.uploadAudio(audioBuffer, callId, 'tts');
-
-      // Also save locally for recording service
-      const recordingsDir = path.join(__dirname, '../../../recordings/tts');
-      if (!fs.existsSync(recordingsDir)) {
-        fs.mkdirSync(recordingsDir, { recursive: true });
-      }
-      const localPath = path.join(recordingsDir, `${callId}_${Date.now()}.mp3`);
-      fs.writeFileSync(localPath, audioBuffer);
-
-      // Register this audio segment with the recording service
-      recordingService.addAudioSegment(callId, localPath, 'ai');
 
       logger.info('Audio generated and uploaded to Supabase', { callId, url: publicUrl });
 

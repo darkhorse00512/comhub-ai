@@ -7,12 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { LogOut, History, Phone, Settings, Users } from "lucide-react";
+import { LogOut, History, Phone, Settings, Users, PhoneIncoming, Copy, Check } from "lucide-react";
 import CallControls from "@/components/CallControls";
 import CallStatusDisplay from "@/components/CallStatus";
 import ChatWindow from "@/components/ChatWindow";
 import CallVisualizer from "@/components/CallVisualizer";
 import { Link } from "react-router-dom";
+
+const TWILIO_PHONE_NUMBER = "+4915888656842";
 
 const Dashboard = () => {
   const { user, loading, signOut } = useAuth();
@@ -21,6 +23,26 @@ const Dashboard = () => {
   const { status, isMuted, duration, startCall, endCall, toggleMute } = useCall();
   const { messages, clearMessages } = useSocket();
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [callMode, setCallMode] = useState<"outbound" | "inbound">("outbound");
+
+  const copyPhoneNumber = async () => {
+    try {
+      await navigator.clipboard.writeText(TWILIO_PHONE_NUMBER);
+      setCopied(true);
+      toast({
+        title: "Copied!",
+        description: "Phone number copied to clipboard",
+      });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({
+        title: "Failed to copy",
+        description: "Please copy the number manually",
+        variant: "destructive",
+      });
+    }
+  };
 
   useEffect(() => {
     if (!loading && !user) {
@@ -156,8 +178,36 @@ const Dashboard = () => {
               className="glass rounded-2xl p-8 shadow-elevated"
             >
               <div className="space-y-6">
-                {/* Phone Number Input */}
+                {/* Call Mode Selection */}
                 {status === "idle" && (
+                  <div className="flex gap-2 p-1 bg-secondary rounded-lg">
+                    <button
+                      onClick={() => setCallMode("outbound")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-colors ${
+                        callMode === "outbound"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Phone className="w-4 h-4" />
+                      <span className="text-sm font-medium">Outbound</span>
+                    </button>
+                    <button
+                      onClick={() => setCallMode("inbound")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-md transition-colors ${
+                        callMode === "inbound"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <PhoneIncoming className="w-4 h-4" />
+                      <span className="text-sm font-medium">Inbound Test</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Outbound Call Input */}
+                {status === "idle" && callMode === "outbound" && (
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-foreground">
                       Phone Number to Call
@@ -175,15 +225,58 @@ const Dashboard = () => {
                   </div>
                 )}
 
+                {/* Inbound Call Test Instructions */}
+                {status === "idle" && callMode === "inbound" && (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <PhoneIncoming className="w-5 h-5 text-primary" />
+                        <span className="font-medium text-foreground">Test Inbound Call</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">
+                        Call this number from your phone to test the AI assistant:
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 p-3 bg-background rounded-lg text-lg font-mono text-foreground">
+                          {TWILIO_PHONE_NUMBER}
+                        </code>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={copyPhoneNumber}
+                          className="shrink-0"
+                        >
+                          {copied ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      <p className="font-medium text-foreground">How to test:</p>
+                      <ol className="list-decimal list-inside space-y-1">
+                        <li>Call the number above from your phone</li>
+                        <li>Wait for the AI to greet you</li>
+                        <li>Speak your question or message</li>
+                        <li>The AI will respond with voice</li>
+                      </ol>
+                    </div>
+                  </div>
+                )}
+
                 <CallVisualizer status={status} />
                 <CallStatusDisplay status={status} duration={duration} />
-                <CallControls
-                  status={status}
-                  isMuted={isMuted}
-                  onStartCall={handleStartCall}
-                  onEndCall={handleEndCall}
-                  onToggleMute={toggleMute}
-                />
+                {callMode === "outbound" && (
+                  <CallControls
+                    status={status}
+                    isMuted={isMuted}
+                    onStartCall={handleStartCall}
+                    onEndCall={handleEndCall}
+                    onToggleMute={toggleMute}
+                  />
+                )}
               </div>
             </motion.div>
 
@@ -211,10 +304,10 @@ const Dashboard = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="mt-6 grid sm:grid-cols-2 gap-4"
+            className="mt-6 grid sm:grid-cols-3 gap-4"
           >
             <Link to="/bulk-dialer">
-              <div className="glass rounded-xl p-6 hover:bg-secondary/50 transition-colors cursor-pointer">
+              <div className="glass rounded-xl p-6 hover:bg-secondary/50 transition-colors cursor-pointer h-full">
                 <div className="flex items-center gap-4">
                   <div className="p-3 rounded-lg bg-primary/10">
                     <Users className="w-6 h-6 text-primary" />
@@ -228,8 +321,24 @@ const Dashboard = () => {
                 </div>
               </div>
             </Link>
+            <div
+              onClick={() => setCallMode("inbound")}
+              className="glass rounded-xl p-6 hover:bg-secondary/50 transition-colors cursor-pointer h-full"
+            >
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-lg bg-green-500/10">
+                  <PhoneIncoming className="w-6 h-6 text-green-500" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-foreground">Test Inbound</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Test AI with incoming calls
+                  </p>
+                </div>
+              </div>
+            </div>
             <Link to="/history">
-              <div className="glass rounded-xl p-6 hover:bg-secondary/50 transition-colors cursor-pointer">
+              <div className="glass rounded-xl p-6 hover:bg-secondary/50 transition-colors cursor-pointer h-full">
                 <div className="flex items-center gap-4">
                   <div className="p-3 rounded-lg bg-primary/10">
                     <History className="w-6 h-6 text-primary" />
