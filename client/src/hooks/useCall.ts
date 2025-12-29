@@ -25,10 +25,17 @@ export const useCall = (): UseCallReturn => {
   const startCall = useCallback(async (phoneNumber?: string) => {
     try {
       setStatus("connecting");
-      
-      // Request microphone permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+
+      // Check if we're in a secure context (HTTPS or localhost)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        // In non-secure context, we can still initiate calls via backend
+        // The audio will be handled server-side via Twilio
+        console.warn("MediaDevices not available - using server-side audio handling");
+      } else {
+        // Request microphone permission
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+      }
       
       // Start call via backend API
       const result = await api.startCall(phoneNumber);
