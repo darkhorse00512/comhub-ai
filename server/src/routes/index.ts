@@ -3,6 +3,10 @@ import authRoutes from './auth.routes';
 import callRoutes from './call.routes';
 import twilioRoutes from './twilio.routes';
 import bulkCallRoutes from './bulk-call.routes';
+import phoneNumbersRoutes from './phone-numbers.routes';
+import groupsRoutes from './groups.routes';
+import settingsRoutes from './settings.routes';
+import feedbackRoutes from './feedback.routes';
 import config from '../config';
 
 const router = Router();
@@ -11,6 +15,10 @@ router.use('/auth', authRoutes);
 router.use('/calls', callRoutes);
 router.use('/twilio', twilioRoutes);
 router.use('/bulk-calls', bulkCallRoutes);
+router.use('/phone-numbers', phoneNumbersRoutes);
+router.use('/groups', groupsRoutes);
+router.use('/settings', settingsRoutes);
+router.use('/feedback', feedbackRoutes);
 
 router.get('/health', (_req, res) => {
   res.status(200).json({

@@ -468,6 +468,287 @@ export const api = {
       return { data: null, error: (error as Error).message };
     }
   },
+
+  // Phone Numbers APIs
+  async getPhoneNumbers(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/phone-numbers`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch phone numbers");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching phone numbers:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async importPhoneNumber(accountSid: string, authToken: string, phoneNumberSid: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/phone-numbers/import`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ accountSid, authToken, phoneNumberSid }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to import phone number");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error importing phone number:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updatePhoneNumber(id: string, updates: any): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/phone-numbers/${id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update phone number");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating phone number:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deletePhoneNumber(id: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/phone-numbers/${id}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete phone number");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting phone number:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  // Groups APIs
+  async getGroups(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch groups");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching groups:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async createGroup(name: string, description?: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name, description }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create group");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error creating group:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateGroup(id: string, updates: any): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update group");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating group:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteGroup(id: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${id}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete group");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting group:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  // Settings APIs
+  async getSettings(): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/settings`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch settings");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateSettings(settings: any): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/settings`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(settings),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update settings");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating settings:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getUsageStatistics(days: number = 30): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/settings/usage?days=${days}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch usage statistics");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching usage statistics:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  // Feedback APIs
+  async submitFeedback(type: string, subject: string, message: string, email?: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/feedback`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ type, subject, message, email }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to submit feedback");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error submitting feedback:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getFeedback(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/feedback`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch feedback");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching feedback:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
 };
 
 export type { CallHistoryItem, ApiResponse };
