@@ -38,11 +38,25 @@ class VoiceConversationService {
     calleeNumber: string
   ): Promise<string> {
     try {
+      logger.info('=== STARTING INBOUND CONVERSATION ===', { callSid, callerNumber, calleeNumber });
+
+      // Get or create default user for inbound calls
+      let userId: string;
+      try {
+        userId = await this.getDefaultUserId();
+        logger.info('Got default user ID', { userId });
+      } catch (userError) {
+        logger.error('Failed to get default user ID:', userError);
+        // Fallback: create call without user tracking
+        throw new Error('Failed to get system user for inbound call');
+      }
+
       // Create call session in database
+      logger.info('Creating call session in database...');
       const { data: callSession, error } = await this.supabase
         .from('call_sessions')
         .insert({
-          user_id: await this.getDefaultUserId(),
+          user_id: userId,
           status: 'active',
           direction: 'inbound',
           caller_number: callerNumber,
@@ -52,7 +66,11 @@ class VoiceConversationService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        logger.error('Failed to create call session:', error);
+        throw error;
+      }
+      logger.info('Call session created', { callSessionId: callSession.id });
 
       // Initialize conversation state
       const conversation: ActiveConversation = {
@@ -69,23 +87,45 @@ class VoiceConversationService {
       this.activeConversations.set(callSid, conversation);
 
       // Generate greeting audio
-      const greetingAudioPath = await this.generateAndSaveAudio(
-        this.GREETING_MESSAGE,
-        callSession.id,
-        'greeting'
-      );
+      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
+      let greetingAudioUrl: string;
+      try {
+        greetingAudioUrl = await this.generateAndSaveAudio(
+          this.GREETING_MESSAGE,
+          callSession.id,
+          'greeting'
+        );
+        logger.info('Greeting audio generated', { url: greetingAudioUrl });
+      } catch (audioError) {
+        logger.error('Failed to generate greeting audio:', audioError);
+        // Return TwiML with say fallback if audio generation fails
+        const response = new VoiceResponse();
+        response.say({ voice: 'alice' }, this.GREETING_MESSAGE);
+        response.record({
+          action: `${config.server.apiBaseUrl}/api/twilio/handle-recording`,
+          method: 'POST',
+          maxLength: this.MAX_RECORDING_LENGTH,
+          timeout: this.SILENCE_TIMEOUT,
+          playBeep: false,
+          trim: 'trim-silence',
+        });
+        response.say('Goodbye!');
+        response.hangup();
+        return response.toString();
+      }
 
       // Save greeting message to database
-      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioPath);
+      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: this.GREETING_MESSAGE });
 
       // Generate TwiML for greeting + recording
-      const twiml = this.generateGreetingTwiML(greetingAudioPath);
+      const twiml = this.generateGreetingTwiML(greetingAudioUrl);
 
-      logger.info('Inbound conversation started', {
+      logger.info('Inbound conversation started successfully', {
         callSid,
         callSessionId: callSession.id,
         callerNumber,
+        audioUrl: greetingAudioUrl,
       });
 
       return twiml;
@@ -440,24 +480,50 @@ class VoiceConversationService {
   }
 
   private async getDefaultUserId(): Promise<string> {
-    // Get or create a default system user for inbound calls
-    const { data: user, error } = await this.supabase
-      .from('users')
-      .select('id')
-      .eq('email', 'system@comhubai.com')
-      .single();
+    try {
+      // Get or create a default system user for inbound calls
+      logger.info('Looking for system user...');
+      const { data: user, error } = await this.supabase
+        .from('users')
+        .select('id')
+        .eq('email', 'system@comhubai.com')
+        .single();
 
-    if (user) return user.id;
+      if (user) {
+        logger.info('Found existing system user', { userId: user.id });
+        return user.id;
+      }
 
-    // Create system user if doesn't exist
-    const { data: newUser, error: createError } = await this.supabase
-      .from('users')
-      .insert({ email: 'system@comhubai.com' })
-      .select()
-      .single();
+      // User not found - try to create
+      logger.info('System user not found, creating...');
+      const { data: newUser, error: createError } = await this.supabase
+        .from('users')
+        .insert({ email: 'system@comhubai.com' })
+        .select()
+        .single();
 
-    if (createError) throw createError;
-    return newUser.id;
+      if (createError) {
+        // Check if it's a duplicate key error (user was created by another request)
+        if (createError.code === '23505' || createError.message?.includes('duplicate')) {
+          logger.info('User already exists (race condition), fetching again...');
+          const { data: existingUser } = await this.supabase
+            .from('users')
+            .select('id')
+            .eq('email', 'system@comhubai.com')
+            .single();
+
+          if (existingUser) return existingUser.id;
+        }
+        logger.error('Failed to create system user:', createError);
+        throw createError;
+      }
+
+      logger.info('Created new system user', { userId: newUser.id });
+      return newUser.id;
+    } catch (error) {
+      logger.error('getDefaultUserId error:', error);
+      throw error;
+    }
   }
 
   // Test inbound call - creates a real Twilio call to test the full flow
