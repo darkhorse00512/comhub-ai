@@ -187,6 +187,7 @@ const getBackendToken = async (): Promise<string | null> => {
 
 const getAuthHeaders = async (): Promise<HeadersInit> => {
   const token = await getBackendToken();
+  console.log("[AUTH HEADERS] Token obtained:", token ? `${token.substring(0, 20)}...` : "null");
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -512,18 +513,24 @@ export const api = {
   // Phone Numbers APIs
   async getPhoneNumbers(): Promise<ApiResponse<any[]>> {
     try {
+      console.log("[PHONE NUMBERS] Fetching phone numbers...");
       const headers = await getAuthHeaders();
+      console.log("[PHONE NUMBERS] Headers prepared:", headers);
       const response = await fetch(`${API_BASE_URL}/phone-numbers`, {
         method: "GET",
         headers,
       });
 
+      console.log("[PHONE NUMBERS] Response status:", response.status);
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        console.log("[PHONE NUMBERS] Error response:", errorData);
         throw new Error(errorData.error || "Failed to fetch phone numbers");
       }
 
       const data = await response.json();
+      console.log("[PHONE NUMBERS] Success:", data);
       return { data: data.data || [], error: null };
     } catch (error) {
       console.error("Error fetching phone numbers:", error);

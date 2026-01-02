@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 
 export interface AuthRequest extends Request {
   user?: {
+    id: string;
     userId: string;
     email: string;
   };
@@ -25,7 +26,8 @@ export const authMiddleware = (
     const decoded = AuthUtils.verifyToken(token);
 
     req.user = {
-      userId: decoded.userId,
+      id: decoded.userId,        // For controllers that use req.user.id
+      userId: decoded.userId,     // For controllers that use req.user.userId
       email: decoded.email,
     };
 

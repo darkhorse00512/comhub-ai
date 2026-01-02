@@ -22,34 +22,54 @@ The purchase phone number functionality was incomplete. It has been fully implem
 - Loading states and error handling
 
 ### Issue 2: 401 Unauthorized Error (FIXED)
-The persistent 401 error was caused by an invalid cached backend JWT token in localStorage.
+The persistent 401 error had TWO root causes:
 
-**Root Cause**:
+**Root Cause 1: Invalid Cached Tokens**
 - The frontend was caching backend JWT tokens in localStorage
 - When the Supabase anon key was changed, old tokens became invalid
 - The code only checked token expiry, not actual validity
 - Invalid tokens were being reused, causing 401 errors
 
-**Solution** - [client/src/services/api.ts:81-121](client/src/services/api.ts#L81-L121)
+**Solution 1** - [client/src/services/api.ts:81-121](client/src/services/api.ts#L81-L121)
 - Added automatic token validation before use
 - Cached tokens are now verified against `/auth/verify` endpoint
 - Invalid tokens are automatically cleared
 - Fresh tokens are obtained when needed
 
+**Root Cause 2: User ID Mismatch**
+- Auth middleware set `req.user.userId`
+- Phone numbers controller expected `req.user.id`
+- Requests were authenticated but failed authorization check
+
+**Solution 2** - [server/src/middleware/auth.middleware.ts:28-32](server/src/middleware/auth.middleware.ts#L28-L32)
+- Auth middleware now sets both `req.user.id` and `req.user.userId`
+- Ensures compatibility with all controllers
+
 ## Files Modified
 
 1. **[server/src/controllers/phone-numbers.controller.ts](server/src/controllers/phone-numbers.controller.ts#L203-L326)** - Purchase implementation
-2. **[client/src/services/api.ts](client/src/services/api.ts)** - Purchase API + token validation
+2. **[client/src/services/api.ts](client/src/services/api.ts)** - Purchase API + token validation + debug logging
 3. **[client/src/pages/dashboard/TelephonyPage.tsx](client/src/pages/dashboard/TelephonyPage.tsx#L447-L534)** - Purchase UI
-4. **[server/src/routes/auth.routes.ts](server/src/routes/auth.routes.ts)** - Removed validation middleware
-5. **[server/.env](server/.env#L11)** - Updated SUPABASE_ANON_KEY
-6. **[client/.env](client/.env#L9)** - Updated VITE_SUPABASE_PUBLISHABLE_KEY
+4. **[server/src/middleware/auth.middleware.ts](server/src/middleware/auth.middleware.ts#L28-L32)** - Fixed user ID mismatch
+5. **[server/src/routes/auth.routes.ts](server/src/routes/auth.routes.ts)** - Removed validation middleware
+6. **[server/.env](server/.env#L11)** - Updated SUPABASE_ANON_KEY
+7. **[client/.env](client/.env#L9)** - Updated VITE_SUPABASE_PUBLISHABLE_KEY
 
 ## What You Need to Do
 
-### Step 1: Restart Frontend Server
+### Step 1: Restart Backend Server
 
-The latest code changes will automatically fix the authentication issue:
+The auth middleware fix requires restarting the backend:
+
+```bash
+cd server
+# Stop the current server (Ctrl+C)
+npm run dev
+```
+
+### Step 2: Restart Frontend Server
+
+The token validation code requires restarting the frontend:
 
 ```bash
 cd client
@@ -57,7 +77,7 @@ cd client
 npm run dev
 ```
 
-### Step 2: Clear Browser Cache
+### Step 3: Clear Browser Cache
 
 1. Open your browser to http://localhost:5173
 2. Press F12 to open DevTools
@@ -68,20 +88,23 @@ npm run dev
    location.reload();
    ```
 
-### Step 3: Test the Fix
+### Step 4: Test the Fix
 
 1. Navigate to Dashboard → Telephony
 2. Check the browser console - you should see:
    ```
-   [AUTH] Cached token found, expires: [date]
-   [AUTH] Verifying cached token with backend...
-   [AUTH] Cached token invalid (401), clearing it
+   [AUTH] No cached token found
    [AUTH] Attempting login with email: your@email.com
    [AUTH] Login successful!
+   [AUTH HEADERS] Token obtained: eyJhbGciOiJIUzI1NiI...
+   [PHONE NUMBERS] Fetching phone numbers...
+   [PHONE NUMBERS] Headers prepared: {Content-Type: "application/json", Authorization: "Bearer eyJ..."}
+   [PHONE NUMBERS] Response status: 200
+   [PHONE NUMBERS] Success: {success: true, data: [...]}
    ```
 3. The phone numbers should load without any 401 errors
 
-### Step 4: Test Purchase Feature
+### Step 5: Test Purchase Feature
 
 1. Click "Add Phone Number" button
 2. Select "Purchase from Twilio"
