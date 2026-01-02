@@ -259,7 +259,7 @@ class PhoneNumbersController {
       }
 
       // Format the response with useful information
-      const formattedNumbers = availableNumbers.map(number => ({
+      const allNumbers = availableNumbers.map(number => ({
         phoneNumber: number.phoneNumber,
         friendlyName: number.friendlyName,
         locality: number.locality,
@@ -273,10 +273,31 @@ class PhoneNumbersController {
         addressRequirements: number.addressRequirements || 'none',
       }));
 
+      // Filter out numbers that require addresses (regulatory compliance not yet implemented)
+      const formattedNumbers = allNumbers.filter(num => num.addressRequirements === 'none');
+
+      logger.info('Filtered numbers by address requirements', {
+        total: allNumbers.length,
+        available: formattedNumbers.length,
+        filtered: allNumbers.length - formattedNumbers.length
+      });
+
+      if (formattedNumbers.length === 0 && allNumbers.length > 0) {
+        res.status(404).json({
+          success: false,
+          error: `All available numbers in ${countryCode} require address verification for regulatory compliance. This feature is not yet implemented. Try a different country like US, CA, or GB.`,
+          data: []
+        });
+        return;
+      }
+
       res.status(200).json({
         success: true,
         data: formattedNumbers,
         count: formattedNumbers.length,
+        message: formattedNumbers.length < allNumbers.length
+          ? `Showing ${formattedNumbers.length} of ${allNumbers.length} numbers (${allNumbers.length - formattedNumbers.length} require address verification)`
+          : undefined
       });
     } catch (error) {
       logger.error('Error in searchAvailableNumbers:', error);

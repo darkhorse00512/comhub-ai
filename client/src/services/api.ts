@@ -565,7 +565,13 @@ export const api = {
 
       const data = await response.json();
       console.log("[SEARCH] Success:", data);
-      return { data: data.data || [], error: null };
+
+      // Return data with optional message about filtered numbers
+      return {
+        data: data.data || [],
+        error: null,
+        message: data.message
+      } as any;
     } catch (error) {
       console.error("[SEARCH] Error searching numbers:", error);
       return { data: null, error: (error as Error).message };
