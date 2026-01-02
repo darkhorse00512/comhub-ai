@@ -495,13 +495,12 @@ const TelephonyPage = () => {
                   </div>
                 ) : addMethod === "purchase" ? (
                   <div className="py-4 space-y-4">
-                    {/* Info about address requirements */}
+                    {/* Info about number purchasing */}
                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md text-sm">
-                      <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">📍 Note on Number Availability</p>
+                      <p className="font-medium text-blue-900 dark:text-blue-100 mb-1">📱 Purchase Phone Numbers</p>
                       <p className="text-blue-700 dark:text-blue-300">
-                        Some countries (like Germany, France) require address verification for regulatory compliance.
-                        Numbers requiring verification are automatically filtered out.
-                        <strong className="block mt-1">Recommended: US, GB, CA, AU</strong>
+                        Search for available phone numbers by country and area code.
+                        Numbers requiring address verification will use your Twilio account's verified address automatically.
                       </p>
                     </div>
 
@@ -517,12 +516,12 @@ const TelephonyPage = () => {
                             setPurchaseForm({ ...purchaseForm, countryCode: e.target.value })
                           }
                         >
-                          <option value="US">🇺🇸 United States (+1) - Recommended</option>
-                          <option value="GB">🇬🇧 United Kingdom (+44) - Recommended</option>
-                          <option value="CA">🇨🇦 Canada (+1) - Recommended</option>
-                          <option value="AU">🇦🇺 Australia (+61) - Recommended</option>
-                          <option value="DE">🇩🇪 Germany (+49) - May require verification</option>
-                          <option value="FR">🇫🇷 France (+33) - May require verification</option>
+                          <option value="US">🇺🇸 United States (+1)</option>
+                          <option value="GB">🇬🇧 United Kingdom (+44)</option>
+                          <option value="CA">🇨🇦 Canada (+1)</option>
+                          <option value="DE">🇩🇪 Germany (+49)</option>
+                          <option value="FR">🇫🇷 France (+33)</option>
+                          <option value="AU">🇦🇺 Australia (+61)</option>
                         </select>
                       </div>
                       <div className="space-y-2">
