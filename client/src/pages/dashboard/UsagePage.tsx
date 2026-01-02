@@ -213,21 +213,21 @@ const UsagePage = () => {
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-lg bg-green-500/10">
                         <PhoneIncoming className="w-5 h-5 text-green-500" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">Inbound Calls</p>
+                        <p className="text-sm text-muted-foreground">Received calls</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-foreground">Inbound Calls</p>
-                      <p className="text-sm text-muted-foreground">Received calls</p>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-foreground">
+                        {stats.inboundCalls}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {Math.round((stats.inboundCalls / stats.totalCalls) * 100)}%
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-foreground">
-                      {stats.inboundCalls}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {Math.round((stats.inboundCalls / stats.totalCalls) * 100)}%
-                    </p>
-                  </div>
-                </div>
 
                 <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
                   <div className="flex items-center gap-3">
@@ -275,6 +275,7 @@ const UsagePage = () => {
                       Outbound
                     </span>
                   </div>
+                </div>
                 </div>
               )}
             </CardContent>
