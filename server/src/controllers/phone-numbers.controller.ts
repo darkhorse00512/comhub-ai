@@ -222,6 +222,22 @@ class PhoneNumbersController {
         process.env.TWILIO_AUTH_TOKEN
       );
 
+      // For Germany, fetch verified addresses to filter by locality
+      let verifiedCities: string[] = [];
+      if (countryCode === 'DE') {
+        try {
+          const addresses = await twilioClient.addresses.list({ limit: 20 });
+          verifiedCities = addresses
+            .filter(addr => addr.isoCountry === 'DE')
+            .map(addr => addr.city)
+            .filter(city => city); // Remove empty cities
+
+          logger.info('Verified German cities found', { cities: verifiedCities });
+        } catch (err) {
+          logger.warn('Could not fetch addresses', { error: err });
+        }
+      }
+
       // Build search criteria
       const searchOptions: any = { limit: Math.min(Number(limit), 20) }; // Max 20 results
 
@@ -247,7 +263,7 @@ class PhoneNumbersController {
         .local
         .list(searchOptions);
 
-      logger.info('Available numbers found', { count: availableNumbers?.length });
+      logger.info('Available numbers found before filtering', { count: availableNumbers?.length });
 
       if (!availableNumbers || availableNumbers.length === 0) {
         res.status(404).json({
@@ -259,7 +275,7 @@ class PhoneNumbersController {
       }
 
       // Format the response with useful information
-      const formattedNumbers = availableNumbers.map(number => ({
+      let formattedNumbers = availableNumbers.map(number => ({
         phoneNumber: number.phoneNumber,
         friendlyName: number.friendlyName,
         locality: number.locality,
@@ -273,9 +289,40 @@ class PhoneNumbersController {
         addressRequirements: number.addressRequirements || 'none',
       }));
 
+      // For Germany, filter numbers to only show those from verified cities
+      const totalBeforeFilter = formattedNumbers.length;
+      if (countryCode === 'DE' && verifiedCities.length > 0) {
+        formattedNumbers = formattedNumbers.filter(num =>
+          verifiedCities.some(city =>
+            num.locality && city.toLowerCase().includes(num.locality.toLowerCase())
+          )
+        );
+
+        logger.info('Filtered German numbers by verified cities', {
+          totalBefore: totalBeforeFilter,
+          totalAfter: formattedNumbers.length,
+          verifiedCities
+        });
+      }
+
+      if (formattedNumbers.length === 0) {
+        const message = countryCode === 'DE' && verifiedCities.length > 0
+          ? `No numbers found in your verified cities (${verifiedCities.join(', ')}). Your verified addresses are for: ${verifiedCities.join(', ')}. Numbers found in other cities cannot be purchased without adding verified addresses for those cities.`
+          : 'No available phone numbers found. Try different search criteria.';
+
+        res.status(404).json({
+          success: false,
+          error: message,
+          data: [],
+          verifiedCities: countryCode === 'DE' ? verifiedCities : undefined
+        });
+        return;
+      }
+
       logger.info('Available numbers found', {
         count: formattedNumbers.length,
         countryCode,
+        verifiedCities: countryCode === 'DE' ? verifiedCities : undefined,
         requiresAddress: formattedNumbers.some(num => num.addressRequirements !== 'none')
       });
 
@@ -283,6 +330,10 @@ class PhoneNumbersController {
         success: true,
         data: formattedNumbers,
         count: formattedNumbers.length,
+        verifiedCities: countryCode === 'DE' ? verifiedCities : undefined,
+        message: countryCode === 'DE' && verifiedCities.length > 0
+          ? `Showing numbers from your verified cities: ${verifiedCities.join(', ')}`
+          : undefined
       });
     } catch (error) {
       logger.error('Error in searchAvailableNumbers:', error);
@@ -333,10 +384,18 @@ class PhoneNumbersController {
       // Fetch verified addresses from Twilio account
       let addressSid: string | undefined;
       try {
-        const addresses = await twilioClient.addresses.list({ limit: 1 });
+        // Fetch all verified addresses (not just one)
+        const addresses = await twilioClient.addresses.list({ limit: 20 });
         if (addresses && addresses.length > 0) {
+          // Use the first verified address (you can enhance this later to match by region)
           addressSid = addresses[0].sid;
-          logger.info('Using verified address for purchase', { addressSid });
+          logger.info('Using verified address for purchase', {
+            addressSid,
+            addressCity: addresses[0].city,
+            totalAddresses: addresses.length
+          });
+        } else {
+          logger.warn('No verified addresses found in Twilio account');
         }
       } catch (addressError) {
         logger.warn('Could not fetch addresses, proceeding without address', { error: addressError });
@@ -430,10 +489,14 @@ class PhoneNumbersController {
           return;
         }
 
-        if (error.message.includes('AddressSid') || error.message.includes('address')) {
+        if (error.message.includes('AddressSid') || error.message.includes('address') || error.message.includes('No valid address')) {
+          // Extract locality from error message if possible
+          const localityMatch = error.message.match(/No valid address created for: (.+)/);
+          const locality = localityMatch ? localityMatch[1] : 'this region';
+
           res.status(400).json({
             success: false,
-            error: 'This number requires address verification. Please add a verified address in your Twilio Console → Phone Numbers → Regulatory Compliance → Addresses.',
+            error: `This number requires an address in ${locality}. Your verified addresses are for different cities. Either:\n1. Search for numbers in Hamburg (where you have verified addresses), or\n2. Add a verified address for ${locality} in Twilio Console → Regulatory Compliance → Addresses`,
             details: error.message
           });
           return;
