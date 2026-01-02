@@ -86,6 +86,14 @@ const TelephonyPage = () => {
     phoneNumberSid: "",
   });
 
+  // Purchase form state
+  const [purchaseForm, setPurchaseForm] = useState({
+    countryCode: "US",
+    areaCode: "",
+    voiceEnabled: true,
+    smsEnabled: false,
+  });
+
   // Fetch phone numbers on mount
   useEffect(() => {
     fetchPhoneNumbers();
@@ -112,6 +120,61 @@ const TelephonyPage = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePurchaseNumber = async () => {
+    if (!purchaseForm.countryCode) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a country",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const response = await api.purchasePhoneNumber(
+        purchaseForm.countryCode,
+        purchaseForm.areaCode || undefined,
+        {
+          voice: purchaseForm.voiceEnabled,
+          sms: purchaseForm.smsEnabled,
+        }
+      );
+
+      if (response.error) {
+        toast({
+          title: "Purchase Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Phone number purchased successfully",
+        });
+        // Reset form and dialog
+        setPurchaseForm({
+          countryCode: "US",
+          areaCode: "",
+          voiceEnabled: true,
+          smsEnabled: false,
+        });
+        setAddMethod(null);
+        setShowAddDialog(false);
+        // Refresh phone numbers list
+        await fetchPhoneNumbers();
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -338,25 +401,24 @@ const TelephonyPage = () => {
 
                 {!addMethod ? (
                   <div className="grid gap-4 py-4">
-                    {/* Purchase Option - Disabled */}
+                    {/* Purchase Option */}
                     <div
-                      className="p-4 rounded-xl border border-border/50 bg-muted/30 cursor-not-allowed opacity-60 relative"
+                      onClick={() => setAddMethod("purchase")}
+                      className="p-4 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer group"
                     >
                       <div className="flex items-start gap-4">
-                        <div className="p-2 rounded-lg bg-green-500/10">
+                        <div className="p-2 rounded-lg bg-green-500/10 group-hover:bg-green-500/20 transition-colors">
                           <ShoppingCart className="w-5 h-5 text-green-500" />
                         </div>
                         <div className="flex-1">
                           <h3 className="font-semibold text-foreground mb-1">
                             Purchase new number
-                            <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-2 py-1 rounded-full">
-                              Coming Soon
-                            </span>
                           </h3>
                           <p className="text-sm text-muted-foreground">
-                            Phone number purchasing will be available soon. Please use the import option for now.
+                            Buy a new phone number through Twilio. Quick and easy setup with immediate availability.
                           </p>
                         </div>
+                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary mt-1" />
                       </div>
                     </div>
 
@@ -383,20 +445,92 @@ const TelephonyPage = () => {
                     </div>
                   </div>
                 ) : addMethod === "purchase" ? (
-                  <div className="py-4">
-                    <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20 mb-4">
-                      <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                        Phone number purchasing will be available soon. Please use the
-                        import option for now.
-                      </p>
+                  <div className="py-4 space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="countryCode">Country</Label>
+                      <select
+                        id="countryCode"
+                        className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground"
+                        value={purchaseForm.countryCode}
+                        onChange={(e) =>
+                          setPurchaseForm({ ...purchaseForm, countryCode: e.target.value })
+                        }
+                      >
+                        <option value="US">United States (+1)</option>
+                        <option value="GB">United Kingdom (+44)</option>
+                        <option value="CA">Canada (+1)</option>
+                        <option value="DE">Germany (+49)</option>
+                        <option value="FR">France (+33)</option>
+                        <option value="AU">Australia (+61)</option>
+                      </select>
                     </div>
-                    <Button
-                      variant="outline"
-                      onClick={() => setAddMethod(null)}
-                      className="w-full"
-                    >
-                      Back
-                    </Button>
+                    <div className="space-y-2">
+                      <Label htmlFor="areaCode">Area Code (Optional)</Label>
+                      <Input
+                        id="areaCode"
+                        placeholder="e.g., 415 for San Francisco"
+                        value={purchaseForm.areaCode}
+                        onChange={(e) =>
+                          setPurchaseForm({ ...purchaseForm, areaCode: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Capabilities</Label>
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={purchaseForm.voiceEnabled}
+                            onChange={(e) =>
+                              setPurchaseForm({
+                                ...purchaseForm,
+                                voiceEnabled: e.target.checked,
+                              })
+                            }
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">Voice calls</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={purchaseForm.smsEnabled}
+                            onChange={(e) =>
+                              setPurchaseForm({
+                                ...purchaseForm,
+                                smsEnabled: e.target.checked,
+                              })
+                            }
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm">SMS messages</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setAddMethod(null)}
+                        disabled={importing}
+                      >
+                        Back
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        onClick={handlePurchaseNumber}
+                        disabled={importing}
+                      >
+                        {importing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Purchasing...
+                          </>
+                        ) : (
+                          "Purchase Number"
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="py-4 space-y-4">

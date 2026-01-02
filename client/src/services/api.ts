@@ -491,6 +491,28 @@ export const api = {
     }
   },
 
+  async purchasePhoneNumber(countryCode: string, areaCode?: string, capabilities?: { voice?: boolean; sms?: boolean }): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/phone-numbers/purchase`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ countryCode, areaCode, capabilities }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to purchase phone number");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error purchasing phone number:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   async importPhoneNumber(accountSid: string, authToken: string, phoneNumberSid: string): Promise<ApiResponse<any>> {
     try {
       const headers = await getAuthHeaders();

@@ -200,16 +200,128 @@ class PhoneNumbersController {
     }
   };
 
-  // Purchase a new Twilio phone number (future feature)
+  // Purchase a new Twilio phone number
   purchasePhoneNumber = async (req: Request, res: Response): Promise<void> => {
     try {
-      res.status(501).json({
-        success: false,
-        error: 'Phone number purchasing is not yet available. Please use the import feature.',
+      const userId = (req as any).user?.id;
+      const { countryCode, areaCode, capabilities } = req.body;
+
+      if (!userId) {
+        res.status(401).json({ success: false, error: 'Unauthorized' });
+        return;
+      }
+
+      if (!countryCode) {
+        res.status(400).json({ success: false, error: 'Country code is required' });
+        return;
+      }
+
+      // Use platform's Twilio account to purchase
+      const twilioClient = twilio(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_AUTH_TOKEN
+      );
+
+      // Build search criteria
+      const searchOptions: any = {};
+      if (areaCode) {
+        searchOptions.areaCode = areaCode;
+      }
+      if (capabilities) {
+        if (capabilities.voice) searchOptions.voiceEnabled = true;
+        if (capabilities.sms) searchOptions.smsEnabled = true;
+      } else {
+        // Default to voice enabled
+        searchOptions.voiceEnabled = true;
+      }
+
+      // Search for available phone numbers
+      const availableNumbers = await twilioClient
+        .availablePhoneNumbers(countryCode)
+        .local
+        .list({ ...searchOptions, limit: 1 });
+
+      if (!availableNumbers || availableNumbers.length === 0) {
+        res.status(404).json({
+          success: false,
+          error: `No available phone numbers found for country code ${countryCode}${areaCode ? ` and area code ${areaCode}` : ''}`
+        });
+        return;
+      }
+
+      const selectedNumber = availableNumbers[0];
+
+      // Purchase the phone number
+      const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+        phoneNumber: selectedNumber.phoneNumber,
+        voiceUrl: `${process.env.API_BASE_URL}/twilio/voice`,
+        voiceMethod: 'POST',
+        statusCallback: `${process.env.API_BASE_URL}/twilio/status`,
+        statusCallbackMethod: 'POST',
+      });
+
+      // Store in database
+      const { data: newPhoneNumber, error } = await this.supabase
+        .from('phone_numbers')
+        .insert({
+          user_id: userId,
+          phone_number: purchasedNumber.phoneNumber,
+          friendly_name: purchasedNumber.friendlyName,
+          country_code: countryCode,
+          country: selectedNumber.isoCountry,
+          type: 'purchased',
+          status: 'active',
+          twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,
+          twilio_phone_number_sid: purchasedNumber.sid,
+          twilio_capabilities: {
+            voice: purchasedNumber.capabilities?.voice || false,
+            sms: purchasedNumber.capabilities?.sms || false,
+          },
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to save purchased phone number to database:', error);
+        // Note: Phone number was purchased but failed to save - admin should handle this
+        res.status(500).json({
+          success: false,
+          error: 'Phone number purchased but failed to save. Please contact support.',
+          details: error.message,
+        });
+        return;
+      }
+
+      logger.info('Phone number purchased successfully', {
+        userId,
+        phoneNumber: purchasedNumber.phoneNumber,
+        sid: purchasedNumber.sid,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: newPhoneNumber,
+        message: 'Phone number purchased successfully',
       });
     } catch (error) {
       logger.error('Error in purchasePhoneNumber:', error);
-      res.status(500).json({ success: false, error: 'Internal server error' });
+
+      if (error instanceof Error) {
+        // Check for Twilio-specific errors
+        if (error.message.includes('balance')) {
+          res.status(402).json({
+            success: false,
+            error: 'Insufficient Twilio account balance to purchase number',
+          });
+          return;
+        }
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to purchase phone number',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   };
 
