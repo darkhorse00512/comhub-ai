@@ -538,24 +538,63 @@ export const api = {
     }
   },
 
-  async purchasePhoneNumber(countryCode: string, areaCode?: string, capabilities?: { voice?: boolean; sms?: boolean }): Promise<ApiResponse<any>> {
+  async searchAvailableNumbers(countryCode: string, areaCode?: string, capabilities?: { voice?: boolean; sms?: boolean }): Promise<ApiResponse<any[]>> {
     try {
+      console.log("[SEARCH] Searching for available numbers:", { countryCode, areaCode, capabilities });
+      const headers = await getAuthHeaders();
+
+      const params = new URLSearchParams({
+        countryCode,
+        ...(areaCode && { areaCode }),
+        ...(capabilities && { capabilities: JSON.stringify(capabilities) }),
+        limit: '10'
+      });
+
+      const response = await fetch(`${API_BASE_URL}/phone-numbers/search/available?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      console.log("[SEARCH] Response status:", response.status);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.log("[SEARCH] Error response:", errorData);
+        throw new Error(errorData.error || errorData.details || "Failed to search available numbers");
+      }
+
+      const data = await response.json();
+      console.log("[SEARCH] Success:", data);
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("[SEARCH] Error searching numbers:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async purchasePhoneNumber(phoneNumber: string, countryCode?: string): Promise<ApiResponse<any>> {
+    try {
+      console.log("[PURCHASE] Requesting phone number purchase:", { phoneNumber, countryCode });
       const headers = await getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/phone-numbers/purchase`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ countryCode, areaCode, capabilities }),
+        body: JSON.stringify({ phoneNumber, countryCode }),
       });
+
+      console.log("[PURCHASE] Response status:", response.status);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to purchase phone number");
+        console.log("[PURCHASE] Error response:", errorData);
+        throw new Error(errorData.error || errorData.details || "Failed to purchase phone number");
       }
 
       const data = await response.json();
+      console.log("[PURCHASE] Success:", data);
       return { data: data.data, error: null };
     } catch (error) {
-      console.error("Error purchasing phone number:", error);
+      console.error("[PURCHASE] Error purchasing phone number:", error);
       return { data: null, error: (error as Error).message };
     }
   },

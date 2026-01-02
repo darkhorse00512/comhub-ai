@@ -200,11 +200,11 @@ class PhoneNumbersController {
     }
   };
 
-  // Purchase a new Twilio phone number
-  purchasePhoneNumber = async (req: Request, res: Response): Promise<void> => {
+  // Search for available phone numbers without purchasing
+  searchAvailableNumbers = async (req: Request, res: Response): Promise<void> => {
     try {
       const userId = (req as any).user?.id;
-      const { countryCode, areaCode, capabilities } = req.body;
+      const { countryCode, areaCode, capabilities, limit = 10 } = req.query;
 
       if (!userId) {
         res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -216,47 +216,119 @@ class PhoneNumbersController {
         return;
       }
 
-      // Use platform's Twilio account to purchase
+      // Use platform's Twilio account to search
       const twilioClient = twilio(
         process.env.TWILIO_ACCOUNT_SID,
         process.env.TWILIO_AUTH_TOKEN
       );
 
       // Build search criteria
-      const searchOptions: any = {};
-      if (areaCode) {
-        searchOptions.areaCode = areaCode;
+      const searchOptions: any = { limit: Math.min(Number(limit), 20) }; // Max 20 results
+
+      if (areaCode && areaCode !== '') {
+        searchOptions.areaCode = String(areaCode);
       }
+
       if (capabilities) {
-        if (capabilities.voice) searchOptions.voiceEnabled = true;
-        if (capabilities.sms) searchOptions.smsEnabled = true;
-      } else {
-        // Default to voice enabled
-        searchOptions.voiceEnabled = true;
+        const caps = JSON.parse(String(capabilities));
+        if (caps.voice) searchOptions.voiceEnabled = true;
+        if (caps.sms) searchOptions.smsEnabled = true;
       }
+
+      logger.info('Searching for available phone numbers', {
+        countryCode,
+        searchOptions,
+        userId
+      });
 
       // Search for available phone numbers
       const availableNumbers = await twilioClient
-        .availablePhoneNumbers(countryCode)
+        .availablePhoneNumbers(String(countryCode))
         .local
-        .list({ ...searchOptions, limit: 1 });
+        .list(searchOptions);
+
+      logger.info('Available numbers found', { count: availableNumbers?.length });
 
       if (!availableNumbers || availableNumbers.length === 0) {
         res.status(404).json({
           success: false,
-          error: `No available phone numbers found for country code ${countryCode}${areaCode ? ` and area code ${areaCode}` : ''}`
+          error: `No available phone numbers found for country code ${countryCode}${areaCode ? ` and area code ${areaCode}` : ''}. Try a different country or remove the area code filter.`,
+          data: []
         });
         return;
       }
 
-      const selectedNumber = availableNumbers[0];
+      // Format the response with useful information
+      const formattedNumbers = availableNumbers.map(number => ({
+        phoneNumber: number.phoneNumber,
+        friendlyName: number.friendlyName,
+        locality: number.locality,
+        region: number.region,
+        isoCountry: number.isoCountry,
+        capabilities: {
+          voice: number.capabilities?.voice || false,
+          sms: number.capabilities?.sms || false,
+          mms: number.capabilities?.mms || false,
+        },
+        addressRequirements: number.addressRequirements || 'none',
+      }));
+
+      res.status(200).json({
+        success: true,
+        data: formattedNumbers,
+        count: formattedNumbers.length,
+      });
+    } catch (error) {
+      logger.error('Error in searchAvailableNumbers:', error);
+
+      if (error instanceof Error) {
+        if (error.message.includes('21452') || error.message.includes('geo permissions')) {
+          res.status(403).json({
+            success: false,
+            error: 'Your Twilio account does not have permission to search numbers in this country. Enable it in Twilio Console → Phone Numbers → Regulatory Compliance.',
+          });
+          return;
+        }
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to search available phone numbers',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  };
+
+  // Purchase a new Twilio phone number
+  purchasePhoneNumber = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user?.id;
+      const { phoneNumber, countryCode } = req.body;
+
+      if (!userId) {
+        res.status(401).json({ success: false, error: 'Unauthorized' });
+        return;
+      }
+
+      if (!phoneNumber) {
+        res.status(400).json({ success: false, error: 'Phone number is required' });
+        return;
+      }
+
+      // Use platform's Twilio account to purchase
+      const twilioClient = twilio(
+        process.env.TWILIO_ACCOUNT_SID,
+        process.env.TWILIO_AUTH_TOKEN
+      );
+
+      logger.info('Purchasing phone number', { phoneNumber, userId });
 
       // Purchase the phone number
       const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
-        phoneNumber: selectedNumber.phoneNumber,
-        voiceUrl: `${process.env.API_BASE_URL}/twilio/voice`,
+        phoneNumber: phoneNumber,
+        voiceUrl: `${process.env.API_BASE_URL}/api/twilio/voice`,
         voiceMethod: 'POST',
-        statusCallback: `${process.env.API_BASE_URL}/twilio/status`,
+        statusCallback: `${process.env.API_BASE_URL}/api/twilio/status`,
         statusCallbackMethod: 'POST',
       });
 
@@ -267,8 +339,8 @@ class PhoneNumbersController {
           user_id: userId,
           phone_number: purchasedNumber.phoneNumber,
           friendly_name: purchasedNumber.friendlyName,
-          country_code: countryCode,
-          country: selectedNumber.isoCountry,
+          country_code: countryCode || purchasedNumber.isoCountry,
+          country: purchasedNumber.isoCountry,
           type: 'purchased',
           status: 'active',
           twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,
@@ -312,6 +384,22 @@ class PhoneNumbersController {
           res.status(402).json({
             success: false,
             error: 'Insufficient Twilio account balance to purchase number',
+          });
+          return;
+        }
+
+        if (error.message.includes('not available') || error.message.includes('unavailable')) {
+          res.status(404).json({
+            success: false,
+            error: 'Phone numbers are not available for this country/region. Try a different country.',
+          });
+          return;
+        }
+
+        if (error.message.includes('21452') || error.message.includes('geo permissions')) {
+          res.status(403).json({
+            success: false,
+            error: 'Your Twilio account does not have permission to purchase numbers in this country. Enable it in Twilio Console → Phone Numbers → Regulatory Compliance.',
           });
           return;
         }

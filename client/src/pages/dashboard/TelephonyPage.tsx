@@ -94,6 +94,11 @@ const TelephonyPage = () => {
     smsEnabled: false,
   });
 
+  // Available numbers state
+  const [availableNumbers, setAvailableNumbers] = useState<any[]>([]);
+  const [searchingNumbers, setSearchingNumbers] = useState(false);
+  const [selectedNumber, setSelectedNumber] = useState<string | null>(null);
+
   // Fetch phone numbers on mount
   useEffect(() => {
     fetchPhoneNumbers();
@@ -123,7 +128,7 @@ const TelephonyPage = () => {
     }
   };
 
-  const handlePurchaseNumber = async () => {
+  const handleSearchNumbers = async () => {
     if (!purchaseForm.countryCode) {
       toast({
         title: "Validation Error",
@@ -133,15 +138,56 @@ const TelephonyPage = () => {
       return;
     }
 
+    setSearchingNumbers(true);
+    try {
+      const response = await api.searchAvailableNumbers(
+        purchaseForm.countryCode,
+        purchaseForm.areaCode || undefined,
+        { voice: purchaseForm.voiceEnabled, sms: purchaseForm.smsEnabled }
+      );
+
+      if (response.error) {
+        toast({
+          title: "Search Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+        setAvailableNumbers([]);
+      } else {
+        setAvailableNumbers(response.data || []);
+        if (response.data && response.data.length > 0) {
+          toast({
+            title: "Success",
+            description: `Found ${response.data.length} available numbers`,
+          });
+        } else {
+          toast({
+            title: "No Numbers Found",
+            description: "Try different search criteria",
+            variant: "destructive",
+          });
+        }
+      }
+    } finally {
+      setSearchingNumbers(false);
+    }
+  };
+
+  const handlePurchaseNumber = async () => {
+    if (!selectedNumber) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a number to purchase",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setImporting(true);
     try {
       const response = await api.purchasePhoneNumber(
-        purchaseForm.countryCode,
-        purchaseForm.areaCode || undefined,
-        {
-          voice: purchaseForm.voiceEnabled,
-          sms: purchaseForm.smsEnabled,
-        }
+        selectedNumber,
+        purchaseForm.countryCode
       );
 
       if (response.error) {
@@ -162,6 +208,8 @@ const TelephonyPage = () => {
           voiceEnabled: true,
           smsEnabled: false,
         });
+        setAvailableNumbers([]);
+        setSelectedNumber(null);
         setAddMethod(null);
         setShowAddDialog(false);
         // Refresh phone numbers list
@@ -446,72 +494,138 @@ const TelephonyPage = () => {
                   </div>
                 ) : addMethod === "purchase" ? (
                   <div className="py-4 space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="countryCode">Country</Label>
-                      <select
-                        id="countryCode"
-                        className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground"
-                        value={purchaseForm.countryCode}
-                        onChange={(e) =>
-                          setPurchaseForm({ ...purchaseForm, countryCode: e.target.value })
-                        }
-                      >
-                        <option value="US">United States (+1)</option>
-                        <option value="GB">United Kingdom (+44)</option>
-                        <option value="CA">Canada (+1)</option>
-                        <option value="DE">Germany (+49)</option>
-                        <option value="FR">France (+33)</option>
-                        <option value="AU">Australia (+61)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="areaCode">Area Code (Optional)</Label>
-                      <Input
-                        id="areaCode"
-                        placeholder="e.g., 415 for San Francisco"
-                        value={purchaseForm.areaCode}
-                        onChange={(e) =>
-                          setPurchaseForm({ ...purchaseForm, areaCode: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Capabilities</Label>
+                    {/* Step 1: Search Criteria */}
+                    <div className="space-y-4">
                       <div className="space-y-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={purchaseForm.voiceEnabled}
-                            onChange={(e) =>
-                              setPurchaseForm({
-                                ...purchaseForm,
-                                voiceEnabled: e.target.checked,
-                              })
-                            }
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm">Voice calls</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={purchaseForm.smsEnabled}
-                            onChange={(e) =>
-                              setPurchaseForm({
-                                ...purchaseForm,
-                                smsEnabled: e.target.checked,
-                              })
-                            }
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm">SMS messages</span>
-                        </label>
+                        <Label htmlFor="countryCode">Country</Label>
+                        <select
+                          id="countryCode"
+                          className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground"
+                          value={purchaseForm.countryCode}
+                          onChange={(e) =>
+                            setPurchaseForm({ ...purchaseForm, countryCode: e.target.value })
+                          }
+                        >
+                          <option value="US">United States (+1)</option>
+                          <option value="GB">United Kingdom (+44)</option>
+                          <option value="CA">Canada (+1)</option>
+                          <option value="DE">Germany (+49)</option>
+                          <option value="FR">France (+33)</option>
+                          <option value="AU">Australia (+61)</option>
+                        </select>
                       </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="areaCode">Area Code (Optional)</Label>
+                        <Input
+                          id="areaCode"
+                          placeholder="e.g., 415 for San Francisco"
+                          value={purchaseForm.areaCode}
+                          onChange={(e) =>
+                            setPurchaseForm({ ...purchaseForm, areaCode: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Capabilities</Label>
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={purchaseForm.voiceEnabled}
+                              onChange={(e) =>
+                                setPurchaseForm({
+                                  ...purchaseForm,
+                                  voiceEnabled: e.target.checked,
+                                })
+                              }
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">Voice calls</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={purchaseForm.smsEnabled}
+                              onChange={(e) =>
+                                setPurchaseForm({
+                                  ...purchaseForm,
+                                  smsEnabled: e.target.checked,
+                                })
+                              }
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">SMS messages</span>
+                          </label>
+                        </div>
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={handleSearchNumbers}
+                        disabled={searchingNumbers}
+                      >
+                        {searchingNumbers ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Searching...
+                          </>
+                        ) : (
+                          "Search Numbers"
+                        )}
+                      </Button>
                     </div>
+
+                    {/* Step 2: Available Numbers List */}
+                    {availableNumbers.length > 0 && (
+                      <div className="space-y-2">
+                        <Label>Available Numbers</Label>
+                        <div className="max-h-60 overflow-y-auto space-y-2 border border-border rounded-md p-2">
+                          {availableNumbers.map((number) => (
+                            <label
+                              key={number.phoneNumber}
+                              className="flex items-start gap-3 p-3 rounded-lg border border-border hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer"
+                            >
+                              <input
+                                type="radio"
+                                name="selectedNumber"
+                                value={number.phoneNumber}
+                                checked={selectedNumber === number.phoneNumber}
+                                onChange={(e) => setSelectedNumber(e.target.value)}
+                                className="mt-1 w-4 h-4"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-mono font-semibold text-foreground">
+                                  {number.phoneNumber}
+                                </p>
+                                <div className="text-xs text-muted-foreground space-y-0.5">
+                                  {number.locality && (
+                                    <p>Location: {number.locality}{number.region ? `, ${number.region}` : ''}</p>
+                                  )}
+                                  {number.capabilities && (
+                                    <p>
+                                      Capabilities: {[
+                                        number.capabilities.voice && 'Voice',
+                                        number.capabilities.sms && 'SMS',
+                                        number.capabilities.mms && 'MMS'
+                                      ].filter(Boolean).join(', ')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
                     <div className="flex gap-2 pt-2">
                       <Button
                         variant="outline"
-                        onClick={() => setAddMethod(null)}
+                        onClick={() => {
+                          setAddMethod(null);
+                          setAvailableNumbers([]);
+                          setSelectedNumber(null);
+                        }}
                         disabled={importing}
                       >
                         Back
@@ -519,7 +633,7 @@ const TelephonyPage = () => {
                       <Button
                         className="flex-1"
                         onClick={handlePurchaseNumber}
-                        disabled={importing}
+                        disabled={importing || !selectedNumber}
                       >
                         {importing ? (
                           <>
@@ -527,7 +641,7 @@ const TelephonyPage = () => {
                             Purchasing...
                           </>
                         ) : (
-                          "Purchase Number"
+                          "Purchase Selected Number"
                         )}
                       </Button>
                     </div>
