@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Card,
@@ -13,27 +14,73 @@ import {
   TrendingUp,
   PhoneIncoming,
   PhoneOutgoing,
-  DollarSign,
+  CheckCircle2,
+  XCircle,
+  Loader2,
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { api } from "@/services/api";
+
+interface UsageStats {
+  totalCalls: number;
+  totalMinutes: number;
+  inboundCalls: number;
+  outboundCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  successRate: number;
+}
 
 const UsagePage = () => {
-  // Mock data - in production this would come from API
-  const stats = {
-    totalCalls: 156,
-    totalMinutes: 423,
-    inboundCalls: 89,
-    outboundCalls: 67,
-    avgCallDuration: "2:43",
-    monthlySpend: "$42.50",
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<UsageStats>({
+    totalCalls: 0,
+    totalMinutes: 0,
+    inboundCalls: 0,
+    outboundCalls: 0,
+    successfulCalls: 0,
+    failedCalls: 0,
+    successRate: 0,
+  });
+
+  useEffect(() => {
+    fetchUsageStats();
+  }, []);
+
+  const fetchUsageStats = async () => {
+    setLoading(true);
+    try {
+      const response = await api.getUsageStatistics();
+      if (response.error) {
+        toast({
+          title: "Error",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else if (response.data) {
+        setStats(response.data);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to fetch usage statistics",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const recentUsage = [
-    { date: "Today", calls: 12, minutes: 34 },
-    { date: "Yesterday", calls: 18, minutes: 52 },
-    { date: "Dec 28", calls: 15, minutes: 41 },
-    { date: "Dec 27", calls: 22, minutes: 68 },
-    { date: "Dec 26", calls: 9, minutes: 28 },
-  ];
+  const avgCallDuration = stats.totalCalls > 0
+    ? Math.floor(stats.totalMinutes / stats.totalCalls)
+    : 0;
+
+  const formatDuration = (minutes: number) => {
+    const mins = Math.floor(minutes);
+    const secs = Math.floor((minutes - mins) * 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -61,7 +108,11 @@ const UsagePage = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Total Calls</p>
                   <p className="text-3xl font-bold text-foreground mt-1">
-                    {stats.totalCalls}
+                    {loading ? (
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      stats.totalCalls
+                    )}
                   </p>
                 </div>
                 <div className="p-3 rounded-xl bg-primary/10">
@@ -69,9 +120,7 @@ const UsagePage = () => {
                 </div>
               </div>
               <div className="flex items-center gap-1 mt-4 text-sm">
-                <TrendingUp className="w-4 h-4 text-green-500" />
-                <span className="text-green-500">+12%</span>
-                <span className="text-muted-foreground">vs last month</span>
+                <span className="text-muted-foreground">All time total</span>
               </div>
             </CardContent>
           </Card>
@@ -88,7 +137,11 @@ const UsagePage = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Total Minutes</p>
                   <p className="text-3xl font-bold text-foreground mt-1">
-                    {stats.totalMinutes}
+                    {loading ? (
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      Math.floor(stats.totalMinutes)
+                    )}
                   </p>
                 </div>
                 <div className="p-3 rounded-xl bg-blue-500/10">
@@ -96,9 +149,9 @@ const UsagePage = () => {
                 </div>
               </div>
               <div className="flex items-center gap-1 mt-4 text-sm">
-                <TrendingUp className="w-4 h-4 text-green-500" />
-                <span className="text-green-500">+8%</span>
-                <span className="text-muted-foreground">vs last month</span>
+                <span className="text-muted-foreground">
+                  Avg {formatDuration(avgCallDuration)} per call
+                </span>
               </div>
             </CardContent>
           </Card>
@@ -113,17 +166,23 @@ const UsagePage = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Monthly Spend</p>
+                  <p className="text-sm text-muted-foreground">Success Rate</p>
                   <p className="text-3xl font-bold text-foreground mt-1">
-                    {stats.monthlySpend}
+                    {loading ? (
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      `${stats.successRate.toFixed(1)}%`
+                    )}
                   </p>
                 </div>
                 <div className="p-3 rounded-xl bg-green-500/10">
-                  <DollarSign className="w-6 h-6 text-green-500" />
+                  <CheckCircle2 className="w-6 h-6 text-green-500" />
                 </div>
               </div>
               <div className="flex items-center gap-1 mt-4 text-sm">
-                <span className="text-muted-foreground">Based on current usage</span>
+                <span className="text-muted-foreground">
+                  {stats.successfulCalls} successful, {stats.failedCalls} failed
+                </span>
               </div>
             </CardContent>
           </Card>
@@ -143,11 +202,17 @@ const UsagePage = () => {
               <CardDescription>Inbound vs Outbound calls</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-green-500/10">
-                      <PhoneIncoming className="w-5 h-5 text-green-500" />
+              {loading ? (
+                <div className="text-center py-12">
+                  <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                  <p className="text-sm text-muted-foreground">Loading data...</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-green-500/10">
+                        <PhoneIncoming className="w-5 h-5 text-green-500" />
                     </div>
                     <div>
                       <p className="font-medium text-foreground">Inbound Calls</p>
@@ -211,7 +276,7 @@ const UsagePage = () => {
                     </span>
                   </div>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -223,75 +288,85 @@ const UsagePage = () => {
         >
           <Card className="bg-card/50 backdrop-blur border-border/50">
             <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Daily call summary</CardDescription>
+              <CardTitle>Call Success</CardTitle>
+              <CardDescription>Successful vs Failed calls</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {recentUsage.map((day, index) => (
-                  <div
-                    key={day.date}
-                    className="flex items-center justify-between p-3 rounded-lg hover:bg-secondary/30 transition-colors"
-                  >
+              {loading ? (
+                <div className="text-center py-12">
+                  <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                  <p className="text-sm text-muted-foreground">Loading data...</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <BarChart3 className="w-5 h-5 text-primary" />
+                      <div className="p-2 rounded-lg bg-green-500/10">
+                        <CheckCircle2 className="w-5 h-5 text-green-500" />
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">{day.date}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {day.calls} calls
-                        </p>
+                        <p className="font-medium text-foreground">Successful</p>
+                        <p className="text-sm text-muted-foreground">Completed calls</p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-foreground">{day.minutes} min</p>
+                      <p className="text-2xl font-bold text-foreground">
+                        {stats.successfulCalls}
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-red-500/10">
+                        <XCircle className="w-5 h-5 text-red-500" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">Failed</p>
+                        <p className="text-sm text-muted-foreground">Unsuccessful calls</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-foreground">
+                        {stats.failedCalls}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="pt-2">
+                    <div className="flex h-3 rounded-full overflow-hidden bg-secondary">
+                      <div
+                        className="bg-green-500 transition-all"
+                        style={{
+                          width: `${stats.totalCalls > 0 ? (stats.successfulCalls / stats.totalCalls) * 100 : 0}%`,
+                        }}
+                      />
+                      <div
+                        className="bg-red-500 transition-all"
+                        style={{
+                          width: `${stats.totalCalls > 0 ? (stats.failedCalls / stats.totalCalls) * 100 : 0}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="flex justify-between mt-2 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-green-500" />
+                        Success
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500" />
+                        Failed
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
       </div>
 
-      {/* Additional Stats */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.35 }}
-      >
-        <Card className="bg-card/50 backdrop-blur border-border/50">
-          <CardHeader>
-            <CardTitle>Performance Metrics</CardTitle>
-            <CardDescription>Key performance indicators for your calls</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-3 gap-6">
-              <div className="text-center p-4 rounded-xl bg-secondary/30">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Avg. Call Duration
-                </p>
-                <p className="text-2xl font-bold text-foreground">
-                  {stats.avgCallDuration}
-                </p>
-              </div>
-              <div className="text-center p-4 rounded-xl bg-secondary/30">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Successful Calls
-                </p>
-                <p className="text-2xl font-bold text-green-500">94%</p>
-              </div>
-              <div className="text-center p-4 rounded-xl bg-secondary/30">
-                <p className="text-sm text-muted-foreground mb-2">
-                  AI Response Rate
-                </p>
-                <p className="text-2xl font-bold text-blue-500">98%</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
     </div>
   );
 };

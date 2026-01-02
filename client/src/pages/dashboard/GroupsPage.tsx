@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Card,
   CardContent,
@@ -35,49 +45,62 @@ import {
   Bot,
   Copy,
   Check,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { api } from "@/services/api";
 
 interface Group {
   id: string;
   name: string;
-  description: string;
-  phoneNumbers: string[];
-  agentCount: number;
-  sipPassword: string;
-  createdAt: string;
+  description?: string;
+  sip_password: string;
+  created_at: string;
+  phone_count?: number;
 }
 
 const GroupsPage = () => {
   const { toast } = useToast();
-  const [groups, setGroups] = useState<Group[]>([
-    {
-      id: "1",
-      name: "Sales Team",
-      description: "Outbound sales calls and follow-ups",
-      phoneNumbers: ["+4915888656842"],
-      agentCount: 3,
-      sipPassword: "sip_pass_abc123",
-      createdAt: "2024-01-15",
-    },
-    {
-      id: "2",
-      name: "Support Team",
-      description: "Customer support inbound calls",
-      phoneNumbers: [],
-      agentCount: 5,
-      sipPassword: "sip_pass_def456",
-      createdAt: "2024-01-20",
-    },
-  ]);
-
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
   });
+
+  // Fetch groups on mount
+  useEffect(() => {
+    fetchGroups();
+  }, []);
+
+  const fetchGroups = async () => {
+    setLoading(true);
+    try {
+      const response = await api.getGroups();
+      if (response.error) {
+        toast({
+          title: "Error",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        setGroups(response.data || []);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to fetch groups",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const copyToClipboard = async (text: string, id: string) => {
     try {
@@ -105,59 +128,105 @@ const GroupsPage = () => {
     }
   };
 
-  const handleCreateGroup = () => {
+  const handleCreateGroup = async () => {
     if (!formData.name.trim()) {
       toast({
-        title: "Error",
+        title: "Validation Error",
         description: "Group name is required",
         variant: "destructive",
       });
       return;
     }
 
-    const newGroup: Group = {
-      id: Date.now().toString(),
-      name: formData.name,
-      description: formData.description,
-      phoneNumbers: [],
-      agentCount: 0,
-      sipPassword: `sip_pass_${Math.random().toString(36).substring(7)}`,
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-
-    setGroups([...groups, newGroup]);
-    setFormData({ name: "", description: "" });
-    setShowCreateDialog(false);
-    toast({
-      title: "Group created",
-      description: `${newGroup.name} has been created successfully`,
-    });
+    setSaving(true);
+    try {
+      const response = await api.createGroup(formData.name, formData.description);
+      if (response.error) {
+        toast({
+          title: "Create Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Group created successfully",
+        });
+        setFormData({ name: "", description: "" });
+        setShowCreateDialog(false);
+        await fetchGroups();
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to create group",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleUpdateGroup = () => {
+  const handleUpdateGroup = async () => {
     if (!editingGroup || !formData.name.trim()) return;
 
-    setGroups(
-      groups.map((g) =>
-        g.id === editingGroup.id
-          ? { ...g, name: formData.name, description: formData.description }
-          : g
-      )
-    );
-    setEditingGroup(null);
-    setFormData({ name: "", description: "" });
-    toast({
-      title: "Group updated",
-      description: "Group has been updated successfully",
-    });
+    setSaving(true);
+    try {
+      const response = await api.updateGroup(editingGroup.id, {
+        name: formData.name,
+        description: formData.description,
+      });
+      if (response.error) {
+        toast({
+          title: "Update Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Group updated successfully",
+        });
+        setEditingGroup(null);
+        setFormData({ name: "", description: "" });
+        await fetchGroups();
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update group",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDeleteGroup = (id: string) => {
-    setGroups(groups.filter((g) => g.id !== id));
-    toast({
-      title: "Group deleted",
-      description: "Group has been deleted successfully",
-    });
+  const handleDeleteGroup = async (id: string) => {
+    try {
+      const response = await api.deleteGroup(id);
+      if (response.error) {
+        toast({
+          title: "Delete Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Group deleted successfully",
+        });
+        setGroups(groups.filter((g) => g.id !== id));
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete group",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteConfirm(null);
+    }
   };
 
   const openEditDialog = (group: Group) => {
@@ -179,7 +248,7 @@ const GroupsPage = () => {
       </motion.div>
 
       {/* Stats */}
-      <div className="grid sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid sm:grid-cols-2 gap-4 mb-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -191,7 +260,11 @@ const GroupsPage = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Total Groups</p>
                   <p className="text-3xl font-bold text-foreground mt-1">
-                    {groups.length}
+                    {loading ? (
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      groups.length
+                    )}
                   </p>
                 </div>
                 <div className="p-3 rounded-xl bg-primary/10">
@@ -211,31 +284,13 @@ const GroupsPage = () => {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Agents</p>
-                  <p className="text-3xl font-bold text-foreground mt-1">
-                    {groups.reduce((acc, g) => acc + g.agentCount, 0)}
-                  </p>
-                </div>
-                <div className="p-3 rounded-xl bg-blue-500/10">
-                  <Bot className="w-6 h-6 text-blue-500" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <Card className="bg-card/50 backdrop-blur border-border/50">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
                   <p className="text-sm text-muted-foreground">Assigned Numbers</p>
                   <p className="text-3xl font-bold text-foreground mt-1">
-                    {groups.reduce((acc, g) => acc + g.phoneNumbers.length, 0)}
+                    {loading ? (
+                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                    ) : (
+                      groups.reduce((acc, g) => acc + (g.phone_count || 0), 0)
+                    )}
                   </p>
                 </div>
                 <div className="p-3 rounded-xl bg-green-500/10">
@@ -298,15 +353,31 @@ const GroupsPage = () => {
                       }
                     />
                   </div>
-                  <Button onClick={handleCreateGroup} className="w-full">
-                    Create Group
+                  <Button
+                    onClick={handleCreateGroup}
+                    className="w-full"
+                    disabled={saving}
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      "Create Group"
+                    )}
                   </Button>
                 </div>
               </DialogContent>
             </Dialog>
           </CardHeader>
           <CardContent>
-            {groups.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-12">
+                <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                <p className="text-sm text-muted-foreground">Loading groups...</p>
+              </div>
+            ) : groups.length === 0 ? (
               <div className="text-center py-12">
                 <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="font-semibold text-foreground mb-2">
@@ -354,7 +425,7 @@ const GroupsPage = () => {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive"
-                            onClick={() => handleDeleteGroup(group.id)}
+                            onClick={() => setDeleteConfirm(group.id)}
                           >
                             <Trash2 className="w-4 h-4 mr-2" />
                             Delete
@@ -363,40 +434,35 @@ const GroupsPage = () => {
                       </DropdownMenu>
                     </div>
 
-                    <div className="grid sm:grid-cols-3 gap-4 mb-3">
+                    <div className="grid sm:grid-cols-2 gap-4 mb-3">
                       <div className="flex items-center gap-2 text-sm">
                         <Phone className="w-4 h-4 text-muted-foreground" />
                         <span className="text-muted-foreground">
-                          {group.phoneNumbers.length} phone numbers
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <Bot className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-muted-foreground">
-                          {group.agentCount} agents
+                          {group.phone_count || 0} phone numbers
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        Created {group.createdAt}
+                        Created {new Date(group.created_at).toLocaleDateString()}
                       </div>
                     </div>
 
                     {/* SIP Password */}
                     <div className="p-3 rounded-lg bg-background/50 border border-border/50">
                       <div className="flex items-center justify-between">
-                        <div>
+                        <div className="flex-1">
                           <p className="text-xs text-muted-foreground mb-1">
-                            SIP Password
+                            SIP Password (use for SoftPhone configuration)
                           </p>
-                          <p className="font-mono text-sm text-foreground">
-                            {group.sipPassword}
+                          <p className="font-mono text-sm text-foreground break-all">
+                            {group.sip_password}
                           </p>
                         </div>
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="shrink-0 ml-2"
                           onClick={() =>
-                            copyToClipboard(group.sipPassword, group.id)
+                            copyToClipboard(group.sip_password, group.id)
                           }
                         >
                           {copied === group.id ? (
@@ -448,12 +514,44 @@ const GroupsPage = () => {
                 }
               />
             </div>
-            <Button onClick={handleUpdateGroup} className="w-full">
-              Save Changes
+            <Button
+              onClick={handleUpdateGroup}
+              className="w-full"
+              disabled={saving}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save Changes"
+              )}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this group. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteConfirm && handleDeleteGroup(deleteConfirm)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
