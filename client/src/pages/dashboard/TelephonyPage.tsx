@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Phone,
   Settings2,
   Plus,
@@ -32,6 +42,7 @@ import {
   ChevronRight,
   Trash2,
   MoreVertical,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -39,31 +50,34 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
+import { api } from "@/services/api";
 
 interface PhoneNumber {
   id: string;
-  number: string;
-  country: string;
+  phone_number: string;
+  friendly_name?: string;
+  country?: string;
+  country_code?: string;
   status: "active" | "pending" | "inactive";
   type: "purchased" | "imported";
-  createdAt: string;
+  created_at: string;
+  twilio_capabilities?: {
+    voice?: boolean;
+    sms?: boolean;
+  };
 }
 
 const TelephonyPage = () => {
-  const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([
-    {
-      id: "1",
-      number: "+4915888656842",
-      country: "Germany",
-      status: "active",
-      type: "purchased",
-      createdAt: "2024-01-15",
-    },
-  ]);
+  const { toast } = useToast();
+  const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showSipGuide, setShowSipGuide] = useState(false);
   const [addMethod, setAddMethod] = useState<"purchase" | "import" | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // Import form state
   const [importForm, setImportForm] = useState({
@@ -71,6 +85,115 @@ const TelephonyPage = () => {
     authToken: "",
     phoneNumberSid: "",
   });
+
+  // Fetch phone numbers on mount
+  useEffect(() => {
+    fetchPhoneNumbers();
+  }, []);
+
+  const fetchPhoneNumbers = async () => {
+    setLoading(true);
+    try {
+      const response = await api.getPhoneNumbers();
+      if (response.error) {
+        toast({
+          title: "Error",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        setPhoneNumbers(response.data || []);
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to fetch phone numbers",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportNumber = async () => {
+    if (!importForm.accountSid || !importForm.authToken || !importForm.phoneNumberSid) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const response = await api.importPhoneNumber(
+        importForm.accountSid,
+        importForm.authToken,
+        importForm.phoneNumberSid
+      );
+
+      if (response.error) {
+        toast({
+          title: "Import Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Phone number imported successfully",
+        });
+        // Reset form and dialog
+        setImportForm({
+          accountSid: "",
+          authToken: "",
+          phoneNumberSid: "",
+        });
+        setAddMethod(null);
+        setShowAddDialog(false);
+        // Refresh phone numbers list
+        await fetchPhoneNumbers();
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDeleteNumber = async (id: string) => {
+    try {
+      const response = await api.deletePhoneNumber(id);
+
+      if (response.error) {
+        toast({
+          title: "Delete Failed",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: "Phone number deleted successfully",
+        });
+        // Update local state
+        setPhoneNumbers(phoneNumbers.filter((p) => p.id !== id));
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete phone number",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteConfirm(null);
+    }
+  };
 
   const copyToClipboard = async (text: string, id: string) => {
     try {
@@ -89,13 +212,18 @@ const TelephonyPage = () => {
       }
       setCopied(id);
       setTimeout(() => setCopied(null), 2000);
+      toast({
+        title: "Copied",
+        description: "Copied to clipboard",
+      });
     } catch (err) {
       console.error("Copy failed:", err);
+      toast({
+        title: "Error",
+        description: "Failed to copy to clipboard",
+        variant: "destructive",
+      });
     }
-  };
-
-  const handleDeleteNumber = (id: string) => {
-    setPhoneNumbers(phoneNumbers.filter((p) => p.id !== id));
   };
 
   return (
@@ -307,10 +435,27 @@ const TelephonyPage = () => {
                       />
                     </div>
                     <div className="flex gap-2 pt-2">
-                      <Button variant="outline" onClick={() => setAddMethod(null)}>
+                      <Button
+                        variant="outline"
+                        onClick={() => setAddMethod(null)}
+                        disabled={importing}
+                      >
                         Back
                       </Button>
-                      <Button className="flex-1">Import Number</Button>
+                      <Button
+                        className="flex-1"
+                        onClick={handleImportNumber}
+                        disabled={importing}
+                      >
+                        {importing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Importing...
+                          </>
+                        ) : (
+                          "Import Number"
+                        )}
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -318,7 +463,14 @@ const TelephonyPage = () => {
             </Dialog>
           </CardHeader>
           <CardContent>
-            {phoneNumbers.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-12">
+                <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                <p className="text-sm text-muted-foreground">
+                  Loading phone numbers...
+                </p>
+              </div>
+            ) : phoneNumbers.length === 0 ? (
               <div className="text-center py-12">
                 <Phone className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="font-semibold text-foreground mb-2">
@@ -345,12 +497,18 @@ const TelephonyPage = () => {
                       </div>
                       <div>
                         <p className="font-mono font-semibold text-foreground">
-                          {phone.number}
+                          {phone.phone_number}
                         </p>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span>{phone.country}</span>
+                          <span>{phone.country || phone.country_code || "Unknown"}</span>
                           <span>•</span>
                           <span className="capitalize">{phone.type}</span>
+                          {phone.twilio_capabilities?.voice && (
+                            <>
+                              <span>•</span>
+                              <span>Voice</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -374,14 +532,14 @@ const TelephonyPage = () => {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onClick={() => copyToClipboard(phone.number, phone.id)}
+                            onClick={() => copyToClipboard(phone.phone_number, phone.id)}
                           >
                             <Copy className="w-4 h-4 mr-2" />
                             Copy Number
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive"
-                            onClick={() => handleDeleteNumber(phone.id)}
+                            onClick={() => setDeleteConfirm(phone.id)}
                           >
                             <Trash2 className="w-4 h-4 mr-2" />
                             Delete
@@ -570,6 +728,27 @@ const TelephonyPage = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this phone number from your account. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteConfirm && handleDeleteNumber(deleteConfirm)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
