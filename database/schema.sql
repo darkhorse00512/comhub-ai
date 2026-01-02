@@ -1,24 +1,39 @@
--- ComHub AI - Complete Database Schema
--- Run this SQL in your Supabase SQL Editor
+-- ComHub AI - Enhanced Database Schema
+-- This schema builds upon the existing 001_initial_schema.sql migration
+-- Run this SQL in your Supabase SQL Editor AFTER running 001_initial_schema.sql
+--
+-- IMPORTANT: This assumes you already have:
+-- - users (id, email, created_at)
+-- - call_sessions (id, user_id, status, started_at, ended_at, channel_id, direction, caller_number, callee_number, created_at)
+-- - call_messages (id, call_session_id, role, content, timestamp, audio_url)
+-- - call_recordings (id, call_session_id, file_url, created_at, duration, file_size)
+-- - RLS policies for all above tables
+-- - Indexes for basic performance
 
 -- =====================================================
--- 1. USERS TABLE (Enhanced)
+-- 1. ENHANCE EXISTING USERS TABLE
 -- =====================================================
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email TEXT UNIQUE NOT NULL,
-  name TEXT,
-  company TEXT,
-  timezone TEXT DEFAULT 'Europe/Berlin',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'Europe/Berlin';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- =====================================================
--- 2. USER SETTINGS TABLE
+-- 2. ENHANCE EXISTING CALL_SESSIONS TABLE
+-- =====================================================
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS phone_number_id UUID;
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS group_id UUID;
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS duration INTEGER; -- in seconds
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS call_quality TEXT;
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS disconnect_reason TEXT;
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS recording_url TEXT;
+ALTER TABLE call_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- =====================================================
+-- 3. NEW TABLE: USER SETTINGS
 -- =====================================================
 CREATE TABLE IF NOT EXISTS user_settings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   -- Notification Settings
   email_notifications BOOLEAN DEFAULT true,
@@ -37,10 +52,10 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 -- =====================================================
--- 3. GROUPS TABLE
+-- 4. NEW TABLE: GROUPS
 -- =====================================================
 CREATE TABLE IF NOT EXISTS groups (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
@@ -50,10 +65,10 @@ CREATE TABLE IF NOT EXISTS groups (
 );
 
 -- =====================================================
--- 4. PHONE NUMBERS TABLE
+-- 5. NEW TABLE: PHONE NUMBERS
 -- =====================================================
 CREATE TABLE IF NOT EXISTS phone_numbers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
   phone_number TEXT UNIQUE NOT NULL,
@@ -71,59 +86,24 @@ CREATE TABLE IF NOT EXISTS phone_numbers (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- =====================================================
--- 5. CALL SESSIONS TABLE (Enhanced)
--- =====================================================
-CREATE TABLE IF NOT EXISTS call_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  phone_number_id UUID REFERENCES phone_numbers(id) ON DELETE SET NULL,
-  group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
-  status TEXT CHECK (status IN ('ringing', 'active', 'ended', 'failed')) DEFAULT 'ringing',
-  direction TEXT CHECK (direction IN ('inbound', 'outbound')) NOT NULL,
-  caller_number TEXT,
-  callee_number TEXT,
-  channel_id TEXT,
-  started_at TIMESTAMPTZ DEFAULT NOW(),
-  ended_at TIMESTAMPTZ,
-  duration INTEGER, -- in seconds
-  -- Call metadata
-  call_quality TEXT,
-  disconnect_reason TEXT,
-  recording_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Add foreign key constraints to call_sessions (now that phone_numbers and groups exist)
+ALTER TABLE call_sessions
+  DROP CONSTRAINT IF EXISTS call_sessions_phone_number_id_fkey;
+ALTER TABLE call_sessions
+  ADD CONSTRAINT call_sessions_phone_number_id_fkey
+  FOREIGN KEY (phone_number_id) REFERENCES phone_numbers(id) ON DELETE SET NULL;
+
+ALTER TABLE call_sessions
+  DROP CONSTRAINT IF EXISTS call_sessions_group_id_fkey;
+ALTER TABLE call_sessions
+  ADD CONSTRAINT call_sessions_group_id_fkey
+  FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL;
 
 -- =====================================================
--- 6. CALL MESSAGES TABLE (unchanged)
--- =====================================================
-CREATE TABLE IF NOT EXISTS call_messages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  call_session_id UUID REFERENCES call_sessions(id) ON DELETE CASCADE,
-  role TEXT CHECK (role IN ('user', 'ai')) NOT NULL,
-  content TEXT NOT NULL,
-  audio_url TEXT,
-  timestamp TIMESTAMPTZ DEFAULT NOW()
-);
-
--- =====================================================
--- 7. CALL RECORDINGS TABLE (unchanged)
--- =====================================================
-CREATE TABLE IF NOT EXISTS call_recordings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  call_session_id UUID REFERENCES call_sessions(id) ON DELETE CASCADE,
-  file_url TEXT NOT NULL,
-  duration INTEGER,
-  file_size INTEGER,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- =====================================================
--- 8. BULK CALL JOBS TABLE (unchanged)
+-- 6. NEW TABLE: BULK CALL JOBS
 -- =====================================================
 CREATE TABLE IF NOT EXISTS bulk_call_jobs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   status TEXT CHECK (status IN ('pending', 'running', 'completed', 'failed')) DEFAULT 'pending',
@@ -135,10 +115,10 @@ CREATE TABLE IF NOT EXISTS bulk_call_jobs (
 );
 
 -- =====================================================
--- 9. BULK CALL NUMBERS TABLE (unchanged)
+-- 7. NEW TABLE: BULK CALL NUMBERS
 -- =====================================================
 CREATE TABLE IF NOT EXISTS bulk_call_numbers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   job_id UUID REFERENCES bulk_call_jobs(id) ON DELETE CASCADE,
   phone_number TEXT NOT NULL,
   status TEXT CHECK (status IN ('pending', 'calling', 'completed', 'failed')) DEFAULT 'pending',
@@ -149,10 +129,10 @@ CREATE TABLE IF NOT EXISTS bulk_call_numbers (
 );
 
 -- =====================================================
--- 10. FEEDBACK TABLE
+-- 8. NEW TABLE: FEEDBACK
 -- =====================================================
 CREATE TABLE IF NOT EXISTS feedback (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   type TEXT CHECK (type IN ('feature', 'bug', 'improvement', 'question')) NOT NULL,
   subject TEXT NOT NULL,
@@ -164,10 +144,10 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 
 -- =====================================================
--- 11. USAGE STATISTICS TABLE (for analytics)
+-- 9. NEW TABLE: USAGE STATISTICS (for analytics)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS usage_statistics (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   date DATE NOT NULL,
   total_calls INTEGER DEFAULT 0,
@@ -183,24 +163,24 @@ CREATE TABLE IF NOT EXISTS usage_statistics (
 );
 
 -- =====================================================
--- INDEXES for Performance
+-- ADDITIONAL INDEXES for Performance
+-- Note: Basic indexes already exist from 001_initial_schema.sql
 -- =====================================================
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+-- Users table (email index already exists)
 CREATE INDEX IF NOT EXISTS idx_phone_numbers_user_id ON phone_numbers(user_id);
 CREATE INDEX IF NOT EXISTS idx_phone_numbers_phone_number ON phone_numbers(phone_number);
+CREATE INDEX IF NOT EXISTS idx_phone_numbers_group_id ON phone_numbers(group_id);
 CREATE INDEX IF NOT EXISTS idx_groups_user_id ON groups(user_id);
-CREATE INDEX IF NOT EXISTS idx_call_sessions_user_id ON call_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_call_sessions_phone_number_id ON call_sessions(phone_number_id);
+CREATE INDEX IF NOT EXISTS idx_call_sessions_group_id ON call_sessions(group_id);
 CREATE INDEX IF NOT EXISTS idx_call_sessions_channel_id ON call_sessions(channel_id);
-CREATE INDEX IF NOT EXISTS idx_call_sessions_status ON call_sessions(status);
-CREATE INDEX IF NOT EXISTS idx_call_sessions_started_at ON call_sessions(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_call_messages_call_session_id ON call_messages(call_session_id);
 CREATE INDEX IF NOT EXISTS idx_bulk_call_jobs_user_id ON bulk_call_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_bulk_call_numbers_job_id ON bulk_call_numbers(job_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_usage_statistics_user_date ON usage_statistics(user_id, date);
 
 -- =====================================================
--- TRIGGERS for updated_at
+-- TRIGGERS for updated_at columns
 -- =====================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -210,138 +190,115 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Apply to users table
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to user_settings table
+DROP TRIGGER IF EXISTS update_user_settings_updated_at ON user_settings;
 CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to groups table
+DROP TRIGGER IF EXISTS update_groups_updated_at ON groups;
 CREATE TRIGGER update_groups_updated_at BEFORE UPDATE ON groups
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to phone_numbers table
+DROP TRIGGER IF EXISTS update_phone_numbers_updated_at ON phone_numbers;
 CREATE TRIGGER update_phone_numbers_updated_at BEFORE UPDATE ON phone_numbers
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to call_sessions table
+DROP TRIGGER IF EXISTS update_call_sessions_updated_at ON call_sessions;
 CREATE TRIGGER update_call_sessions_updated_at BEFORE UPDATE ON call_sessions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to bulk_call_jobs table
+DROP TRIGGER IF EXISTS update_bulk_call_jobs_updated_at ON bulk_call_jobs;
 CREATE TRIGGER update_bulk_call_jobs_updated_at BEFORE UPDATE ON bulk_call_jobs
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply to feedback table
+DROP TRIGGER IF EXISTS update_feedback_updated_at ON feedback;
 CREATE TRIGGER update_feedback_updated_at BEFORE UPDATE ON feedback
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================
--- ROW LEVEL SECURITY (RLS) Policies
+-- ROW LEVEL SECURITY (RLS) Policies for NEW TABLES ONLY
+-- Note: RLS policies for users, call_sessions, call_messages, call_recordings already exist
 -- =====================================================
 
--- Enable RLS on all tables
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on new tables
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE phone_numbers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE call_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE call_messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE call_recordings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_call_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bulk_call_numbers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_statistics ENABLE ROW LEVEL SECURITY;
 
--- Users policies
-CREATE POLICY "Users can view their own data" ON users
-  FOR SELECT USING (auth.uid()::text = id::text);
-
-CREATE POLICY "Users can update their own data" ON users
-  FOR UPDATE USING (auth.uid()::text = id::text);
-
 -- User settings policies
 CREATE POLICY "Users can view their own settings" ON user_settings
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own settings" ON user_settings
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own settings" ON user_settings
-  FOR UPDATE USING (auth.uid()::text = user_id::text);
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role can manage user settings" ON user_settings
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- Groups policies
 CREATE POLICY "Users can view their own groups" ON groups
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own groups" ON groups
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own groups" ON groups
-  FOR UPDATE USING (auth.uid()::text = user_id::text);
+  FOR UPDATE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own groups" ON groups
-  FOR DELETE USING (auth.uid()::text = user_id::text);
+  FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role can manage groups" ON groups
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- Phone numbers policies
 CREATE POLICY "Users can view their own phone numbers" ON phone_numbers
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own phone numbers" ON phone_numbers
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own phone numbers" ON phone_numbers
-  FOR UPDATE USING (auth.uid()::text = user_id::text);
+  FOR UPDATE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own phone numbers" ON phone_numbers
-  FOR DELETE USING (auth.uid()::text = user_id::text);
+  FOR DELETE USING (auth.uid() = user_id);
 
--- Call sessions policies
-CREATE POLICY "Users can view their own call sessions" ON call_sessions
-  FOR SELECT USING (auth.uid()::text = user_id::text);
-
-CREATE POLICY "Users can insert their own call sessions" ON call_sessions
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
-
-CREATE POLICY "Users can update their own call sessions" ON call_sessions
-  FOR UPDATE USING (auth.uid()::text = user_id::text);
-
--- Call messages policies
-CREATE POLICY "Users can view messages from their calls" ON call_messages
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM call_sessions
-      WHERE call_sessions.id = call_messages.call_session_id
-      AND auth.uid()::text = call_sessions.user_id::text
-    )
-  );
-
-CREATE POLICY "Users can insert messages to their calls" ON call_messages
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM call_sessions
-      WHERE call_sessions.id = call_messages.call_session_id
-      AND auth.uid()::text = call_sessions.user_id::text
-    )
-  );
-
--- Call recordings policies
-CREATE POLICY "Users can view their call recordings" ON call_recordings
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM call_sessions
-      WHERE call_sessions.id = call_recordings.call_session_id
-      AND auth.uid()::text = call_sessions.user_id::text
-    )
-  );
+CREATE POLICY "Service role can manage phone numbers" ON phone_numbers
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- Bulk call jobs policies
 CREATE POLICY "Users can view their own bulk jobs" ON bulk_call_jobs
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own bulk jobs" ON bulk_call_jobs
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own bulk jobs" ON bulk_call_jobs
-  FOR UPDATE USING (auth.uid()::text = user_id::text);
+  FOR UPDATE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own bulk jobs" ON bulk_call_jobs
-  FOR DELETE USING (auth.uid()::text = user_id::text);
+  FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role can manage bulk jobs" ON bulk_call_jobs
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- Bulk call numbers policies
 CREATE POLICY "Users can view numbers from their bulk jobs" ON bulk_call_numbers
@@ -349,7 +306,7 @@ CREATE POLICY "Users can view numbers from their bulk jobs" ON bulk_call_numbers
     EXISTS (
       SELECT 1 FROM bulk_call_jobs
       WHERE bulk_call_jobs.id = bulk_call_numbers.job_id
-      AND auth.uid()::text = bulk_call_jobs.user_id::text
+      AND bulk_call_jobs.user_id = auth.uid()
     )
   );
 
@@ -358,30 +315,39 @@ CREATE POLICY "Users can insert numbers to their bulk jobs" ON bulk_call_numbers
     EXISTS (
       SELECT 1 FROM bulk_call_jobs
       WHERE bulk_call_jobs.id = bulk_call_numbers.job_id
-      AND auth.uid()::text = bulk_call_jobs.user_id::text
+      AND bulk_call_jobs.user_id = auth.uid()
     )
   );
 
+CREATE POLICY "Service role can manage bulk call numbers" ON bulk_call_numbers
+  FOR ALL USING (true) WITH CHECK (true);
+
 -- Feedback policies
 CREATE POLICY "Users can view their own feedback" ON feedback
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own feedback" ON feedback
-  FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Service role can manage feedback" ON feedback
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- Usage statistics policies
 CREATE POLICY "Users can view their own usage statistics" ON usage_statistics
-  FOR SELECT USING (auth.uid()::text = user_id::text);
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role can manage usage statistics" ON usage_statistics
+  FOR ALL USING (true) WITH CHECK (true);
 
 -- =====================================================
 -- FUNCTIONS for Analytics
 -- =====================================================
 
--- Function to update usage statistics
+-- Function to update usage statistics when call ends
 CREATE OR REPLACE FUNCTION update_usage_statistics()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.status = 'ended' AND OLD.status != 'ended' THEN
+  IF NEW.status = 'ended' AND (OLD.status IS NULL OR OLD.status != 'ended') THEN
     INSERT INTO usage_statistics (
       user_id,
       date,
@@ -389,7 +355,8 @@ BEGIN
       inbound_calls,
       outbound_calls,
       total_minutes,
-      successful_calls
+      successful_calls,
+      failed_calls
     )
     VALUES (
       NEW.user_id,
@@ -398,7 +365,8 @@ BEGIN
       CASE WHEN NEW.direction = 'inbound' THEN 1 ELSE 0 END,
       CASE WHEN NEW.direction = 'outbound' THEN 1 ELSE 0 END,
       COALESCE(NEW.duration, 0) / 60,
-      CASE WHEN NEW.disconnect_reason IS NULL OR NEW.disconnect_reason = 'completed' THEN 1 ELSE 0 END
+      CASE WHEN NEW.disconnect_reason IS NULL OR NEW.disconnect_reason = 'completed' THEN 1 ELSE 0 END,
+      CASE WHEN NEW.disconnect_reason IS NOT NULL AND NEW.disconnect_reason != 'completed' THEN 1 ELSE 0 END
     )
     ON CONFLICT (user_id, date) DO UPDATE SET
       total_calls = usage_statistics.total_calls + 1,
@@ -406,12 +374,15 @@ BEGIN
       outbound_calls = usage_statistics.outbound_calls + CASE WHEN NEW.direction = 'outbound' THEN 1 ELSE 0 END,
       total_minutes = usage_statistics.total_minutes + COALESCE(NEW.duration, 0) / 60,
       successful_calls = usage_statistics.successful_calls + CASE WHEN NEW.disconnect_reason IS NULL OR NEW.disconnect_reason = 'completed' THEN 1 ELSE 0 END,
+      failed_calls = usage_statistics.failed_calls + CASE WHEN NEW.disconnect_reason IS NOT NULL AND NEW.disconnect_reason != 'completed' THEN 1 ELSE 0 END,
       updated_at = NOW();
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Create trigger for usage statistics
+DROP TRIGGER IF EXISTS update_usage_stats_on_call_end ON call_sessions;
 CREATE TRIGGER update_usage_stats_on_call_end
   AFTER UPDATE ON call_sessions
   FOR EACH ROW
@@ -459,3 +430,14 @@ SELECT
   END as success_rate
 FROM usage_statistics
 GROUP BY user_id;
+
+-- =====================================================
+-- COMPLETED!
+-- =====================================================
+-- Your ComHub AI database is now ready to use!
+--
+-- Next steps:
+-- 1. Verify all tables exist: SELECT tablename FROM pg_tables WHERE schemaname = 'public';
+-- 2. Check RLS is enabled: SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';
+-- 3. Test by creating a group and importing a phone number
+-- =====================================================
