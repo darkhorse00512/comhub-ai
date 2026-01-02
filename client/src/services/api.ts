@@ -93,6 +93,7 @@ const getBackendToken = async (): Promise<string | null> => {
     }
 
     // Exchange Supabase token for backend JWT
+    console.log("[AUTH] Attempting login with email:", session.user.email);
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       headers: {
@@ -105,7 +106,12 @@ const getBackendToken = async (): Promise<string | null> => {
     });
 
     if (!response.ok) {
+      console.log("[AUTH] Login failed, status:", response.status);
+      const loginError = await response.json().catch(() => ({}));
+      console.log("[AUTH] Login error details:", loginError);
+
       // Try to register if login fails
+      console.log("[AUTH] Attempting registration with userId:", session.user.id);
       const registerResponse = await fetch(`${API_BASE_URL}/auth/register`, {
         method: "POST",
         headers: {
@@ -120,17 +126,23 @@ const getBackendToken = async (): Promise<string | null> => {
       if (registerResponse.ok) {
         const registerData =
           (await registerResponse.json()) as BackendResponse<{ token: string }>;
+        console.log("[AUTH] Registration successful!");
         if (registerData.token) {
           localStorage.setItem("backend_token", registerData.token);
           return registerData.token;
         }
+      } else {
+        const registerError = await registerResponse.json().catch(() => ({}));
+        console.error("[AUTH] Registration failed:", registerError);
       }
 
       // Fallback to stored token
+      console.log("[AUTH] Using fallback token from localStorage");
       return localStorage.getItem("backend_token");
     }
 
     const data = (await response.json()) as BackendResponse<{ token: string }>;
+    console.log("[AUTH] Login successful!");
     if (data.token) {
       localStorage.setItem("backend_token", data.token);
       return data.token;
