@@ -59,7 +59,16 @@ const UsagePage = () => {
           variant: "destructive",
         });
       } else if (response.data) {
-        setStats(response.data);
+        // Ensure all fields have default values
+        setStats({
+          totalCalls: response.data.totalCalls || 0,
+          totalMinutes: response.data.totalMinutes || 0,
+          inboundCalls: response.data.inboundCalls || 0,
+          outboundCalls: response.data.outboundCalls || 0,
+          successfulCalls: response.data.successfulCalls || 0,
+          failedCalls: response.data.failedCalls || 0,
+          successRate: response.data.successRate || 0,
+        });
       }
     } catch (error) {
       toast({
@@ -171,7 +180,7 @@ const UsagePage = () => {
                     {loading ? (
                       <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                     ) : (
-                      `${stats.successRate.toFixed(1)}%`
+                      `${(stats.successRate || 0).toFixed(1)}%`
                     )}
                   </p>
                 </div>
