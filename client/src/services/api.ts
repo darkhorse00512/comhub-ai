@@ -81,15 +81,43 @@ const getBackendToken = async (): Promise<string | null> => {
     // Check if we have a valid cached token
     const cachedToken = localStorage.getItem("backend_token");
     if (cachedToken) {
-      // Verify token is still valid by checking expiry (simple check)
+      // First check if token is expired
       try {
         const payload = JSON.parse(atob(cachedToken.split(".")[1]));
-        if (payload.exp && payload.exp * 1000 > Date.now()) {
-          return cachedToken;
+        console.log("[AUTH] Cached token found, expires:", new Date(payload.exp * 1000));
+
+        if (payload.exp && payload.exp * 1000 <= Date.now()) {
+          console.log("[AUTH] Cached token expired, clearing it");
+          localStorage.removeItem("backend_token");
+        } else {
+          // Token not expired, but verify it's actually valid with backend
+          console.log("[AUTH] Verifying cached token with backend...");
+          try {
+            const verifyResponse = await fetch(`${API_BASE_URL}/auth/verify`, {
+              method: "GET",
+              headers: {
+                "Authorization": `Bearer ${cachedToken}`,
+              },
+            });
+
+            if (verifyResponse.ok) {
+              console.log("[AUTH] Cached token is valid, using it");
+              return cachedToken;
+            } else {
+              console.log("[AUTH] Cached token invalid (401), clearing it");
+              localStorage.removeItem("backend_token");
+            }
+          } catch (verifyError) {
+            console.log("[AUTH] Token verification failed, clearing it:", verifyError);
+            localStorage.removeItem("backend_token");
+          }
         }
-      } catch {
-        // Invalid token format, continue to get new one
+      } catch (e) {
+        console.log("[AUTH] Invalid cached token format, clearing it:", e);
+        localStorage.removeItem("backend_token");
       }
+    } else {
+      console.log("[AUTH] No cached token found");
     }
 
     // Exchange Supabase token for backend JWT
