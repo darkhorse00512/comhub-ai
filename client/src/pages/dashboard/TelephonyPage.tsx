@@ -338,25 +338,25 @@ const TelephonyPage = () => {
 
                 {!addMethod ? (
                   <div className="grid gap-4 py-4">
-                    {/* Purchase Option */}
+                    {/* Purchase Option - Disabled */}
                     <div
-                      onClick={() => setAddMethod("purchase")}
-                      className="p-4 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer group"
+                      className="p-4 rounded-xl border border-border/50 bg-muted/30 cursor-not-allowed opacity-60 relative"
                     >
                       <div className="flex items-start gap-4">
-                        <div className="p-2 rounded-lg bg-green-500/10 group-hover:bg-green-500/20 transition-colors">
+                        <div className="p-2 rounded-lg bg-green-500/10">
                           <ShoppingCart className="w-5 h-5 text-green-500" />
                         </div>
                         <div className="flex-1">
                           <h3 className="font-semibold text-foreground mb-1">
                             Purchase new number
+                            <span className="ml-2 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-2 py-1 rounded-full">
+                              Coming Soon
+                            </span>
                           </h3>
                           <p className="text-sm text-muted-foreground">
-                            Buy a new phone number through ComHub's Twilio account. Quick
-                            and easy setup with immediate availability.
+                            Phone number purchasing will be available soon. Please use the import option for now.
                           </p>
                         </div>
-                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary mt-1" />
                       </div>
                     </div>
 
