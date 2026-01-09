@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
-import { supabase } from '../config/supabase';
+import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
+
+const supabase = getSupabaseClient();
 
 /**
  * Get all agents for the authenticated user
