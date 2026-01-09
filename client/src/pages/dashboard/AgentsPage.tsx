@@ -10,15 +10,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { api } from "@/services/api";
+import CreateAgentDialog from "@/components/dialogs/CreateAgentDialog";
 
 interface Agent {
   id: string;
   name: string;
   description: string;
+  group_id: string;
+  groups?: {
+    id: string;
+    name: string;
+  };
   company: string;
   email: string;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
   icon?: string;
 }
 
@@ -27,17 +34,36 @@ const AgentsPage = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   useEffect(() => {
-    // TODO: Fetch agents from API
-    // For now, show empty state
-    setLoading(false);
+    fetchAgents();
   }, []);
 
+  const fetchAgents = async () => {
+    setLoading(true);
+    const response = await api.getAgents();
+    if (response.error) {
+      toast({
+        title: "Error loading agents",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else {
+      setAgents(response.data || []);
+    }
+    setLoading(false);
+  };
+
   const handleCreateAgent = () => {
+    setCreateDialogOpen(true);
+  };
+
+  const handleAgentCreated = (newAgent: Agent) => {
+    setAgents([newAgent, ...agents]);
     toast({
-      title: "Create Agent",
-      description: "This feature is coming soon!",
+      title: "Agent created",
+      description: `${newAgent.name} has been created successfully`,
     });
   };
 
@@ -51,36 +77,59 @@ const AgentsPage = () => {
   const handleEditAgent = (agent: Agent) => {
     toast({
       title: "Edit Agent",
-      description: `Editing ${agent.name}...`,
+      description: "This feature is coming soon!",
     });
   };
 
-  const handleCloneAgent = (agent: Agent) => {
-    toast({
-      title: "Clone Agent",
-      description: `Cloning ${agent.name}...`,
-    });
+  const handleCloneAgent = async (agent: Agent) => {
+    const response = await api.cloneAgent(agent.id);
+    if (response.error) {
+      toast({
+        title: "Error cloning agent",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else if (response.data) {
+      setAgents([response.data, ...agents]);
+      toast({
+        title: "Agent cloned",
+        description: `${agent.name} has been cloned successfully`,
+      });
+    }
   };
 
   const handleExportAgent = (agent: Agent) => {
     toast({
       title: "Export Agent",
-      description: `Exporting ${agent.name}...`,
+      description: "This feature is coming soon!",
     });
   };
 
-  const handleDeleteAgent = (agent: Agent) => {
-    toast({
-      title: "Delete Agent",
-      description: `Deleting ${agent.name}...`,
-      variant: "destructive",
-    });
+  const handleDeleteAgent = async (agent: Agent) => {
+    if (!confirm(`Are you sure you want to delete "${agent.name}"?`)) {
+      return;
+    }
+
+    const response = await api.deleteAgent(agent.id);
+    if (response.error) {
+      toast({
+        title: "Error deleting agent",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else {
+      setAgents(agents.filter((a) => a.id !== agent.id));
+      toast({
+        title: "Agent deleted",
+        description: `${agent.name} has been deleted successfully`,
+      });
+    }
   };
 
   const filteredAgents = agents.filter(
     (agent) =>
       agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.description.toLowerCase().includes(searchQuery.toLowerCase())
+      (agent.description && agent.description.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const formatDate = (dateString: string) => {
@@ -230,32 +279,28 @@ const AgentsPage = () => {
               {/* Agent Details */}
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground line-clamp-2">
-                  {agent.description}
+                  {agent.description || "No description"}
                 </p>
 
                 <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Company:</span>
-                    <span className="text-foreground font-medium">
-                      {agent.company}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Email:</span>
-                    <span className="text-foreground font-medium truncate">
-                      {agent.email}
-                    </span>
-                  </div>
+                  {agent.groups && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Group:</span>
+                      <span className="text-foreground font-medium">
+                        {agent.groups.name}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-3 border-t border-border/50 space-y-1 text-xs text-muted-foreground">
                   <div className="flex justify-between">
                     <span>Created:</span>
-                    <span>{formatDate(agent.createdAt)}</span>
+                    <span>{formatDate(agent.created_at)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Updated:</span>
-                    <span>{formatDate(agent.updatedAt)}</span>
+                    <span>{formatDate(agent.updated_at)}</span>
                   </div>
                 </div>
               </div>
@@ -263,6 +308,13 @@ const AgentsPage = () => {
           ))}
         </div>
       )}
+
+      {/* Create Agent Dialog */}
+      <CreateAgentDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        onSuccess={handleAgentCreated}
+      />
     </div>
   );
 };

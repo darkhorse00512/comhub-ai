@@ -755,6 +755,134 @@ export const api = {
     }
   },
 
+  // Agents APIs
+  async getAgents(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch agents");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching agents:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAgent(id: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${id}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch agent");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async createAgent(agent: any): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(agent),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create agent");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error creating agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateAgent(id: string, updates: any): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${id}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update agent");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteAgent(id: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${id}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete agent");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async cloneAgent(id: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${id}/clone`, {
+        method: "POST",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to clone agent");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error cloning agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   // Settings APIs
   async getSettings(): Promise<ApiResponse<any>> {
     try {

@@ -5,6 +5,7 @@ import twilioRoutes from './twilio.routes';
 import bulkCallRoutes from './bulk-call.routes';
 import phoneNumbersRoutes from './phone-numbers.routes';
 import groupsRoutes from './groups.routes';
+import agentsRoutes from './agents.routes';
 import settingsRoutes from './settings.routes';
 import feedbackRoutes from './feedback.routes';
 import config from '../config';
@@ -17,6 +18,7 @@ router.use('/twilio', twilioRoutes);
 router.use('/bulk-calls', bulkCallRoutes);
 router.use('/phone-numbers', phoneNumbersRoutes);
 router.use('/groups', groupsRoutes);
+router.use('/agents', agentsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/feedback', feedbackRoutes);
 
