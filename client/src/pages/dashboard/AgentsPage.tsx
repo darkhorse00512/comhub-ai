@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ interface Agent {
 }
 
 const AgentsPage = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -226,14 +228,17 @@ const AgentsPage = () => {
             >
               {/* Agent Header */}
               <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
+                <div
+                  className="flex items-center gap-3 cursor-pointer flex-1"
+                  onClick={() => navigate(`/dashboard/agents/${agent.id}/studio`)}
+                >
                   <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shadow-glow shrink-0">
                     <span className="text-xl font-bold text-primary-foreground">
                       {agent.icon || agent.name.charAt(0).toUpperCase()}
                     </span>
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground text-lg">
+                    <h3 className="font-semibold text-foreground text-lg hover:text-primary transition-colors">
                       {agent.name}
                     </h3>
                   </div>
