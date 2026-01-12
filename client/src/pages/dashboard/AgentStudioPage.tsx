@@ -17,7 +17,7 @@ import {
   Zap,
   Phone,
   Clock,
-  Tool,
+  Wrench,
   AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,7 @@ const nodeTypes = [
   { type: "function", label: "Function", icon: Zap, color: "orange" },
   { type: "call_transfer", label: "Call Transfer", icon: Phone, color: "teal" },
   { type: "time_limit", label: "Time Limit", icon: Clock, color: "red" },
-  { type: "reconfigure", label: "Reconfigure", icon: Tool, color: "indigo" },
+  { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "indigo" },
   { type: "fallback", label: "Fallback", icon: AlertCircle, color: "gray" },
 ];
 
