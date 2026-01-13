@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import ReactFlow, {
+import {
+  ReactFlow,
   Node,
   Edge,
   addEdge,
@@ -34,7 +35,6 @@ import {
   Wrench,
   AlertCircle,
   PhoneCall,
-  PhoneIncoming,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -81,7 +81,6 @@ const leftMenuItems = [
 const AgentStudioPage = () => {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
   const { toast } = useToast();
 
   const [agent, setAgent] = useState<Agent | null>(null);
