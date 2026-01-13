@@ -1,37 +1,52 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import ReactFlow, {
+  Node,
+  Edge,
+  addEdge,
+  Background,
+  Controls,
+  MiniMap,
+  Connection,
+  useNodesState,
+  useEdgesState,
+  MarkerType,
+} from "reactflow";
+import "reactflow/dist/style.css";
 import {
   Save,
   Upload,
   Rocket,
   History,
   Database,
-  ChevronLeft,
-  Plus,
-  FileCode,
-  MessageSquare,
+  Bot,
   Settings,
+  PhoneOutgoing,
+  Phone,
+  MessageSquare,
+  BarChart3,
+  MessageCircle,
+  FileCode,
   GitBranch,
   ToggleLeft,
   Zap,
-  Phone,
   Clock,
   Wrench,
   AlertCircle,
+  PhoneCall,
+  PhoneIncoming,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
+import AgentSetupNode from "@/components/nodes/AgentSetupNode";
+import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 
-interface Node {
-  id: string;
-  type: string;
-  label: string;
-  x: number;
-  y: number;
-  data?: any;
-}
+// Register custom node types
+const nodeTypes = {
+  agentSetup: AgentSetupNode,
+  callDirection: CallDirectionNode,
+};
 
 interface Agent {
   id: string;
@@ -40,33 +55,40 @@ interface Agent {
   config: any;
 }
 
-const nodeTypes = [
-  { type: "scripted", label: "Scripted", icon: FileCode, color: "blue" },
-  { type: "dialogue", label: "Dialogue", icon: MessageSquare, color: "green" },
-  { type: "field_setter", label: "Field Setter", icon: Settings, color: "yellow" },
-  { type: "junction", label: "Junction", icon: GitBranch, color: "purple" },
-  { type: "switch", label: "Switch", icon: ToggleLeft, color: "pink" },
-  { type: "function", label: "Function", icon: Zap, color: "orange" },
-  { type: "call_transfer", label: "Call Transfer", icon: Phone, color: "teal" },
-  { type: "time_limit", label: "Time Limit", icon: Clock, color: "red" },
-  { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "indigo" },
-  { type: "fallback", label: "Fallback", icon: AlertCircle, color: "gray" },
+const nodeCategories = [
+  { type: "scripted", label: "Scripted", icon: FileCode, color: "bg-blue-100 text-blue-600", borderColor: "border-blue-400" },
+  { type: "dialogue", label: "Dialogue", icon: MessageSquare, color: "bg-green-100 text-green-600", borderColor: "border-green-400" },
+  { type: "field_setter", label: "Field Setter", icon: Zap, color: "bg-yellow-100 text-yellow-600", borderColor: "border-yellow-400" },
+  { type: "junction", label: "Junction", icon: GitBranch, color: "bg-purple-100 text-purple-600", borderColor: "border-purple-400" },
+  { type: "switch", label: "Switch", icon: ToggleLeft, color: "bg-pink-100 text-pink-600", borderColor: "border-pink-400" },
+  { type: "function", label: "Function", icon: Zap, color: "bg-orange-100 text-orange-600", borderColor: "border-orange-400" },
+  { type: "call_transfer", label: "Call Transfer", icon: Phone, color: "bg-teal-100 text-teal-600", borderColor: "border-teal-400" },
+  { type: "time_limit", label: "Time Limit", icon: Clock, color: "bg-red-100 text-red-600", borderColor: "border-red-400" },
+  { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
+  { type: "fallback", label: "Fallback", icon: AlertCircle, color: "bg-gray-100 text-gray-600", borderColor: "border-gray-400" },
+];
+
+const leftMenuItems = [
+  { id: "studio", label: "Studio", icon: Bot, path: "studio" },
+  { id: "configure", label: "Configure", icon: Settings, path: "configure" },
+  { id: "outbound", label: "Outbound", icon: PhoneOutgoing, path: "outbound" },
+  { id: "calls", label: "Calls", icon: Phone, path: "calls" },
+  { id: "chats", label: "Chats", icon: MessageCircle, path: "chats" },
+  { id: "analytics", label: "Analytics", icon: BarChart3, path: "analytics" },
+  { id: "feedback", label: "Feedback", icon: MessageSquare, path: "feedback" },
 ];
 
 const AgentStudioPage = () => {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
 
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
-  const [nodes, setNodes] = useState<Node[]>([
-    { id: "agent_entry", type: "agent_entry", label: "Agent Entry", x: 150, y: 100 },
-    { id: "start", type: "start", label: "Start", x: 150, y: 200 },
-  ]);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggedNodeType, setDraggedNodeType] = useState<string | null>(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
 
   useEffect(() => {
     if (agentId) {
@@ -88,21 +110,86 @@ const AgentStudioPage = () => {
       navigate("/dashboard/agents");
     } else {
       setAgent(response.data);
-      // Load nodes from agent config if available
-      if (response.data?.config?.nodes) {
-        setNodes(response.data.config.nodes);
+      // Load flow from agent config
+      if (response.data?.config?.flow) {
+        setNodes(response.data.config.flow.nodes || []);
+        setEdges(response.data.config.flow.edges || []);
+      } else {
+        // Initialize with default Agent Setup node
+        initializeDefaultFlow();
       }
     }
     setLoading(false);
   };
 
+  const initializeDefaultFlow = () => {
+    const defaultNodes: Node[] = [
+      {
+        id: "agent-setup",
+        type: "agentSetup",
+        position: { x: 250, y: 100 },
+        data: {
+          label: "Agent Setup",
+          systemMessage: "You are a helpful AI assistant for phone conversations.",
+        },
+      },
+      {
+        id: "start",
+        type: "callDirection",
+        position: { x: 700, y: 100 },
+        data: {
+          label: "Start",
+          direction: "inbound",
+        },
+      },
+    ];
+
+    const defaultEdges: Edge[] = [
+      {
+        id: "e-agent-setup-start",
+        source: "agent-setup",
+        target: "start",
+        animated: true,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+        },
+      },
+    ];
+
+    setNodes(defaultNodes);
+    setEdges(defaultEdges);
+  };
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            animated: true,
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+            },
+          },
+          eds
+        )
+      );
+    },
+    [setEdges]
+  );
+
   const handleSave = async () => {
     if (!agent) return;
+
+    const flowData = {
+      nodes,
+      edges,
+    };
 
     const response = await api.updateAgent(agent.id, {
       config: {
         ...agent.config,
-        nodes,
+        flow: flowData,
       },
     });
 
@@ -123,63 +210,65 @@ const AgentStudioPage = () => {
   const handlePublish = () => {
     toast({
       title: "Publish Agent",
-      description: "This feature is coming soon!",
+      description: "Publishing agent to production...",
     });
   };
 
   const handleDeploy = () => {
     toast({
       title: "Deploy Agent",
-      description: "This feature is coming soon!",
+      description: "Deploying agent...",
     });
   };
 
-  const handleDragStart = (nodeType: string) => {
-    setDraggedNodeType(nodeType);
-    setIsDragging(true);
+  const onDragStart = (event: React.DragEvent, nodeType: string) => {
+    event.dataTransfer.setData("application/reactflow", nodeType);
+    event.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDragEnd = () => {
-    setIsDragging(false);
-    setDraggedNodeType(null);
-  };
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
 
-  const handleCanvasDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!draggedNodeType) return;
+      const type = event.dataTransfer.getData("application/reactflow");
+      if (!type) return;
 
-    const canvas = e.currentTarget;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+      const reactFlowBounds = event.currentTarget.getBoundingClientRect();
+      const position = {
+        x: event.clientX - reactFlowBounds.left - 100,
+        y: event.clientY - reactFlowBounds.top - 50,
+      };
 
-    const nodeType = nodeTypes.find((n) => n.type === draggedNodeType);
-    if (!nodeType) return;
+      const nodeCategory = nodeCategories.find((n) => n.type === type);
+      if (!nodeCategory) return;
 
-    const newNode: Node = {
-      id: `${draggedNodeType}_${Date.now()}`,
-      type: draggedNodeType,
-      label: nodeType.label,
-      x,
-      y,
-      data: {},
-    };
+      const newNode: Node = {
+        id: `${type}-${Date.now()}`,
+        type: "default",
+        position,
+        data: {
+          label: nodeCategory.label,
+        },
+      };
 
-    setNodes([...nodes, newNode]);
-    setDraggedNodeType(null);
-    setIsDragging(false);
-  };
+      setNodes((nds) => nds.concat(newNode));
+    },
+    [setNodes]
+  );
 
-  const handleCanvasDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }, []);
 
-  const handleNodeClick = (node: Node) => {
-    setSelectedNode(node);
-  };
-
-  const handleBack = () => {
-    navigate("/dashboard/agents");
+  const handleMenuItemClick = (itemId: string) => {
+    setSelectedMenuItem(itemId);
+    if (itemId !== "studio") {
+      toast({
+        title: itemId.charAt(0).toUpperCase() + itemId.slice(1),
+        description: "This section is coming soon!",
+      });
+    }
   };
 
   if (loading) {
@@ -195,235 +284,164 @@ const AgentStudioPage = () => {
   }
 
   return (
-    <div className="fixed inset-0 bg-background flex flex-col">
-      {/* Top Bar */}
-      <div className="h-16 border-b border-border flex items-center justify-between px-6 bg-background/95 backdrop-blur-sm z-10">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={handleBack}>
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-purple-500 flex items-center justify-center">
-              <span className="text-sm font-bold text-white">
-                {agent.name.charAt(0).toUpperCase()}
-              </span>
+    <div className="fixed inset-0 bg-background flex">
+      {/* Left Sidebar Menu */}
+      <div className="w-16 bg-secondary border-r border-border flex flex-col items-center py-4 gap-4">
+        {leftMenuItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = selectedMenuItem === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => handleMenuItemClick(item.id)}
+              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                isActive
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-secondary-foreground/10"
+              }`}
+              title={item.label}
+            >
+              <Icon className="w-5 h-5" />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        {/* Top Bar */}
+        <div className="h-16 border-b border-border flex items-center justify-between px-6 bg-background/95 backdrop-blur-sm z-10">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-purple-500 flex items-center justify-center">
+                <span className="text-sm font-bold text-white">
+                  {agent.name.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold text-foreground">
+                  {agent.name}
+                </h1>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-foreground">
-                {agent.name}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {agent.description || "No description"}
-              </p>
-            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm">
+              <History className="w-4 h-4 mr-2" />
+              History
+            </Button>
+            <Button variant="outline" size="sm">
+              <Database className="w-4 h-4 mr-2" />
+              Fields
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleSave}>
+              <Save className="w-4 h-4 mr-2" />
+              Save
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-purple-600"
+              onClick={handlePublish}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Publish
+            </Button>
+            <Button
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={handleDeploy}
+            >
+              <Rocket className="w-4 h-4 mr-2" />
+              Deploy
+            </Button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            <History className="w-4 h-4 mr-2" />
-            History
-          </Button>
-          <Button variant="outline" size="sm">
-            <Database className="w-4 h-4 mr-2" />
-            Fields
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleSave}>
-            <Save className="w-4 h-4 mr-2" />
-            Save
-          </Button>
-          <Button variant="outline" size="sm" className="text-purple-600" onClick={handlePublish}>
-            <Upload className="w-4 h-4 mr-2" />
-            Publish
-          </Button>
-          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={handleDeploy}>
-            <Rocket className="w-4 h-4 mr-2" />
-            Deploy
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Node Palette */}
-        <div className="w-64 border-r border-border bg-background overflow-y-auto">
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Add Node</h2>
-              <Button variant="ghost" size="icon" className="h-6 w-6">
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-
-            <div className="space-y-2">
-              {nodeTypes.map((nodeType) => {
-                const Icon = nodeType.icon;
-                return (
-                  <div
-                    key={nodeType.type}
-                    draggable
-                    onDragStart={() => handleDragStart(nodeType.type)}
-                    onDragEnd={handleDragEnd}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-secondary cursor-grab active:cursor-grabbing transition-colors"
+        <div className="flex-1 flex overflow-hidden">
+          {/* Node Palette Sidebar */}
+          {selectedMenuItem === "studio" && (
+            <div className="w-64 border-r border-border bg-background overflow-y-auto">
+              <div className="p-4">
+                <div className="mb-4">
+                  <button
+                    onClick={() => {
+                      const newNode: Node = {
+                        id: "start-" + Date.now(),
+                        type: "callDirection",
+                        position: { x: 250, y: 250 },
+                        data: { label: "Start", direction: "inbound" },
+                      };
+                      setNodes((nds) => nds.concat(newNode));
+                    }}
+                    className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors mb-2"
                   >
-                    <Icon className={`w-5 h-5 text-${nodeType.color}-500`} />
-                    <span className="text-sm font-medium text-foreground">
-                      {nodeType.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Main Canvas */}
-        <div
-          className="flex-1 relative bg-grid-pattern overflow-auto"
-          onDrop={handleCanvasDrop}
-          onDragOver={handleCanvasDragOver}
-        >
-          <div className="absolute inset-0 p-8">
-            {/* Render Nodes */}
-            {nodes.map((node) => (
-              <motion.div
-                key={node.id}
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                style={{
-                  position: "absolute",
-                  left: node.x,
-                  top: node.y,
-                }}
-                onClick={() => handleNodeClick(node)}
-                className={`cursor-pointer ${
-                  selectedNode?.id === node.id ? "ring-2 ring-primary" : ""
-                }`}
-              >
-                <div
-                  className={`min-w-[180px] rounded-xl shadow-lg p-4 border-2 ${
-                    node.type === "agent_entry" || node.type === "start"
-                      ? "bg-purple-500 border-purple-600 text-white"
-                      : "bg-background border-border"
-                  }`}
-                >
-                  <div className="text-sm font-semibold mb-1">{node.label}</div>
-                  {node.type === "agent_entry" && (
-                    <div className="text-xs opacity-90 mt-2">
-                      <div>Agent: "{agent.name}"</div>
-                      <div>Temperature: 0.7</div>
-                      <div>Max tokens: 2000</div>
+                    <div className="flex items-center gap-3">
+                      <PhoneCall className="w-5 h-5" />
+                      <span className="text-sm font-medium">Add Start Node</span>
                     </div>
-                  )}
-                  {node.type === "start" && (
-                    <div className="text-xs opacity-90">Entry point</div>
-                  )}
-
-                  {/* Connection Points */}
-                  <div className="flex justify-between mt-3 -mx-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
-                    <div className="w-3 h-3 rounded-full bg-green-500 border-2 border-white" />
-                  </div>
+                  </button>
                 </div>
-              </motion.div>
-            ))}
 
-            {/* Drop Zone Indicator */}
-            {isDragging && (
-              <div className="absolute inset-0 bg-primary/5 border-2 border-dashed border-primary/50 rounded-lg flex items-center justify-center pointer-events-none">
-                <div className="text-center">
-                  <Plus className="w-12 h-12 text-primary mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    Drop node here
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Sidebar - Properties */}
-        {selectedNode && (
-          <div className="w-80 border-l border-border bg-background overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-foreground">
-                  Node Properties
+                <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
+                  Add Node
                 </h2>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setSelectedNode(null)}
-                >
-                  ×
-                </Button>
-              </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">
-                    Node Type
-                  </label>
-                  <p className="text-sm text-foreground mt-1">
-                    {selectedNode.label}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">
-                    Node ID
-                  </label>
-                  <p className="text-sm text-foreground mt-1 font-mono">
-                    {selectedNode.id}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground uppercase">
-                    Position
-                  </label>
-                  <p className="text-sm text-foreground mt-1">
-                    X: {Math.round(selectedNode.x)}, Y: {Math.round(selectedNode.y)}
-                  </p>
-                </div>
-
-                {selectedNode.type === "agent_entry" && (
-                  <>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground uppercase">
-                        Agent Name
-                      </label>
-                      <p className="text-sm text-foreground mt-1">
-                        {agent.name}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground uppercase">
-                        Configuration
-                      </label>
-                      <div className="mt-2 space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Temperature:</span>
-                          <span className="text-foreground">0.7</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Max Tokens:</span>
-                          <span className="text-foreground">2000</span>
-                        </div>
+                <div className="space-y-2">
+                  {nodeCategories.map((nodeType) => {
+                    const Icon = nodeType.icon;
+                    return (
+                      <div
+                        key={nodeType.type}
+                        draggable
+                        onDragStart={(e) => onDragStart(e, nodeType.type)}
+                        className={`flex items-center gap-3 p-3 rounded-lg border-2 ${nodeType.color} ${nodeType.borderColor} cursor-grab active:cursor-grabbing transition-colors hover:opacity-80`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="text-sm font-medium">{nodeType.label}</span>
                       </div>
-                    </div>
-                  </>
-                )}
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
 
-      {/* Bottom Bar */}
-      <div className="h-10 border-t border-border bg-background flex items-center justify-between px-6 text-xs text-muted-foreground">
-        <div>Nodes: {nodes.length}</div>
-        <div>Studio v1.0</div>
+          {/* React Flow Canvas */}
+          {selectedMenuItem === "studio" && (
+            <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                nodeTypes={nodeTypes}
+                fitView
+              >
+                <Background color="#aaa" gap={20} />
+                <Controls />
+                <MiniMap />
+              </ReactFlow>
+            </div>
+          )}
+
+          {/* Other Menu Content */}
+          {selectedMenuItem !== "studio" && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-6xl mb-4">🚧</div>
+                <h2 className="text-2xl font-bold text-foreground mb-2">
+                  {selectedMenuItem.charAt(0).toUpperCase() + selectedMenuItem.slice(1)}
+                </h2>
+                <p className="text-muted-foreground">
+                  This section is under construction
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
