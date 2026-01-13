@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Handle, Position, NodeProps } from "@xyflow/react";
 import { PhoneIncoming, PhoneOutgoing } from "lucide-react";
 
 const CallDirectionNode = ({ data, isConnectable }: NodeProps) => {

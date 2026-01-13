@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Settings } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
