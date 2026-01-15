@@ -87,27 +87,27 @@ const StandardNode = ({ id, data, isConnectable, onClone, onDelete, onUpdate }: 
             <span className="font-semibold">{data.label}</span>
 
             {/* Action Buttons - Always visible */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 opacity-100">
               <button
                 onClick={handleClone}
-                className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+                className="p-1.5 rounded-lg hover:bg-white/50 transition-colors"
                 title="Clone"
               >
-                <Copy className="w-5 h-5" />
+                <Copy className="w-4 h-4" />
               </button>
               <button
                 onClick={handleEdit}
-                className="p-2 rounded-lg hover:bg-white/50 transition-colors"
+                className="p-1.5 rounded-lg hover:bg-white/50 transition-colors"
                 title="Edit"
               >
-                <Pencil className="w-5 h-5" />
+                <Pencil className="w-4 h-4" />
               </button>
               <button
                 onClick={handleDelete}
-                className="p-2 rounded-lg hover:bg-red-100 transition-colors text-red-600"
+                className="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-red-600"
                 title="Delete"
               >
-                <Trash2 className="w-5 h-5" />
+                <Trash2 className="w-4 h-4" />
               </button>
             </div>
           </div>
