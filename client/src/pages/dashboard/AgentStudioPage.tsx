@@ -46,7 +46,13 @@ import StandardNode from "@/components/nodes/StandardNode";
 // Register custom node types
 const nodeTypes = {
   agentSetup: AgentSetupNode,
-  callDirection: CallDirectionNode,
+  callDirection: (props: any) => (
+    <CallDirectionNode
+      {...props}
+      onDelete={props.data.onDelete}
+      onUpdate={props.data.onUpdate}
+    />
+  ),
   standard: (props: any) => (
     <StandardNode
       {...props}

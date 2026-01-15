@@ -85,24 +85,24 @@ const CallDirectionNode = ({ id, data, isConnectable, onDelete, onUpdate }: Call
             </div>
 
             {/* Action Buttons - Always visible */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={handleEdit}
-                className={`p-1.5 rounded-lg transition-colors ${
+                className={`p-2 rounded-lg transition-colors ${
                   isInbound
                     ? "hover:bg-blue-200"
                     : "hover:bg-purple-200"
                 }`}
                 title="Edit"
               >
-                <Pencil className="w-4 h-4" />
+                <Pencil className="w-5 h-5" />
               </button>
               <button
                 onClick={handleDelete}
-                className="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-red-600"
+                className="p-2 rounded-lg hover:bg-red-100 transition-colors text-red-600"
                 title="Delete"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-5 h-5" />
               </button>
             </div>
           </div>
