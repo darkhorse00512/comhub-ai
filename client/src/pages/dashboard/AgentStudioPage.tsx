@@ -98,77 +98,82 @@ const AgentStudioPage = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
 
-  // Node action handlers
-  const handleCloneNode = useCallback((nodeId: string) => {
-    const nodeToClone = nodes.find(n => n.id === nodeId);
-    if (!nodeToClone) return;
+  // Node action handlers - defined as regular functions to avoid circular dependencies
+  const handleCloneNode = (nodeId: string) => {
+    setNodes((nds) => {
+      const nodeToClone = nds.find(n => n.id === nodeId);
+      if (!nodeToClone) return nds;
 
-    const newNode: Node = {
-      ...nodeToClone,
-      id: `clone-${Date.now()}`,
-      position: {
-        x: nodeToClone.position.x + 50,
-        y: nodeToClone.position.y + 50,
-      },
-      data: {
-        ...nodeToClone.data,
-        label: `${nodeToClone.data.label} (Copy)`,
-      },
-    };
+      const newNode: Node = {
+        ...nodeToClone,
+        id: `clone-${Date.now()}`,
+        position: {
+          x: nodeToClone.position.x + 50,
+          y: nodeToClone.position.y + 50,
+        },
+        data: {
+          ...nodeToClone.data,
+          label: `${nodeToClone.data.label} (Copy)`,
+        },
+      };
 
-    setNodes((nds) => nds.concat(newNode));
-    toast({
-      title: "Node cloned",
-      description: `${nodeToClone.data.label} has been cloned`,
-    });
-  }, [nodes, setNodes, toast]);
-
-  const handleDeleteNode = useCallback((nodeId: string) => {
-    const nodeToDelete = nodes.find(n => n.id === nodeId);
-    if (!nodeToDelete) return;
-
-    // Don't allow deleting Agent Setup node
-    if (nodeToDelete.id === "agent-setup") {
       toast({
-        title: "Cannot delete",
-        description: "Agent Setup node cannot be deleted",
-        variant: "destructive",
+        title: "Node cloned",
+        description: `${nodeToClone.data.label} has been cloned`,
       });
-      return;
-    }
 
-    setNodes((nds) => nds.filter(n => n.id !== nodeId));
-    setEdges((eds) => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
-    toast({
-      title: "Node deleted",
-      description: `${nodeToDelete.data.label} has been deleted`,
+      return nds.concat(newNode);
     });
-  }, [nodes, setNodes, setEdges, toast]);
+  };
 
-  const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
+  const handleDeleteNode = (nodeId: string) => {
+    setNodes((nds) => {
+      const nodeToDelete = nds.find(n => n.id === nodeId);
+      if (!nodeToDelete) return nds;
+
+      // Don't allow deleting Agent Setup node
+      if (nodeToDelete.id === "agent-setup") {
+        toast({
+          title: "Cannot delete",
+          description: "Agent Setup node cannot be deleted",
+          variant: "destructive",
+        });
+        return nds;
+      }
+
+      setEdges((eds) => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
+
+      toast({
+        title: "Node deleted",
+        description: `${nodeToDelete.data.label} has been deleted`,
+      });
+
+      return nds.filter(n => n.id !== nodeId);
+    });
+  };
+
+  const handleUpdateNode = (nodeId: string, newData: any) => {
     setNodes((nds) =>
       nds.map(node =>
         node.id === nodeId
-          ? { ...node, data: newData }
+          ? { ...node, data: { ...newData, onClone: handleCloneNode, onDelete: handleDeleteNode, onUpdate: handleUpdateNode } }
           : node
       )
     );
-  }, [setNodes]);
+  };
 
-  // Inject handlers into all nodes
-  useEffect(() => {
-    setNodes((nds) =>
-      nds.map(node => ({
-        ...node,
-        data: {
-          ...node.data,
-          onClone: handleCloneNode,
-          onDelete: handleDeleteNode,
-          onUpdate: handleUpdateNode,
-        },
-      }))
-    );
-  }, [handleCloneNode, handleDeleteNode, handleUpdateNode]);
+  // Helper to add handlers to node data
+  const addHandlersToNode = (node: Node): Node => ({
+    ...node,
+    data: {
+      ...node.data,
+      onClone: handleCloneNode,
+      onDelete: handleDeleteNode,
+      onUpdate: handleUpdateNode,
+    },
+  });
+
+  const addHandlersToNodes = (nodes: Node[]): Node[] => nodes.map(addHandlersToNode);
 
   useEffect(() => {
     if (agentId) {
@@ -192,7 +197,8 @@ const AgentStudioPage = () => {
       setAgent(response.data);
       // Load flow from agent config
       if (response.data?.config?.flow) {
-        setNodes(response.data.config.flow.nodes || []);
+        const loadedNodes = response.data.config.flow.nodes || [];
+        setNodes(addHandlersToNodes(loadedNodes));
         setEdges(response.data.config.flow.edges || []);
       } else {
         // Initialize with default Agent Setup node
@@ -236,7 +242,7 @@ const AgentStudioPage = () => {
       },
     ];
 
-    setNodes(defaultNodes);
+    setNodes(addHandlersToNodes(defaultNodes));
     setEdges(defaultEdges);
   };
 
@@ -333,7 +339,7 @@ const AgentStudioPage = () => {
         },
       };
 
-      setNodes((nds) => nds.concat(newNode));
+      setNodes((nds) => nds.concat(addHandlersToNode(newNode)));
     },
     [setNodes]
   );
@@ -453,9 +459,12 @@ const AgentStudioPage = () => {
                         id: "start-" + Date.now(),
                         type: "callDirection",
                         position: { x: 250, y: 250 },
-                        data: { label: "Start", direction: "inbound" },
+                        data: {
+                          label: "Start",
+                          direction: "inbound",
+                        },
                       };
-                      setNodes((nds) => nds.concat(newNode));
+                      setNodes((nds) => nds.concat(addHandlersToNode(newNode)));
                     }}
                     className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors mb-2"
                   >
