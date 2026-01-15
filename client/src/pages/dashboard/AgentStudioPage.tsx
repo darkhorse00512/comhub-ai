@@ -41,11 +41,20 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
+import StandardNode from "@/components/nodes/StandardNode";
 
 // Register custom node types
 const nodeTypes = {
   agentSetup: AgentSetupNode,
   callDirection: CallDirectionNode,
+  standard: (props: any) => (
+    <StandardNode
+      {...props}
+      onClone={props.data.onClone}
+      onDelete={props.data.onDelete}
+      onUpdate={props.data.onUpdate}
+    />
+  ),
 };
 
 interface Agent {
@@ -88,6 +97,78 @@ const AgentStudioPage = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
+
+  // Node action handlers
+  const handleCloneNode = useCallback((nodeId: string) => {
+    const nodeToClone = nodes.find(n => n.id === nodeId);
+    if (!nodeToClone) return;
+
+    const newNode: Node = {
+      ...nodeToClone,
+      id: `clone-${Date.now()}`,
+      position: {
+        x: nodeToClone.position.x + 50,
+        y: nodeToClone.position.y + 50,
+      },
+      data: {
+        ...nodeToClone.data,
+        label: `${nodeToClone.data.label} (Copy)`,
+      },
+    };
+
+    setNodes((nds) => nds.concat(newNode));
+    toast({
+      title: "Node cloned",
+      description: `${nodeToClone.data.label} has been cloned`,
+    });
+  }, [nodes, setNodes, toast]);
+
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    const nodeToDelete = nodes.find(n => n.id === nodeId);
+    if (!nodeToDelete) return;
+
+    // Don't allow deleting Agent Setup node
+    if (nodeToDelete.id === "agent-setup") {
+      toast({
+        title: "Cannot delete",
+        description: "Agent Setup node cannot be deleted",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setNodes((nds) => nds.filter(n => n.id !== nodeId));
+    setEdges((eds) => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
+    toast({
+      title: "Node deleted",
+      description: `${nodeToDelete.data.label} has been deleted`,
+    });
+  }, [nodes, setNodes, setEdges, toast]);
+
+  const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
+    setNodes((nds) =>
+      nds.map(node =>
+        node.id === nodeId
+          ? { ...node, data: newData }
+          : node
+      )
+    );
+  }, [setNodes]);
+
+  // Inject handlers into all nodes
+  useEffect(() => {
+    setNodes((nds) =>
+      nds.map(node => ({
+        ...node,
+        data: {
+          ...node.data,
+          onClone: handleCloneNode,
+          onDelete: handleDeleteNode,
+          onUpdate: handleUpdateNode,
+        },
+      }))
+    );
+  }, [handleCloneNode, handleDeleteNode, handleUpdateNode]);
 
   useEffect(() => {
     if (agentId) {
@@ -243,10 +324,12 @@ const AgentStudioPage = () => {
 
       const newNode: Node = {
         id: `${type}-${Date.now()}`,
-        type: "default",
+        type: "standard",
         position,
         data: {
           label: nodeCategory.label,
+          type: type,
+          notes: "",
         },
       };
 
