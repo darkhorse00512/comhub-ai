@@ -20,6 +20,8 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   nodeComponents,
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
+  const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [nodeDimensions, setNodeDimensions] = useState<Map<string, { width: number; height: number }>>(new Map());
   const [draggedNode, setDraggedNode] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [connecting, setConnecting] = useState<{
@@ -31,6 +33,18 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+  // Measure node dimensions after render
+  useEffect(() => {
+    const newDimensions = new Map<string, { width: number; height: number }>();
+    nodeRefs.current.forEach((el, nodeId) => {
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        newDimensions.set(nodeId, { width: rect.width / scale, height: rect.height / scale });
+      }
+    });
+    setNodeDimensions(newDimensions);
+  }, [nodes, scale]);
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
@@ -160,15 +174,33 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     setScale((prev) => Math.min(Math.max(prev * delta, 0.1), 3));
   };
 
-  // Get node position with handles
+  // Get fallback node dimensions based on node type (used before DOM measurements are available)
+  const getFallbackNodeDimensions = (nodeType: string) => {
+    // AgentSetupNode: min-w-[300px], has header + content area (~140px height)
+    if (nodeType === "agentSetup") {
+      return { width: 300, height: 140 };
+    }
+    // CallDirectionNode: min-w-[200px] (~100px height)
+    if (nodeType === "callDirection") {
+      return { width: 200, height: 100 };
+    }
+    // StandardNode: min-w-[200px], (~80px height with padding)
+    return { width: 200, height: 80 };
+  };
+
+  // Get node position with handles - uses measured dimensions or fallback
   const getNodeHandlePosition = (nodeId: string, handle: "left" | "right") => {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return { x: 0, y: 0 };
 
-    const handleOffset = handle === "left" ? 0 : 200; // Assuming node width ~200px
+    // Use measured dimensions if available, otherwise use fallback
+    const measured = nodeDimensions.get(nodeId);
+    const dimensions = measured || getFallbackNodeDimensions(node.type);
+    const handleOffsetX = handle === "left" ? 0 : dimensions.width;
+
     return {
-      x: node.position.x + handleOffset,
-      y: node.position.y + 50, // Middle of node height
+      x: node.position.x + handleOffsetX,
+      y: node.position.y + dimensions.height / 2,
     };
   };
 
@@ -252,6 +284,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
           return (
             <div
               key={node.id}
+              ref={(el) => {
+                if (el) {
+                  nodeRefs.current.set(node.id, el);
+                } else {
+                  nodeRefs.current.delete(node.id);
+                }
+              }}
               className="flow-node"
               data-node-id={node.id}
               style={{
