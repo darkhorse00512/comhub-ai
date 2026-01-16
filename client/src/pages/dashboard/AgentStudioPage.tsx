@@ -498,7 +498,7 @@ const AgentStudioPage = () => {
                   <button
                     onMouseEnter={() => setShowStartNodePopup(true)}
                     onMouseLeave={() => setShowStartNodePopup(false)}
-                    className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors mb-2"
+                    className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <PhoneCall className="w-5 h-5" />
@@ -506,10 +506,10 @@ const AgentStudioPage = () => {
                     </div>
                   </button>
 
-                  {/* Popup menu for start node direction */}
+                  {/* Popup menu for start node direction - positioned on the right */}
                   {showStartNodePopup && (
                     <div
-                      className="absolute left-0 top-full mt-1 w-full bg-white border-2 border-purple-400 rounded-lg shadow-lg z-50 overflow-hidden"
+                      className="absolute left-full top-0 ml-0 w-56 bg-white border-2 border-purple-400 rounded-lg shadow-lg z-50 overflow-hidden"
                       onMouseEnter={() => setShowStartNodePopup(true)}
                       onMouseLeave={() => setShowStartNodePopup(false)}
                     >
