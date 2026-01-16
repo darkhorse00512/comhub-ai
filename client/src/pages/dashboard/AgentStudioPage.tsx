@@ -25,6 +25,7 @@ import {
   PhoneIncoming,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
@@ -494,30 +495,31 @@ const AgentStudioPage = () => {
           {selectedMenuItem === "studio" && (
             <div className="w-64 border-r border-border bg-background overflow-y-auto overflow-x-visible">
               <div className="p-4">
-                <div className="mb-4 relative z-50">
-                  <button
-                    onMouseEnter={() => setShowStartNodePopup(true)}
-                    onMouseLeave={() => setShowStartNodePopup(false)}
-                    className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <PhoneCall className="w-5 h-5" />
-                      <span className="text-sm font-medium">Add Start Node</span>
-                    </div>
-                  </button>
-
-                  {/* Popup menu for start node direction - positioned on the right */}
-                  {showStartNodePopup && (
-                    <div
-                      className="absolute left-full top-0 ml-0 w-56 bg-white border-2 border-purple-400 rounded-lg shadow-xl z-[9999] overflow-hidden"
-                      style={{ boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
+                <div className="mb-4">
+                  <Popover open={showStartNodePopup} onOpenChange={setShowStartNodePopup}>
+                    <PopoverTrigger asChild>
+                      <button
+                        onMouseEnter={() => setShowStartNodePopup(true)}
+                        className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <PhoneCall className="w-5 h-5" />
+                          <span className="text-sm font-medium">Add Start Node</span>
+                        </div>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      side="right"
+                      align="start"
+                      sideOffset={0}
+                      className="w-56 p-0 border-2 border-purple-400"
                       onMouseEnter={() => setShowStartNodePopup(true)}
                       onMouseLeave={() => setShowStartNodePopup(false)}
                     >
                       <button
                         onClick={() => addStartNode("inbound")}
                         disabled={hasInboundStart}
-                        className={`w-full p-3 flex items-center gap-3 transition-colors ${
+                        className={`w-full p-3 flex items-center gap-3 transition-colors rounded-t-md ${
                           hasInboundStart
                             ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                             : "hover:bg-blue-50 text-blue-700"
@@ -537,7 +539,7 @@ const AgentStudioPage = () => {
                       <button
                         onClick={() => addStartNode("outbound")}
                         disabled={hasOutboundStart}
-                        className={`w-full p-3 flex items-center gap-3 transition-colors ${
+                        className={`w-full p-3 flex items-center gap-3 transition-colors rounded-b-md ${
                           hasOutboundStart
                             ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                             : "hover:bg-purple-50 text-purple-700"
@@ -551,8 +553,8 @@ const AgentStudioPage = () => {
                           )}
                         </div>
                       </button>
-                    </div>
-                  )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
