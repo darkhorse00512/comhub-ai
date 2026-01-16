@@ -1,19 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  ReactFlow,
-  Node,
-  Edge,
-  addEdge,
-  Background,
-  Controls,
-  MiniMap,
-  Connection,
-  useNodesState,
-  useEdgesState,
-  MarkerType,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { FlowCanvas, Node, Edge } from "@/components/FlowCanvas";
 import {
   Save,
   Upload,
@@ -44,7 +31,7 @@ import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 import StandardNode from "@/components/nodes/StandardNode";
 
 // Register custom node types
-const nodeTypes = {
+const nodeComponents = {
   agentSetup: AgentSetupNode,
   callDirection: (props: any) => (
     <CallDirectionNode
@@ -61,6 +48,7 @@ const nodeTypes = {
       onUpdate={props.data.onUpdate}
     />
   ),
+  default: (props: any) => <div>Unknown Node</div>,
 };
 
 interface Agent {
@@ -100,69 +88,71 @@ const AgentStudioPage = () => {
 
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
 
-  // Node action handlers - defined as regular functions to avoid circular dependencies
+  // Node action handlers
   const handleCloneNode = (nodeId: string) => {
-    setNodes((nds) => {
-      const nodeToClone = nds.find(n => n.id === nodeId);
-      if (!nodeToClone) return nds;
+    const nodeToClone = nodes.find((n) => n.id === nodeId);
+    if (!nodeToClone) return;
 
-      const newNode: Node = {
-        ...nodeToClone,
-        id: `clone-${Date.now()}`,
-        position: {
-          x: nodeToClone.position.x + 50,
-          y: nodeToClone.position.y + 50,
-        },
-        data: {
-          ...nodeToClone.data,
-          label: `${nodeToClone.data.label} (Copy)`,
-        },
-      };
+    const newNode: Node = {
+      ...nodeToClone,
+      id: `clone-${Date.now()}`,
+      position: {
+        x: nodeToClone.position.x + 50,
+        y: nodeToClone.position.y + 50,
+      },
+      data: {
+        ...nodeToClone.data,
+        label: `${nodeToClone.data.label} (Copy)`,
+      },
+    };
 
-      toast({
-        title: "Node cloned",
-        description: `${nodeToClone.data.label} has been cloned`,
-      });
-
-      return nds.concat(newNode);
+    setNodes([...nodes, addHandlersToNode(newNode)]);
+    toast({
+      title: "Node cloned",
+      description: `${nodeToClone.data.label} has been cloned`,
     });
   };
 
   const handleDeleteNode = (nodeId: string) => {
-    setNodes((nds) => {
-      const nodeToDelete = nds.find(n => n.id === nodeId);
-      if (!nodeToDelete) return nds;
+    const nodeToDelete = nodes.find((n) => n.id === nodeId);
+    if (!nodeToDelete) return;
 
-      // Don't allow deleting Agent Setup node
-      if (nodeToDelete.id === "agent-setup") {
-        toast({
-          title: "Cannot delete",
-          description: "Agent Setup node cannot be deleted",
-          variant: "destructive",
-        });
-        return nds;
-      }
-
-      setEdges((eds) => eds.filter(e => e.source !== nodeId && e.target !== nodeId));
-
+    // Don't allow deleting Agent Setup node
+    if (nodeToDelete.id === "agent-setup") {
       toast({
-        title: "Node deleted",
-        description: `${nodeToDelete.data.label} has been deleted`,
+        title: "Cannot delete",
+        description: "Agent Setup node cannot be deleted",
+        variant: "destructive",
       });
+      return;
+    }
 
-      return nds.filter(n => n.id !== nodeId);
+    setNodes(nodes.filter((n) => n.id !== nodeId));
+    setEdges(edges.filter((e) => e.source !== nodeId && e.target !== nodeId));
+
+    toast({
+      title: "Node deleted",
+      description: `${nodeToDelete.data.label} has been deleted`,
     });
   };
 
   const handleUpdateNode = (nodeId: string, newData: any) => {
-    setNodes((nds) =>
-      nds.map(node =>
+    setNodes(
+      nodes.map((node) =>
         node.id === nodeId
-          ? { ...node, data: { ...newData, onClone: handleCloneNode, onDelete: handleDeleteNode, onUpdate: handleUpdateNode } }
+          ? {
+              ...node,
+              data: {
+                ...newData,
+                onClone: handleCloneNode,
+                onDelete: handleDeleteNode,
+                onUpdate: handleUpdateNode,
+              },
+            }
           : node
       )
     );
@@ -179,7 +169,8 @@ const AgentStudioPage = () => {
     },
   });
 
-  const addHandlersToNodes = (nodes: Node[]): Node[] => nodes.map(addHandlersToNode);
+  const addHandlersToNodes = (nodes: Node[]): Node[] =>
+    nodes.map(addHandlersToNode);
 
   useEffect(() => {
     if (agentId) {
@@ -222,7 +213,8 @@ const AgentStudioPage = () => {
         position: { x: 250, y: 100 },
         data: {
           label: "Agent Setup",
-          systemMessage: "You are a helpful AI assistant for phone conversations.",
+          systemMessage:
+            "You are a helpful AI assistant for phone conversations.",
         },
       },
       {
@@ -242,9 +234,6 @@ const AgentStudioPage = () => {
         source: "agent-setup",
         target: "start",
         animated: true,
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-        },
       },
     ];
 
@@ -252,23 +241,15 @@ const AgentStudioPage = () => {
     setEdges(defaultEdges);
   };
 
-  const onConnect = useCallback(
-    (params: Connection) => {
-      setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            animated: true,
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-            },
-          },
-          eds
-        )
-      );
-    },
-    [setEdges]
-  );
+  const handleConnect = (sourceId: string, targetId: string) => {
+    const newEdge: Edge = {
+      id: `e-${sourceId}-${targetId}-${Date.now()}`,
+      source: sourceId,
+      target: targetId,
+      animated: true,
+    };
+    setEdges([...edges, newEdge]);
+  };
 
   const handleSave = async () => {
     if (!agent) return;
@@ -314,7 +295,7 @@ const AgentStudioPage = () => {
   };
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
-    event.dataTransfer.setData("application/reactflow", nodeType);
+    event.dataTransfer.setData("application/nodeType", nodeType);
     event.dataTransfer.effectAllowed = "move";
   };
 
@@ -322,13 +303,13 @@ const AgentStudioPage = () => {
     (event: React.DragEvent) => {
       event.preventDefault();
 
-      const type = event.dataTransfer.getData("application/reactflow");
+      const type = event.dataTransfer.getData("application/nodeType");
       if (!type) return;
 
-      const reactFlowBounds = event.currentTarget.getBoundingClientRect();
+      const canvasRect = event.currentTarget.getBoundingClientRect();
       const position = {
-        x: event.clientX - reactFlowBounds.left - 100,
-        y: event.clientY - reactFlowBounds.top - 50,
+        x: event.clientX - canvasRect.left - 100,
+        y: event.clientY - canvasRect.top - 50,
       };
 
       const nodeCategory = nodeCategories.find((n) => n.type === type);
@@ -345,9 +326,9 @@ const AgentStudioPage = () => {
         },
       };
 
-      setNodes((nds) => nds.concat(addHandlersToNode(newNode)));
+      setNodes([...nodes, addHandlersToNode(newNode)]);
     },
-    [setNodes]
+    [nodes]
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -470,7 +451,7 @@ const AgentStudioPage = () => {
                           direction: "inbound",
                         },
                       };
-                      setNodes((nds) => nds.concat(addHandlersToNode(newNode)));
+                      setNodes([...nodes, addHandlersToNode(newNode)]);
                     }}
                     className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors mb-2"
                   >
@@ -496,7 +477,9 @@ const AgentStudioPage = () => {
                         className={`flex items-center gap-3 p-3 rounded-lg border-2 ${nodeType.color} ${nodeType.borderColor} cursor-grab active:cursor-grabbing transition-colors hover:opacity-80`}
                       >
                         <Icon className="w-5 h-5" />
-                        <span className="text-sm font-medium">{nodeType.label}</span>
+                        <span className="text-sm font-medium">
+                          {nodeType.label}
+                        </span>
                       </div>
                     );
                   })}
@@ -505,22 +488,21 @@ const AgentStudioPage = () => {
             </div>
           )}
 
-          {/* React Flow Canvas */}
+          {/* Flow Canvas */}
           {selectedMenuItem === "studio" && (
-            <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
-              <ReactFlow
+            <div
+              className="flex-1"
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+            >
+              <FlowCanvas
                 nodes={nodes}
                 edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                nodeTypes={nodeTypes}
-                fitView
-              >
-                <Background color="#aaa" gap={20} />
-                <Controls />
-                <MiniMap />
-              </ReactFlow>
+                onNodesChange={setNodes}
+                onEdgesChange={setEdges}
+                onConnect={handleConnect}
+                nodeComponents={nodeComponents}
+              />
             </div>
           )}
 
@@ -530,7 +512,8 @@ const AgentStudioPage = () => {
               <div className="text-center">
                 <div className="text-6xl mb-4">🚧</div>
                 <h2 className="text-2xl font-bold text-foreground mb-2">
-                  {selectedMenuItem.charAt(0).toUpperCase() + selectedMenuItem.slice(1)}
+                  {selectedMenuItem.charAt(0).toUpperCase() +
+                    selectedMenuItem.slice(1)}
                 </h2>
                 <p className="text-muted-foreground">
                   This section is under construction
