@@ -291,23 +291,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         <button onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))}>-</button>
         <button onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}>⊙</button>
       </div>
-
-      {/* Mini map */}
-      <div className="flow-minimap">
-        <svg width="200" height="150" style={{ background: "#f8f8f8" }}>
-          {nodes.map((node) => (
-            <rect
-              key={node.id}
-              x={node.position.x * 0.1}
-              y={node.position.y * 0.1}
-              width={20}
-              height={10}
-              fill="#6366f1"
-              opacity="0.6"
-            />
-          ))}
-        </svg>
-      </div>
     </div>
   );
 };

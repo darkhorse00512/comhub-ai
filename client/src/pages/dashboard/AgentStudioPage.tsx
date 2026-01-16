@@ -492,9 +492,9 @@ const AgentStudioPage = () => {
         <div className="flex-1 flex overflow-hidden">
           {/* Node Palette Sidebar */}
           {selectedMenuItem === "studio" && (
-            <div className="w-64 border-r border-border bg-background overflow-y-auto">
+            <div className="w-64 border-r border-border bg-background overflow-y-auto overflow-x-visible">
               <div className="p-4">
-                <div className="mb-4 relative">
+                <div className="mb-4 relative z-50">
                   <button
                     onMouseEnter={() => setShowStartNodePopup(true)}
                     onMouseLeave={() => setShowStartNodePopup(false)}
@@ -509,7 +509,8 @@ const AgentStudioPage = () => {
                   {/* Popup menu for start node direction - positioned on the right */}
                   {showStartNodePopup && (
                     <div
-                      className="absolute left-full top-0 ml-0 w-56 bg-white border-2 border-purple-400 rounded-lg shadow-lg z-50 overflow-hidden"
+                      className="absolute left-full top-0 ml-0 w-56 bg-white border-2 border-purple-400 rounded-lg shadow-xl z-[9999] overflow-hidden"
+                      style={{ boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
                       onMouseEnter={() => setShowStartNodePopup(true)}
                       onMouseLeave={() => setShowStartNodePopup(false)}
                     >
