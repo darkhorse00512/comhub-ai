@@ -32,27 +32,6 @@ import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 import StandardNode from "@/components/nodes/StandardNode";
 
-// Register custom node types
-const nodeComponents = {
-  agentSetup: AgentSetupNode,
-  callDirection: (props: any) => (
-    <CallDirectionNode
-      {...props}
-      onDelete={props.data.onDelete}
-      onUpdate={props.data.onUpdate}
-    />
-  ),
-  standard: (props: any) => (
-    <StandardNode
-      {...props}
-      onClone={props.data.onClone}
-      onDelete={props.data.onDelete}
-      onUpdate={props.data.onUpdate}
-    />
-  ),
-  default: (props: any) => <div>Unknown Node</div>,
-};
-
 interface Agent {
   id: string;
   name: string;
@@ -115,7 +94,7 @@ const AgentStudioPage = () => {
         direction: direction,
       },
     };
-    setNodes([...nodes, addHandlersToNode(newNode)]);
+    setNodes([...nodes, newNode]);
     setShowStartNodePopup(false);
     toast({
       title: "Start node added",
@@ -123,102 +102,113 @@ const AgentStudioPage = () => {
     });
   };
 
-  // Node action handlers
-  const handleCloneNode = (nodeId: string) => {
-    const nodeToClone = nodes.find((n) => n.id === nodeId);
-    if (!nodeToClone) return;
+  // Node action handlers - use functional updates to avoid stale closures
+  const handleCloneNode = useCallback((nodeId: string) => {
+    setNodes((currentNodes) => {
+      const nodeToClone = currentNodes.find((n) => n.id === nodeId);
+      if (!nodeToClone) return currentNodes;
 
-    const newNode: Node = {
-      ...nodeToClone,
-      id: `clone-${Date.now()}`,
-      position: {
-        x: nodeToClone.position.x + 50,
-        y: nodeToClone.position.y + 50,
-      },
-      data: {
-        ...nodeToClone.data,
-        label: `${nodeToClone.data.label} (Copy)`,
-      },
-    };
+      const newNode: Node = {
+        ...nodeToClone,
+        id: `clone-${Date.now()}`,
+        position: {
+          x: nodeToClone.position.x + 50,
+          y: nodeToClone.position.y + 50,
+        },
+        data: {
+          ...nodeToClone.data,
+          label: `${nodeToClone.data.label} (Copy)`,
+        },
+      };
 
-    setNodes([...nodes, addHandlersToNode(newNode)]);
-    toast({
-      title: "Node cloned",
-      description: `${nodeToClone.data.label} has been cloned`,
-    });
-  };
-
-  const handleDeleteNode = (nodeId: string) => {
-    const nodeToDelete = nodes.find((n) => n.id === nodeId);
-    if (!nodeToDelete) return;
-
-    // Don't allow deleting Agent Setup node
-    if (nodeToDelete.id === "agent-setup") {
       toast({
-        title: "Cannot delete",
-        description: "Agent Setup node cannot be deleted",
-        variant: "destructive",
+        title: "Node cloned",
+        description: `${nodeToClone.data.label} has been cloned`,
       });
-      return;
-    }
 
-    setNodes(nodes.filter((n) => n.id !== nodeId));
-    setEdges(edges.filter((e) => e.source !== nodeId && e.target !== nodeId));
-
-    toast({
-      title: "Node deleted",
-      description: `${nodeToDelete.data.label} has been deleted`,
+      return [...currentNodes, newNode];
     });
-  };
+  }, [toast]);
 
-  const handleUpdateNode = (nodeId: string, newData: any) => {
-    // If updating a callDirection node, check if the new direction already exists
-    const nodeToUpdate = nodes.find(n => n.id === nodeId);
-    if (nodeToUpdate?.type === "callDirection" && newData.direction) {
-      const existingDirections = nodes
-        .filter(n => n.type === "callDirection" && n.id !== nodeId)
-        .map(n => n.data.direction);
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    setNodes((currentNodes) => {
+      const nodeToDelete = currentNodes.find((n) => n.id === nodeId);
+      if (!nodeToDelete) return currentNodes;
 
-      if (existingDirections.includes(newData.direction)) {
+      // Don't allow deleting Agent Setup node
+      if (nodeToDelete.id === "agent-setup") {
         toast({
-          title: "Cannot change direction",
-          description: `A start node with ${newData.direction} direction already exists`,
+          title: "Cannot delete",
+          description: "Agent Setup node cannot be deleted",
           variant: "destructive",
         });
-        return;
+        return currentNodes;
       }
-    }
 
-    setNodes(
-      nodes.map((node) =>
+      toast({
+        title: "Node deleted",
+        description: `${nodeToDelete.data.label} has been deleted`,
+      });
+
+      return currentNodes.filter((n) => n.id !== nodeId);
+    });
+
+    setEdges((currentEdges) =>
+      currentEdges.filter((e) => e.source !== nodeId && e.target !== nodeId)
+    );
+  }, [toast]);
+
+  const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
+    setNodes((currentNodes) => {
+      // If updating a callDirection node, check if the new direction already exists
+      const nodeToUpdate = currentNodes.find(n => n.id === nodeId);
+      if (nodeToUpdate?.type === "callDirection" && newData.direction) {
+        const existingDirections = currentNodes
+          .filter(n => n.type === "callDirection" && n.id !== nodeId)
+          .map(n => n.data.direction);
+
+        if (existingDirections.includes(newData.direction)) {
+          toast({
+            title: "Cannot change direction",
+            description: `A start node with ${newData.direction} direction already exists`,
+            variant: "destructive",
+          });
+          return currentNodes;
+        }
+      }
+
+      return currentNodes.map((node) =>
         node.id === nodeId
           ? {
               ...node,
               data: {
                 ...newData,
-                onClone: handleCloneNode,
-                onDelete: handleDeleteNode,
-                onUpdate: handleUpdateNode,
               },
             }
           : node
-      )
-    );
+      );
+    });
+  }, [toast]);
+
+  // Node components with handlers - defined inside component to access callbacks
+  const nodeComponents = {
+    agentSetup: AgentSetupNode,
+    callDirection: (props: any) => (
+      <CallDirectionNode
+        {...props}
+        onDelete={handleDeleteNode}
+      />
+    ),
+    standard: (props: any) => (
+      <StandardNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    default: () => <div>Unknown Node</div>,
   };
-
-  // Helper to add handlers to node data
-  const addHandlersToNode = (node: Node): Node => ({
-    ...node,
-    data: {
-      ...node.data,
-      onClone: handleCloneNode,
-      onDelete: handleDeleteNode,
-      onUpdate: handleUpdateNode,
-    },
-  });
-
-  const addHandlersToNodes = (nodes: Node[]): Node[] =>
-    nodes.map(addHandlersToNode);
 
   useEffect(() => {
     if (agentId) {
@@ -243,7 +233,7 @@ const AgentStudioPage = () => {
       // Load flow from agent config
       if (response.data?.config?.flow) {
         const loadedNodes = response.data.config.flow.nodes || [];
-        setNodes(addHandlersToNodes(loadedNodes));
+        setNodes(loadedNodes);
         setEdges(response.data.config.flow.edges || []);
       } else {
         // Initialize with default Agent Setup node
@@ -285,7 +275,7 @@ const AgentStudioPage = () => {
       },
     ];
 
-    setNodes(addHandlersToNodes(defaultNodes));
+    setNodes(defaultNodes);
     setEdges(defaultEdges);
   };
 
@@ -374,9 +364,9 @@ const AgentStudioPage = () => {
         },
       };
 
-      setNodes([...nodes, addHandlersToNode(newNode)]);
+      setNodes((currentNodes) => [...currentNodes, newNode]);
     },
-    [nodes]
+    []
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
