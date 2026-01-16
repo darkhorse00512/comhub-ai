@@ -1,5 +1,4 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -14,7 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-interface StandardNodeProps extends NodeProps {
+interface StandardNodeProps {
+  id: string;
+  data: any;
+  isConnectable?: boolean;
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
@@ -72,14 +74,6 @@ const StandardNode = ({ id, data, isConnectable, onClone, onDelete, onUpdate }: 
   return (
     <>
       <div className={`border-2 rounded-xl shadow-lg min-w-[200px] ${getColorClasses()} relative group`}>
-        {/* Input Handle */}
-        <Handle
-          type="target"
-          position={Position.Left}
-          isConnectable={isConnectable}
-          className="w-3 h-3 !bg-blue-500"
-        />
-
         {/* Node Content */}
         <div className="p-4">
           {/* Header with Action Buttons */}
@@ -119,14 +113,6 @@ const StandardNode = ({ id, data, isConnectable, onClone, onDelete, onUpdate }: 
             </div>
           )}
         </div>
-
-        {/* Output Handle */}
-        <Handle
-          type="source"
-          position={Position.Right}
-          isConnectable={isConnectable}
-          className="w-3 h-3 !bg-green-500"
-        />
       </div>
 
       {/* Edit Modal */}

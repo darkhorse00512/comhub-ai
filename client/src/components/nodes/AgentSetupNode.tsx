@@ -1,5 +1,4 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Settings, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +12,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 
-const AgentSetupNode = ({ data, isConnectable }: NodeProps) => {
+interface AgentSetupNodeProps {
+  data: any;
+  isConnectable?: boolean;
+}
+
+const AgentSetupNode = ({ data, isConnectable }: AgentSetupNodeProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [systemMessage, setSystemMessage] = useState(
     data.systemMessage || "You are a helpful AI assistant for phone conversations."
@@ -62,14 +66,6 @@ const AgentSetupNode = ({ data, isConnectable }: NodeProps) => {
             {systemMessage}
           </div>
         </div>
-
-        {/* Only output handle on the right */}
-        <Handle
-          type="source"
-          position={Position.Right}
-          isConnectable={isConnectable}
-          className="w-3 h-3 !bg-pink-500"
-        />
       </div>
 
       {/* Edit Modal */}

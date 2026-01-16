@@ -1,5 +1,4 @@
 import { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "@xyflow/react";
 import { PhoneIncoming, PhoneOutgoing, Pencil, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -19,7 +18,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-interface CallDirectionNodeProps extends NodeProps {
+interface CallDirectionNodeProps {
+  id: string;
+  data: any;
+  isConnectable?: boolean;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
 }
@@ -60,13 +62,6 @@ const CallDirectionNode = ({ id, data, isConnectable, onDelete, onUpdate }: Call
             : "bg-purple-50 border-purple-400"
         }`}
       >
-        <Handle
-          type="target"
-          position={Position.Left}
-          isConnectable={isConnectable}
-          className={`w-3 h-3 ${isInbound ? "!bg-blue-500" : "!bg-purple-500"}`}
-        />
-
         <div className="p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -112,13 +107,6 @@ const CallDirectionNode = ({ id, data, isConnectable, onDelete, onUpdate }: Call
             <span className="capitalize">{data.direction}</span>
           </div>
         </div>
-
-        <Handle
-          type="source"
-          position={Position.Right}
-          isConnectable={isConnectable}
-          className={`w-3 h-3 ${isInbound ? "!bg-blue-500" : "!bg-purple-500"}`}
-        />
       </div>
 
       {/* Edit Modal */}
