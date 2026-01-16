@@ -22,6 +22,7 @@ import {
   Wrench,
   AlertCircle,
   PhoneCall,
+  PhoneIncoming,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -91,6 +92,35 @@ const AgentStudioPage = () => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
+  const [showStartNodePopup, setShowStartNodePopup] = useState(false);
+
+  // Check which start node directions already exist
+  const getExistingStartDirections = () => {
+    const startNodes = nodes.filter(n => n.type === "callDirection");
+    return startNodes.map(n => n.data.direction);
+  };
+
+  const hasInboundStart = getExistingStartDirections().includes("inbound");
+  const hasOutboundStart = getExistingStartDirections().includes("outbound");
+
+  // Add start node with specific direction
+  const addStartNode = (direction: "inbound" | "outbound") => {
+    const newNode: Node = {
+      id: `start-${direction}-${Date.now()}`,
+      type: "callDirection",
+      position: { x: 250, y: 250 },
+      data: {
+        label: "Start",
+        direction: direction,
+      },
+    };
+    setNodes([...nodes, addHandlersToNode(newNode)]);
+    setShowStartNodePopup(false);
+    toast({
+      title: "Start node added",
+      description: `${direction.charAt(0).toUpperCase() + direction.slice(1)} start node has been added`,
+    });
+  };
 
   // Node action handlers
   const handleCloneNode = (nodeId: string) => {
@@ -141,6 +171,23 @@ const AgentStudioPage = () => {
   };
 
   const handleUpdateNode = (nodeId: string, newData: any) => {
+    // If updating a callDirection node, check if the new direction already exists
+    const nodeToUpdate = nodes.find(n => n.id === nodeId);
+    if (nodeToUpdate?.type === "callDirection" && newData.direction) {
+      const existingDirections = nodes
+        .filter(n => n.type === "callDirection" && n.id !== nodeId)
+        .map(n => n.data.direction);
+
+      if (existingDirections.includes(newData.direction)) {
+        toast({
+          title: "Cannot change direction",
+          description: `A start node with ${newData.direction} direction already exists`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setNodes(
       nodes.map((node) =>
         node.id === nodeId
@@ -447,20 +494,10 @@ const AgentStudioPage = () => {
           {selectedMenuItem === "studio" && (
             <div className="w-64 border-r border-border bg-background overflow-y-auto">
               <div className="p-4">
-                <div className="mb-4">
+                <div className="mb-4 relative">
                   <button
-                    onClick={() => {
-                      const newNode: Node = {
-                        id: "start-" + Date.now(),
-                        type: "callDirection",
-                        position: { x: 250, y: 250 },
-                        data: {
-                          label: "Start",
-                          direction: "inbound",
-                        },
-                      };
-                      setNodes([...nodes, addHandlersToNode(newNode)]);
-                    }}
+                    onMouseEnter={() => setShowStartNodePopup(true)}
+                    onMouseLeave={() => setShowStartNodePopup(false)}
                     className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors mb-2"
                   >
                     <div className="flex items-center gap-3">
@@ -468,6 +505,53 @@ const AgentStudioPage = () => {
                       <span className="text-sm font-medium">Add Start Node</span>
                     </div>
                   </button>
+
+                  {/* Popup menu for start node direction */}
+                  {showStartNodePopup && (
+                    <div
+                      className="absolute left-0 top-full mt-1 w-full bg-white border-2 border-purple-400 rounded-lg shadow-lg z-50 overflow-hidden"
+                      onMouseEnter={() => setShowStartNodePopup(true)}
+                      onMouseLeave={() => setShowStartNodePopup(false)}
+                    >
+                      <button
+                        onClick={() => addStartNode("inbound")}
+                        disabled={hasInboundStart}
+                        className={`w-full p-3 flex items-center gap-3 transition-colors ${
+                          hasInboundStart
+                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            : "hover:bg-blue-50 text-blue-700"
+                        }`}
+                      >
+                        <PhoneIncoming className="w-5 h-5" />
+                        <div className="flex flex-col items-start">
+                          <span className="text-sm font-medium">Inbound</span>
+                          {hasInboundStart && (
+                            <span className="text-xs text-gray-400">Already exists</span>
+                          )}
+                        </div>
+                      </button>
+
+                      <div className="border-t border-gray-200"></div>
+
+                      <button
+                        onClick={() => addStartNode("outbound")}
+                        disabled={hasOutboundStart}
+                        className={`w-full p-3 flex items-center gap-3 transition-colors ${
+                          hasOutboundStart
+                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            : "hover:bg-purple-50 text-purple-700"
+                        }`}
+                      >
+                        <PhoneOutgoing className="w-5 h-5" />
+                        <div className="flex flex-col items-start">
+                          <span className="text-sm font-medium">Outbound</span>
+                          {hasOutboundStart && (
+                            <span className="text-xs text-gray-400">Already exists</span>
+                          )}
+                        </div>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
