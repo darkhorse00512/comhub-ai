@@ -387,6 +387,14 @@ const AgentStudioPage = () => {
         {/* Top Bar */}
         <div className="h-16 border-b border-border flex items-center justify-between px-6 bg-background/95 backdrop-blur-sm z-10">
           <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/dashboard/agents")}
+              className="mr-2"
+            >
+              ← Back
+            </Button>
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-purple-500 flex items-center justify-center">
                 <span className="text-sm font-bold text-white">
@@ -488,23 +496,21 @@ const AgentStudioPage = () => {
             </div>
           )}
 
-          {/* Flow Canvas */}
-          {selectedMenuItem === "studio" && (
-            <div
-              className="flex-1"
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-            >
-              <FlowCanvas
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={setNodes}
-                onEdgesChange={setEdges}
-                onConnect={handleConnect}
-                nodeComponents={nodeComponents}
-              />
-            </div>
-          )}
+          {/* Flow Canvas - Always rendered but hidden when not on studio */}
+          <div
+            className={`flex-1 ${selectedMenuItem !== "studio" ? "hidden" : ""}`}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+          >
+            <FlowCanvas
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={setNodes}
+              onEdgesChange={setEdges}
+              onConnect={handleConnect}
+              nodeComponents={nodeComponents}
+            />
+          </div>
 
           {/* Other Menu Content */}
           {selectedMenuItem !== "studio" && (
