@@ -25,4 +25,7 @@ router.delete('/:id', agentsController.deleteAgent);
 // Clone an agent
 router.post('/:id/clone', agentsController.cloneAgent);
 
+// Test chat with an agent
+router.post('/:id/test-chat', agentsController.testChat);
+
 export default router;

@@ -23,6 +23,7 @@ import {
   AlertCircle,
   PhoneCall,
   PhoneIncoming,
+  Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -31,6 +32,7 @@ import { api } from "@/services/api";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 import StandardNode from "@/components/nodes/StandardNode";
+import TestAgentModal from "@/components/TestAgentModal";
 
 interface Agent {
   id: string;
@@ -73,6 +75,7 @@ const AgentStudioPage = () => {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
   const [showStartNodePopup, setShowStartNodePopup] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
 
   // Check which start node directions already exist
   const getExistingStartDirections = () => {
@@ -477,6 +480,14 @@ const AgentStudioPage = () => {
               <Rocket className="w-4 h-4 mr-2" />
               Deploy
             </Button>
+            <Button
+              size="sm"
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              onClick={() => setShowTestModal(true)}
+            >
+              <Play className="w-4 h-4 mr-2" />
+              Test
+            </Button>
           </div>
         </div>
 
@@ -606,6 +617,18 @@ const AgentStudioPage = () => {
           )}
         </div>
       </div>
+
+      {/* Test Agent Modal */}
+      {agent && (
+        <TestAgentModal
+          isOpen={showTestModal}
+          onClose={() => setShowTestModal(false)}
+          agentId={agent.id}
+          agentName={agent.name}
+          nodes={nodes}
+          edges={edges}
+        />
+      )}
     </div>
   );
 };

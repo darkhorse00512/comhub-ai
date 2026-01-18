@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
+import { gptService, ChatMessage } from '../services/ai/gpt.service';
 
 const supabase = getSupabaseClient();
 
@@ -350,11 +351,89 @@ export const cloneAgent = async (req: AuthRequest, res: Response): Promise<void>
   }
 };
 
+/**
+ * Test chat with an agent - for testing agent workflows
+ */
+export const testChat = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { messages, direction } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!messages || !Array.isArray(messages)) {
+      res.status(400).json({ success: false, error: 'Messages array is required' });
+      return;
+    }
+
+    logger.info('Test chat with agent', { userId, agentId: id, direction, messageCount: messages.length });
+
+    // Fetch the agent to verify ownership
+    const { data: agent, error: fetchError } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !agent) {
+      logger.error('Error fetching agent for test chat', { error: fetchError?.message, userId, agentId: id });
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
+    // Convert messages to ChatMessage format
+    const chatMessages: ChatMessage[] = messages.map((msg: any) => ({
+      role: msg.role as 'system' | 'user' | 'assistant',
+      content: msg.content,
+    }));
+
+    // Generate AI response using the messages (which include the system prompt from the frontend)
+    const lastUserMessage = chatMessages.filter(m => m.role === 'user').pop();
+    if (!lastUserMessage) {
+      res.status(400).json({ success: false, error: 'No user message found' });
+      return;
+    }
+
+    // Get conversation history (excluding the last user message which will be passed separately)
+    const conversationHistory = chatMessages.slice(0, -1);
+
+    // Generate response
+    const aiResponse = await gptService.generateResponse(
+      lastUserMessage.content,
+      conversationHistory
+    );
+
+    logger.info('Test chat response generated', {
+      userId,
+      agentId: id,
+      responseLength: aiResponse.text.length
+    });
+
+    res.status(200).json({
+      success: true,
+      response: aiResponse.text,
+      usage: aiResponse.usage
+    });
+  } catch (error) {
+    logger.error('Unexpected error in test chat', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
   createAgent,
   updateAgent,
   deleteAgent,
-  cloneAgent
+  cloneAgent,
+  testChat
 };
