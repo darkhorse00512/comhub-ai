@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Node, Edge, Position } from "./types";
+import { Node, Edge } from "./types";
 import "./FlowCanvas.css";
 
 interface FlowCanvasProps {
@@ -33,34 +33,52 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
 
-  // Measure node dimensions after render
+  // Measure node dimensions after render - measure unscaled dimensions
   useEffect(() => {
-    const newDimensions = new Map<string, { width: number; height: number }>();
-    nodeRefs.current.forEach((el, nodeId) => {
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        newDimensions.set(nodeId, { width: rect.width / scale, height: rect.height / scale });
-      }
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      const newDimensions = new Map<string, { width: number; height: number }>();
+      nodeRefs.current.forEach((el, nodeId) => {
+        if (el) {
+          // Get the actual rendered size and divide by scale to get unscaled dimensions
+          const rect = el.getBoundingClientRect();
+          newDimensions.set(nodeId, {
+            width: rect.width / scale,
+            height: rect.height / scale
+          });
+        }
+      });
+      setNodeDimensions(newDimensions);
     });
-    setNodeDimensions(newDimensions);
   }, [nodes, scale]);
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
     if ((e.target as HTMLElement).closest(".node-handle")) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    if ((e.target as HTMLElement).closest("input")) return;
+    if ((e.target as HTMLElement).closest("textarea")) return;
 
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return;
 
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
     const canvasRect = canvasRef.current?.getBoundingClientRect();
     if (!canvasRect) return;
 
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Calculate offset from mouse position to node position in canvas coordinates
+    const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
+    const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
+
     setDraggedNode(nodeId);
     setDragOffset({
-      x: (e.clientX - canvasRect.left) / scale - pan.x - node.position.x,
-      y: (e.clientY - canvasRect.top) / scale - pan.y - node.position.y,
+      x: mouseX - node.position.x,
+      y: mouseY - node.position.y,
     });
   };
 
@@ -69,8 +87,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     (e: MouseEvent) => {
       if (draggedNode && canvasRef.current) {
         const canvasRect = canvasRef.current.getBoundingClientRect();
-        const x = (e.clientX - canvasRect.left) / scale - pan.x - dragOffset.x;
-        const y = (e.clientY - canvasRect.top) / scale - pan.y - dragOffset.y;
+
+        // Convert mouse position to canvas coordinates
+        const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
+        const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
+
+        const x = mouseX - dragOffset.x;
+        const y = mouseY - dragOffset.y;
 
         onNodesChange(
           nodes.map((node) =>
@@ -81,30 +104,31 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         );
       }
 
-      if (connecting) {
-        const canvasRect = canvasRef.current?.getBoundingClientRect();
-        if (!canvasRect) return;
+      if (connecting && canvasRef.current) {
+        const canvasRect = canvasRef.current.getBoundingClientRect();
+
+        // Convert mouse position to canvas coordinates
+        const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
+        const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
 
         setConnecting({
           ...connecting,
-          position: {
-            x: (e.clientX - canvasRect.left) / scale - pan.x,
-            y: (e.clientY - canvasRect.top) / scale - pan.y,
-          },
+          position: { x: mouseX, y: mouseY },
         });
       }
 
       if (isPanning && canvasRef.current) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
+
+        // Pan should move in screen space, then converted to canvas space
         setPan({
-          x: pan.x + dx / scale,
-          y: pan.y + dy / scale,
+          x: panOffset.x + dx / scale,
+          y: panOffset.y + dy / scale,
         });
-        setPanStart({ x: e.clientX, y: e.clientY });
       }
     },
-    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, pan, panStart, scale]
+    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, pan, panStart, panOffset, scale]
   );
 
   // Handle mouse up
@@ -149,13 +173,14 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     const canvasRect = canvasRef.current?.getBoundingClientRect();
     if (!canvasRect) return;
 
+    // Convert mouse position to canvas coordinates
+    const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
+    const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
+
     setConnecting({
       sourceId: nodeId,
       sourceHandle: handle,
-      position: {
-        x: (e.clientX - canvasRect.left) / scale - pan.x,
-        y: (e.clientY - canvasRect.top) / scale - pan.y,
-      },
+      position: { x: mouseX, y: mouseY },
     });
   };
 
@@ -164,27 +189,43 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     if (e.target === canvasRef.current || (e.target as HTMLElement).classList.contains("flow-canvas-content")) {
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
+      setPanOffset({ x: pan.x, y: pan.y });
     }
   };
 
-  // Handle zoom
+  // Handle zoom with mouse position as center
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) return;
+
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setScale((prev) => Math.min(Math.max(prev * delta, 0.1), 3));
+    const newScale = Math.min(Math.max(scale * delta, 0.1), 3);
+
+    // Zoom toward mouse position
+    const mouseX = e.clientX - canvasRect.left;
+    const mouseY = e.clientY - canvasRect.top;
+
+    // Calculate the point in canvas coordinates before zoom
+    const canvasX = (mouseX - pan.x * scale) / scale;
+    const canvasY = (mouseY - pan.y * scale) / scale;
+
+    // Calculate new pan to keep the same point under the mouse
+    const newPanX = (mouseX - canvasX * newScale) / newScale;
+    const newPanY = (mouseY - canvasY * newScale) / newScale;
+
+    setScale(newScale);
+    setPan({ x: newPanX, y: newPanY });
   };
 
   // Get fallback node dimensions based on node type (used before DOM measurements are available)
   const getFallbackNodeDimensions = (nodeType: string) => {
-    // AgentSetupNode: min-w-[300px], has header + content area (~140px height)
     if (nodeType === "agentSetup") {
       return { width: 300, height: 140 };
     }
-    // CallDirectionNode: min-w-[200px] (~100px height)
     if (nodeType === "callDirection") {
       return { width: 200, height: 100 };
     }
-    // StandardNode: min-w-[200px], (~80px height with padding)
     return { width: 200, height: 80 };
   };
 
@@ -204,27 +245,107 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     };
   };
 
-  // Render edge path
+  // Delete an edge
+  const handleDeleteEdge = (edgeId: string) => {
+    onEdgesChange(edges.filter((e) => e.id !== edgeId));
+  };
+
+  // Get the midpoint of a bezier curve for positioning the delete button
+  const getBezierMidpoint = (source: { x: number; y: number }, target: { x: number; y: number }) => {
+    const dx = target.x - source.x;
+    const controlPointOffset = Math.abs(dx) / 2;
+
+    // Cubic bezier midpoint approximation (t=0.5)
+    const t = 0.5;
+    const mt = 1 - t;
+
+    const x1 = source.x;
+    const y1 = source.y;
+    const x2 = source.x + controlPointOffset;
+    const y2 = source.y;
+    const x3 = target.x - controlPointOffset;
+    const y3 = target.y;
+    const x4 = target.x;
+    const y4 = target.y;
+
+    const x = mt * mt * mt * x1 + 3 * mt * mt * t * x2 + 3 * mt * t * t * x3 + t * t * t * x4;
+    const y = mt * mt * mt * y1 + 3 * mt * mt * t * y2 + 3 * mt * t * t * y3 + t * t * t * y4;
+
+    return { x, y };
+  };
+
+  // Render edge path with hover detection and delete button
   const renderEdge = (edge: Edge) => {
     const source = getNodeHandlePosition(edge.source, "right");
     const target = getNodeHandlePosition(edge.target, "left");
 
     const dx = target.x - source.x;
-    const dy = target.y - source.y;
     const controlPointOffset = Math.abs(dx) / 2;
 
     const path = `M ${source.x},${source.y} C ${source.x + controlPointOffset},${source.y} ${target.x - controlPointOffset},${target.y} ${target.x},${target.y}`;
 
+    const isHovered = hoveredEdge === edge.id;
+    const midpoint = getBezierMidpoint(source, target);
+
     return (
       <g key={edge.id}>
+        {/* Invisible wider path for easier hover detection */}
         <path
           d={path}
           fill="none"
-          stroke="#b1b1b7"
-          strokeWidth="2"
-          markerEnd="url(#arrowhead)"
-          className={edge.animated ? "edge-animated" : ""}
+          stroke="transparent"
+          strokeWidth="20"
+          style={{ cursor: "pointer", pointerEvents: "stroke" }}
+          onMouseEnter={() => setHoveredEdge(edge.id)}
+          onMouseLeave={() => setHoveredEdge(null)}
         />
+        {/* Visible edge path */}
+        <path
+          d={path}
+          fill="none"
+          stroke={isHovered ? "#ef4444" : "#b1b1b7"}
+          strokeWidth={isHovered ? "3" : "2"}
+          markerEnd={isHovered ? "url(#arrowhead-hover)" : "url(#arrowhead)"}
+          className={edge.animated ? "edge-animated" : ""}
+          style={{ pointerEvents: "none", transition: "stroke 0.15s, stroke-width 0.15s" }}
+        />
+        {/* Delete button at midpoint */}
+        {isHovered && (
+          <g
+            transform={`translate(${midpoint.x}, ${midpoint.y})`}
+            style={{ cursor: "pointer", pointerEvents: "all" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDeleteEdge(edge.id);
+            }}
+            onMouseEnter={() => setHoveredEdge(edge.id)}
+          >
+            <circle
+              r="12"
+              fill="#ef4444"
+              stroke="white"
+              strokeWidth="2"
+            />
+            <line
+              x1="-5"
+              y1="-5"
+              x2="5"
+              y2="5"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+            <line
+              x1="5"
+              y1="-5"
+              x2="-5"
+              y2="5"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </g>
+        )}
       </g>
     );
   };
@@ -257,11 +378,12 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       <div
         className="flow-canvas-content"
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          transform: `scale(${scale}) translate(${pan.x}px, ${pan.y}px)`,
+          transformOrigin: "0 0",
         }}
       >
         {/* SVG for edges */}
-        <svg className="flow-edges">
+        <svg className="flow-edges" style={{ overflow: "visible" }}>
           <defs>
             <marker
               id="arrowhead"
@@ -272,6 +394,16 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
               orient="auto"
             >
               <polygon points="0 0, 10 3, 0 6" fill="#b1b1b7" />
+            </marker>
+            <marker
+              id="arrowhead-hover"
+              markerWidth="10"
+              markerHeight="10"
+              refX="9"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
             </marker>
           </defs>
           {edges.map(renderEdge)}
@@ -328,7 +460,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       <div className="flow-controls">
         <button onClick={() => setScale((s) => Math.min(s * 1.2, 3))}>+</button>
         <button onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))}>-</button>
-        <button onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}>⊙</button>
+        <button onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}>&#8857;</button>
       </div>
     </div>
   );
