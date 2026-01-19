@@ -36,14 +36,25 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
 
-  // Measure node dimensions after render - measure unscaled dimensions
+  // Convert screen coordinates to canvas coordinates
+  const screenToCanvas = useCallback((screenX: number, screenY: number) => {
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) return { x: 0, y: 0 };
+
+    // Transform is: scale(scale) translate(pan.x, pan.y)
+    // So: screenPos = (canvasPos + pan) * scale
+    // Therefore: canvasPos = screenPos / scale - pan
+    const x = (screenX - canvasRect.left) / scale - pan.x;
+    const y = (screenY - canvasRect.top) / scale - pan.y;
+    return { x, y };
+  }, [scale, pan]);
+
+  // Measure node dimensions after render
   useEffect(() => {
-    // Use requestAnimationFrame to ensure DOM is ready
     requestAnimationFrame(() => {
       const newDimensions = new Map<string, { width: number; height: number }>();
       nodeRefs.current.forEach((el, nodeId) => {
         if (el) {
-          // Get the actual rendered size and divide by scale to get unscaled dimensions
           const rect = el.getBoundingClientRect();
           newDimensions.set(nodeId, {
             width: rect.width / scale,
@@ -57,43 +68,39 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
-    if ((e.target as HTMLElement).closest(".node-handle")) return;
-    if ((e.target as HTMLElement).closest("button")) return;
-    if ((e.target as HTMLElement).closest("input")) return;
-    if ((e.target as HTMLElement).closest("textarea")) return;
+    const target = e.target as HTMLElement;
+
+    // Don't start drag if clicking on interactive elements
+    if (target.closest(".node-handle")) return;
+    if (target.closest("button")) return;
+    if (target.closest("input")) return;
+    if (target.closest("textarea")) return;
+    if (target.closest("a")) return;
+    if (target.closest("[role='button']")) return;
+    if (target.closest("select")) return;
 
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return;
 
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
-
     e.preventDefault();
     e.stopPropagation();
 
-    // Calculate offset from mouse position to node position in canvas coordinates
-    const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
-    const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
+    const canvasPos = screenToCanvas(e.clientX, e.clientY);
 
     setDraggedNode(nodeId);
     setDragOffset({
-      x: mouseX - node.position.x,
-      y: mouseY - node.position.y,
+      x: canvasPos.x - node.position.x,
+      y: canvasPos.y - node.position.y,
     });
   };
 
   // Handle node drag
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
-      if (draggedNode && canvasRef.current) {
-        const canvasRect = canvasRef.current.getBoundingClientRect();
-
-        // Convert mouse position to canvas coordinates
-        const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
-        const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
-
-        const x = mouseX - dragOffset.x;
-        const y = mouseY - dragOffset.y;
+      if (draggedNode) {
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
+        const x = canvasPos.x - dragOffset.x;
+        const y = canvasPos.y - dragOffset.y;
 
         onNodesChange(
           nodes.map((node) =>
@@ -104,31 +111,26 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         );
       }
 
-      if (connecting && canvasRef.current) {
-        const canvasRect = canvasRef.current.getBoundingClientRect();
-
-        // Convert mouse position to canvas coordinates
-        const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
-        const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
-
+      if (connecting) {
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
         setConnecting({
           ...connecting,
-          position: { x: mouseX, y: mouseY },
+          position: canvasPos,
         });
       }
 
-      if (isPanning && canvasRef.current) {
+      if (isPanning) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
 
-        // Pan should move in screen space, then converted to canvas space
+        // Pan is in canvas coordinates (before scale is applied)
         setPan({
           x: panOffset.x + dx / scale,
           y: panOffset.y + dy / scale,
         });
       }
     },
-    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, pan, panStart, panOffset, scale]
+    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, panStart, panOffset, scale, screenToCanvas]
   );
 
   // Handle mouse up
@@ -170,23 +172,28 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     handle: "left" | "right"
   ) => {
     e.stopPropagation();
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
+    e.preventDefault();
 
-    // Convert mouse position to canvas coordinates
-    const mouseX = (e.clientX - canvasRect.left - pan.x * scale) / scale;
-    const mouseY = (e.clientY - canvasRect.top - pan.y * scale) / scale;
+    const canvasPos = screenToCanvas(e.clientX, e.clientY);
 
     setConnecting({
       sourceId: nodeId,
       sourceHandle: handle,
-      position: { x: mouseX, y: mouseY },
+      position: canvasPos,
     });
   };
 
   // Handle canvas panning
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (e.target === canvasRef.current || (e.target as HTMLElement).classList.contains("flow-canvas-content")) {
+    const target = e.target as HTMLElement;
+    // Only start panning if clicking on the canvas background or SVG
+    if (
+      target === canvasRef.current ||
+      target.classList.contains("flow-canvas-content") ||
+      target.classList.contains("flow-edges") ||
+      target.tagName === "svg"
+    ) {
+      e.preventDefault();
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
       setPanOffset({ x: pan.x, y: pan.y });
@@ -202,23 +209,23 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.min(Math.max(scale * delta, 0.1), 3);
 
-    // Zoom toward mouse position
+    // Mouse position relative to canvas container
     const mouseX = e.clientX - canvasRect.left;
     const mouseY = e.clientY - canvasRect.top;
 
-    // Calculate the point in canvas coordinates before zoom
-    const canvasX = (mouseX - pan.x * scale) / scale;
-    const canvasY = (mouseY - pan.y * scale) / scale;
+    // Current canvas position under mouse (before zoom)
+    const canvasX = mouseX / scale - pan.x;
+    const canvasY = mouseY / scale - pan.y;
 
-    // Calculate new pan to keep the same point under the mouse
-    const newPanX = (mouseX - canvasX * newScale) / newScale;
-    const newPanY = (mouseY - canvasY * newScale) / newScale;
+    // New pan to keep the same canvas point under mouse
+    const newPanX = mouseX / newScale - canvasX;
+    const newPanY = mouseY / newScale - canvasY;
 
     setScale(newScale);
     setPan({ x: newPanX, y: newPanY });
   };
 
-  // Get fallback node dimensions based on node type (used before DOM measurements are available)
+  // Get fallback node dimensions based on node type
   const getFallbackNodeDimensions = (nodeType: string) => {
     if (nodeType === "agentSetup") {
       return { width: 300, height: 140 };
@@ -229,12 +236,11 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     return { width: 200, height: 80 };
   };
 
-  // Get node position with handles - uses measured dimensions or fallback
+  // Get node position with handles
   const getNodeHandlePosition = (nodeId: string, handle: "left" | "right") => {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return { x: 0, y: 0 };
 
-    // Use measured dimensions if available, otherwise use fallback
     const measured = nodeDimensions.get(nodeId);
     const dimensions = measured || getFallbackNodeDimensions(node.type);
     const handleOffsetX = handle === "left" ? 0 : dimensions.width;
@@ -250,12 +256,11 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     onEdgesChange(edges.filter((e) => e.id !== edgeId));
   };
 
-  // Get the midpoint of a bezier curve for positioning the delete button
+  // Get the midpoint of a bezier curve
   const getBezierMidpoint = (source: { x: number; y: number }, target: { x: number; y: number }) => {
     const dx = target.x - source.x;
     const controlPointOffset = Math.abs(dx) / 2;
 
-    // Cubic bezier midpoint approximation (t=0.5)
     const t = 0.5;
     const mt = 1 - t;
 
@@ -364,6 +369,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
         stroke="#555"
         strokeWidth="2"
         strokeDasharray="5,5"
+        style={{ pointerEvents: "none" }}
       />
     );
   };
@@ -382,8 +388,8 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
           transformOrigin: "0 0",
         }}
       >
-        {/* SVG for edges */}
-        <svg className="flow-edges" style={{ overflow: "visible" }}>
+        {/* SVG for edges - rendered first so nodes appear on top */}
+        <svg className="flow-edges" style={{ overflow: "visible", pointerEvents: "none" }}>
           <defs>
             <marker
               id="arrowhead"
@@ -406,7 +412,9 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
               <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
             </marker>
           </defs>
-          {edges.map(renderEdge)}
+          <g style={{ pointerEvents: "auto" }}>
+            {edges.map(renderEdge)}
+          </g>
           {renderConnectingLine()}
         </svg>
 
@@ -430,6 +438,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
                 left: node.position.x,
                 top: node.position.y,
                 cursor: draggedNode === node.id ? "grabbing" : "grab",
+                zIndex: draggedNode === node.id ? 1000 : 1,
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             >
