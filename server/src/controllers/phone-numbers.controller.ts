@@ -134,7 +134,7 @@ class PhoneNumbersController {
         countryCode = 'IE';
         country = 'Ireland';
       } else {
-        countryCode = twilioPhoneNumber.isoCountry || 'Unknown';
+        countryCode = (twilioPhoneNumber as any).isoCountry || 'Unknown';
         country = countryCode;
       }
 
@@ -424,8 +424,8 @@ class PhoneNumbersController {
           user_id: userId,
           phone_number: purchasedNumber.phoneNumber,
           friendly_name: purchasedNumber.friendlyName,
-          country_code: countryCode || purchasedNumber.isoCountry,
-          country: purchasedNumber.isoCountry,
+          country_code: countryCode || (purchasedNumber as any).isoCountry,
+          country: (purchasedNumber as any).isoCountry,
           type: 'purchased',
           status: 'active',
           twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,

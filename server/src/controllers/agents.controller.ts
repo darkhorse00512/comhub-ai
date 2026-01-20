@@ -522,10 +522,12 @@ CALL FLOW CONFIGURATION:
 
 Generate a professional, complete workflow that handles all common scenarios for this business. Include proper greetings, information collection, conversation handling, and professional closings.`;
 
-    // Generate workflow using GPT
-    const aiResponse = await gptService.generateResponse(userPrompt, [
-      { role: 'system', content: systemPrompt }
-    ]);
+    // Generate workflow using GPT with custom prompt and higher token limit
+    const aiResponse = await gptService.generateWithCustomPrompt(
+      userPrompt,
+      systemPrompt,
+      { maxTokens: 4000, temperature: 0.7 }
+    );
 
     // Parse the AI response to extract JSON
     let workflow;
