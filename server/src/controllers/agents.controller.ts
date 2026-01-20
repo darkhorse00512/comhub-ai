@@ -428,6 +428,147 @@ export const testChat = async (req: AuthRequest, res: Response): Promise<void> =
   }
 };
 
+/**
+ * Generate a complete workflow using AI based on business information
+ */
+export const generateWorkflow = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { businessInfo, callFlowConfig } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!businessInfo || !callFlowConfig) {
+      res.status(400).json({ success: false, error: 'Business info and call flow config are required' });
+      return;
+    }
+
+    logger.info('Generating workflow for agent', { userId, agentId: id });
+
+    // Fetch the agent to verify ownership
+    const { data: agent, error: fetchError } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !agent) {
+      logger.error('Error fetching agent for workflow generation', { error: fetchError?.message, userId, agentId: id });
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
+    // Build the AI prompt for workflow generation
+    const systemPrompt = `You are an AI assistant that generates phone call workflow configurations. You must respond with valid JSON only, no other text.
+
+The workflow consists of nodes and edges. Each node has:
+- id: unique string identifier
+- type: either "agentSetup", "callDirection", or "standard"
+- position: {x: number, y: number} - position on the canvas
+- data: object with node-specific data
+
+Node types available for "standard" nodes (set data.type to one of these):
+1. "scripted" - Scripted speech node for fixed messages. data fields: { type: "scripted", label: string, content: string, voice: "professional"|"friendly"|"neutral", speed: "normal"|"slow"|"fast" }
+2. "dialogue" - AI dialogue node for conversational responses. data fields: { type: "dialogue", label: string, prompt: string, maxTurns: number, collectFields: string[] }
+3. "field_setter" - Sets/collects user data. data fields: { type: "field_setter", label: string, fieldName: string, fieldType: "text"|"email"|"phone"|"number"|"boolean", required: boolean, validationPrompt: string }
+4. "junction" - Joins multiple paths. data fields: { type: "junction", label: string, condition: "all"|"any"|"first" }
+5. "switch" - Conditional branching. data fields: { type: "switch", label: string, switchField: string, cases: Array<{value: string, label: string}> }
+6. "function" - Execute custom logic. data fields: { type: "function", label: string, functionName: string, parameters: object }
+7. "call_transfer" - Transfer call to human. data fields: { type: "call_transfer", label: string, transferTo: string, transferMessage: string, waitMusic: boolean }
+8. "time_limit" - Set time constraints. data fields: { type: "time_limit", label: string, maxDuration: number, warningAt: number, timeoutAction: "end"|"transfer"|"repeat" }
+9. "reconfigure" - Change agent settings mid-call. data fields: { type: "reconfigure", label: string, newVoice: string, newSpeed: string, newPrompt: string }
+10. "fallback" - Handle errors/fallbacks. data fields: { type: "fallback", label: string, fallbackMessage: string, retryCount: number, escalateTo: string }
+
+Edges connect nodes:
+- id: unique string identifier
+- source: source node id
+- target: target node id
+- animated: boolean (true for visual animation)
+
+IMPORTANT RULES:
+1. Always start with an "agentSetup" node at position {x: 100, y: 100}
+2. Create separate flow paths for inbound and outbound if both are requested
+3. Use "callDirection" nodes for inbound/outbound entry points
+4. Create logical flows with proper connections
+5. Space nodes appropriately (at least 200px apart horizontally, 150px vertically)
+6. Use meaningful labels and prompts based on the business context
+7. Include error handling with fallback nodes
+8. If transfer to human is requested, include call_transfer nodes
+
+Respond with a JSON object containing "nodes" array and "edges" array.`;
+
+    const userPrompt = `Generate a complete phone call workflow for the following business:
+
+BUSINESS INFORMATION:
+- Business Name: ${businessInfo.businessName}
+- Industry: ${businessInfo.industry || 'Not specified'}
+- Description: ${businessInfo.description}
+- Target Audience: ${businessInfo.targetAudience || 'General'}
+- Main Services/Products: ${businessInfo.mainServices || 'Not specified'}
+
+CALL FLOW CONFIGURATION:
+- Generate Inbound Flow: ${callFlowConfig.generateInbound ? 'Yes' : 'No'}
+- Generate Outbound Flow: ${callFlowConfig.generateOutbound ? 'Yes' : 'No'}
+- Inbound Purpose: ${callFlowConfig.inboundPurpose || 'General customer support'}
+- Outbound Purpose: ${callFlowConfig.outboundPurpose || 'Sales/follow-up calls'}
+- Information to Collect: ${callFlowConfig.collectInfo?.length > 0 ? callFlowConfig.collectInfo.join(', ') : 'None specified'}
+- Include Human Transfer Option: ${callFlowConfig.transferToHuman ? 'Yes' : 'No'}
+- Business Hours: ${callFlowConfig.businessHours || 'Not specified'}
+
+Generate a professional, complete workflow that handles all common scenarios for this business. Include proper greetings, information collection, conversation handling, and professional closings.`;
+
+    // Generate workflow using GPT
+    const aiResponse = await gptService.generateResponse(userPrompt, [
+      { role: 'system', content: systemPrompt }
+    ]);
+
+    // Parse the AI response to extract JSON
+    let workflow;
+    try {
+      // Try to extract JSON from the response
+      const jsonMatch = aiResponse.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        workflow = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No JSON found in response');
+      }
+    } catch (parseError) {
+      logger.error('Error parsing AI workflow response', { error: parseError, response: aiResponse.text });
+      res.status(500).json({ success: false, error: 'Failed to parse generated workflow' });
+      return;
+    }
+
+    // Validate the workflow structure
+    if (!workflow.nodes || !Array.isArray(workflow.nodes) || !workflow.edges || !Array.isArray(workflow.edges)) {
+      res.status(500).json({ success: false, error: 'Invalid workflow structure generated' });
+      return;
+    }
+
+    logger.info('Workflow generated successfully', {
+      userId,
+      agentId: id,
+      nodeCount: workflow.nodes.length,
+      edgeCount: workflow.edges.length
+    });
+
+    res.status(200).json({
+      success: true,
+      workflow
+    });
+  } catch (error) {
+    logger.error('Unexpected error generating workflow', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -435,5 +576,6 @@ export default {
   updateAgent,
   deleteAgent,
   cloneAgent,
-  testChat
+  testChat,
+  generateWorkflow
 };

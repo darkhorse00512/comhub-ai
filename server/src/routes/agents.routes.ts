@@ -28,4 +28,7 @@ router.post('/:id/clone', agentsController.cloneAgent);
 // Test chat with an agent
 router.post('/:id/test-chat', agentsController.testChat);
 
+// Generate workflow using AI
+router.post('/:id/generate-workflow', agentsController.generateWorkflow);
+
 export default router;

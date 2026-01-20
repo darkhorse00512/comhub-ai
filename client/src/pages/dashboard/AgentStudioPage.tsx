@@ -24,6 +24,7 @@ import {
   PhoneCall,
   PhoneIncoming,
   Play,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -33,6 +34,7 @@ import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 import StandardNode from "@/components/nodes/StandardNode";
 import TestAgentModal from "@/components/TestAgentModal";
+import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 
 interface Agent {
   id: string;
@@ -76,6 +78,7 @@ const AgentStudioPage = () => {
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
   const [showStartNodePopup, setShowStartNodePopup] = useState(false);
   const [showTestModal, setShowTestModal] = useState(false);
+  const [showAIGenerator, setShowAIGenerator] = useState(false);
 
   // Check which start node directions already exist
   const getExistingStartDirections = () => {
@@ -488,6 +491,14 @@ const AgentStudioPage = () => {
               <Play className="w-4 h-4 mr-2" />
               Test
             </Button>
+            <Button
+              size="sm"
+              className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
+              onClick={() => setShowAIGenerator(true)}
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              Complete by AI
+            </Button>
           </div>
         </div>
 
@@ -627,6 +638,19 @@ const AgentStudioPage = () => {
           agentName={agent.name}
           nodes={nodes}
           edges={edges}
+        />
+      )}
+
+      {/* AI Workflow Generator Modal */}
+      {agent && (
+        <AIWorkflowGenerator
+          isOpen={showAIGenerator}
+          onClose={() => setShowAIGenerator(false)}
+          onGenerate={(generatedNodes, generatedEdges) => {
+            setNodes(generatedNodes);
+            setEdges(generatedEdges);
+          }}
+          agentId={agent.id}
         />
       )}
     </div>
