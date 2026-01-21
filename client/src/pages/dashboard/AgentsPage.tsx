@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2 } from "lucide-react";
+import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2, AlertTriangle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,6 +37,10 @@ const AgentsPage = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchAgents();
@@ -70,10 +74,61 @@ const AgentsPage = () => {
   };
 
   const handleImportAgent = () => {
-    toast({
-      title: "Import Agent",
-      description: "This feature is coming soon!",
-    });
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const importedData = JSON.parse(text);
+
+      // Validate the imported data has required fields
+      if (!importedData.name) {
+        toast({
+          title: "Invalid file",
+          description: "The JSON file must contain at least a 'name' field",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Create the agent with imported data
+      const agentData = {
+        name: importedData.name + " (Imported)",
+        description: importedData.description || "",
+        group_id: importedData.group_id || null,
+        config: importedData.config || {},
+      };
+
+      const response = await api.createAgent(agentData);
+      if (response.error) {
+        toast({
+          title: "Error importing agent",
+          description: response.error,
+          variant: "destructive",
+        });
+      } else if (response.data) {
+        setAgents([response.data, ...agents]);
+        toast({
+          title: "Agent imported",
+          description: `${response.data.name} has been imported successfully`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error reading file",
+        description: "The file is not a valid JSON file",
+        variant: "destructive",
+      });
+    }
+
+    // Reset the file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleEditAgent = (agent: Agent) => {
@@ -100,19 +155,66 @@ const AgentsPage = () => {
     }
   };
 
-  const handleExportAgent = (agent: Agent) => {
-    toast({
-      title: "Export Agent",
-      description: "This feature is coming soon!",
-    });
+  const handleExportAgent = async (agent: Agent) => {
+    try {
+      // Fetch the full agent data including config
+      const response = await api.getAgent(agent.id);
+      if (response.error) {
+        toast({
+          title: "Error exporting agent",
+          description: response.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const fullAgent = response.data;
+
+      // Create export data object
+      const exportData = {
+        name: fullAgent.name,
+        description: fullAgent.description,
+        config: fullAgent.config || {},
+        exportedAt: new Date().toISOString(),
+        version: "1.0",
+      };
+
+      // Create and download the JSON file
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${agent.name.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_agent.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Agent exported",
+        description: `${agent.name} has been exported successfully`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error exporting agent",
+        description: "Failed to export agent",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDeleteAgent = async (agent: Agent) => {
-    if (!confirm(`Are you sure you want to delete "${agent.name}"?`)) {
-      return;
-    }
+  const handleDeleteAgent = (agent: Agent) => {
+    setAgentToDelete(agent);
+    setDeleteModalOpen(true);
+  };
 
-    const response = await api.deleteAgent(agent.id);
+  const confirmDeleteAgent = async () => {
+    if (!agentToDelete) return;
+
+    setIsDeleting(true);
+    const response = await api.deleteAgent(agentToDelete.id);
     if (response.error) {
       toast({
         title: "Error deleting agent",
@@ -120,12 +222,20 @@ const AgentsPage = () => {
         variant: "destructive",
       });
     } else {
-      setAgents(agents.filter((a) => a.id !== agent.id));
+      setAgents(agents.filter((a) => a.id !== agentToDelete.id));
       toast({
         title: "Agent deleted",
-        description: `${agent.name} has been deleted successfully`,
+        description: `${agentToDelete.name} has been deleted successfully`,
       });
     }
+    setIsDeleting(false);
+    setDeleteModalOpen(false);
+    setAgentToDelete(null);
+  };
+
+  const cancelDeleteAgent = () => {
+    setDeleteModalOpen(false);
+    setAgentToDelete(null);
   };
 
   const filteredAgents = agents.filter(
@@ -320,6 +430,88 @@ const AgentsPage = () => {
         onClose={() => setCreateDialogOpen(false)}
         onSuccess={handleAgentCreated}
       />
+
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && agentToDelete && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          onClick={cancelDeleteAgent}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <h2 className="text-lg font-semibold text-foreground">Delete Agent</h2>
+              </div>
+              <button
+                onClick={cancelDeleteAgent}
+                className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="px-6 py-5">
+              <p className="text-muted-foreground">
+                Are you sure you want to delete{" "}
+                <span className="font-semibold text-foreground">"{agentToDelete.name}"</span>?
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                This action cannot be undone. All data associated with this agent will be permanently removed.
+              </p>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary/30">
+              <Button
+                variant="outline"
+                onClick={cancelDeleteAgent}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={confirmDeleteAgent}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Agent
+                  </>
+                )}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
