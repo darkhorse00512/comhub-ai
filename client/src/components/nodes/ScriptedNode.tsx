@@ -1,9 +1,17 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, FileCode, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, FileCode, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface ScriptedNodeProps {
   id: string;
@@ -47,7 +55,9 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedScript(data.script || "");
     setIsEditModalOpen(false);
   };
 
@@ -111,67 +121,51 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Node Configuration</h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-purple-600 hover:bg-purple-700 text-white gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Save
-                </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Scripted Node Configuration</DialogTitle>
+            <DialogDescription>
+              Configure the scripted message that the agent will speak at this stage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
             </div>
 
-            <div className="px-6 py-5 space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-purple-500 focus:ring-purple-500"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="nodeScript" className="text-sm font-medium text-gray-700">
-                  Script
-                </Label>
-                <Textarea
-                  id="nodeScript"
-                  value={editedScript}
-                  onChange={(e) => setEditedScript(e.target.value)}
-                  placeholder="Enter the script text the agent will say..."
-                  rows={5}
-                  className="w-full border-gray-200 focus:border-purple-500 focus:ring-purple-500 resize-none"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="nodeScript">Script</Label>
+              <Textarea
+                id="nodeScript"
+                value={editedScript}
+                onChange={(e) => setEditedScript(e.target.value)}
+                placeholder="Enter the script text the agent will say..."
+                className="min-h-[120px] resize-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                This is the exact text the agent will speak to the caller.
+              </p>
             </div>
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-purple-600 hover:bg-purple-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

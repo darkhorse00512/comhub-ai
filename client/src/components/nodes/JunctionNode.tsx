@@ -1,9 +1,17 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, GitBranch, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, GitBranch, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface JunctionNodeProps {
   id: string;
@@ -53,7 +61,11 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedFieldName(data.left?.field_name || "");
+    setEditedOperator(data.operator || "==");
+    setEditedLiteralValue(data.right?.literal || "");
     setIsEditModalOpen(false);
   };
 
@@ -136,102 +148,78 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Junction Configuration</h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Save
-                </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Junction Node Configuration</DialogTitle>
+            <DialogDescription>
+              Define a condition to branch the workflow based on field values.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
             </div>
 
-            <div className="px-6 py-5 space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-blue-500 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="fieldName" className="text-sm font-medium text-gray-700">
-                  Field Name (Left Side)
-                </Label>
-                <Input
-                  id="fieldName"
-                  value={editedFieldName}
-                  onChange={(e) => setEditedFieldName(e.target.value)}
-                  placeholder="e.g., leaping_call_direction, customer_type"
-                  className="w-full border-gray-200 focus:border-blue-500 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="operator" className="text-sm font-medium text-gray-700">
-                  Operator
-                </Label>
-                <Select value={editedOperator} onValueChange={setEditedOperator}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select operator" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="==">Equals (==)</SelectItem>
-                    <SelectItem value="!=">Not Equals (!=)</SelectItem>
-                    <SelectItem value=">">Greater Than (&gt;)</SelectItem>
-                    <SelectItem value="<">Less Than (&lt;)</SelectItem>
-                    <SelectItem value=">=">Greater or Equal (&gt;=)</SelectItem>
-                    <SelectItem value="<=">Less or Equal (&lt;=)</SelectItem>
-                    <SelectItem value="is_null">Is Null</SelectItem>
-                    <SelectItem value="is_not_null">Is Not Null</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {editedOperator !== "is_null" && editedOperator !== "is_not_null" && (
-                <div className="space-y-2">
-                  <Label htmlFor="literalValue" className="text-sm font-medium text-gray-700">
-                    Compare Value (Right Side)
-                  </Label>
-                  <Input
-                    id="literalValue"
-                    value={editedLiteralValue}
-                    onChange={(e) => setEditedLiteralValue(e.target.value)}
-                    placeholder="e.g., outbound, true, 5"
-                    className="w-full border-gray-200 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                </div>
-              )}
+            <div className="grid gap-2">
+              <Label htmlFor="fieldName">Field Name (Left Side)</Label>
+              <Input
+                id="fieldName"
+                value={editedFieldName}
+                onChange={(e) => setEditedFieldName(e.target.value)}
+                placeholder="e.g., leaping_call_direction, customer_type"
+              />
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="operator">Operator</Label>
+              <Select value={editedOperator} onValueChange={setEditedOperator}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select operator" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="==">Equals (==)</SelectItem>
+                  <SelectItem value="!=">Not Equals (!=)</SelectItem>
+                  <SelectItem value=">">Greater Than (&gt;)</SelectItem>
+                  <SelectItem value="<">Less Than (&lt;)</SelectItem>
+                  <SelectItem value=">=">Greater or Equal (&gt;=)</SelectItem>
+                  <SelectItem value="<=">Less or Equal (&lt;=)</SelectItem>
+                  <SelectItem value="is_null">Is Null</SelectItem>
+                  <SelectItem value="is_not_null">Is Not Null</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {editedOperator !== "is_null" && editedOperator !== "is_not_null" && (
+              <div className="grid gap-2">
+                <Label htmlFor="literalValue">Compare Value (Right Side)</Label>
+                <Input
+                  id="literalValue"
+                  value={editedLiteralValue}
+                  onChange={(e) => setEditedLiteralValue(e.target.value)}
+                  placeholder="e.g., outbound, true, 5"
+                />
+              </div>
+            )}
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-blue-600 hover:bg-blue-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

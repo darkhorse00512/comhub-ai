@@ -1,9 +1,17 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, MessageSquare, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, MessageSquare, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface DialogueNodeProps {
   id: string;
@@ -50,7 +58,10 @@ const DialogueNode = ({ id, data, onClone, onDelete, onUpdate }: DialogueNodePro
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedStageMessage(data.stageMessage || "");
+    setEditedMaxTurns(data.maxTurns || "");
     setIsEditModalOpen(false);
   };
 
@@ -124,84 +135,62 @@ const DialogueNode = ({ id, data, onClone, onDelete, onUpdate }: DialogueNodePro
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Dialogue Configuration</h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Save
-                </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle>Dialogue Node Configuration</DialogTitle>
+            <DialogDescription>
+              Configure the AI agent's behavior and instructions for this conversation stage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
             </div>
 
-            <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-green-500 focus:ring-green-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="stageMessage">Stage Message / Instructions</Label>
+              <Textarea
+                id="stageMessage"
+                value={editedStageMessage}
+                onChange={(e) => setEditedStageMessage(e.target.value)}
+                placeholder="Enter instructions for the AI agent at this stage..."
+                className="min-h-[180px] resize-none"
+              />
+              <p className="text-xs text-muted-foreground">
+                Describe what the agent should do at this stage, questions to ask, and how to respond.
+              </p>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="stageMessage" className="text-sm font-medium text-gray-700">
-                  Stage Message / Instructions
-                </Label>
-                <Textarea
-                  id="stageMessage"
-                  value={editedStageMessage}
-                  onChange={(e) => setEditedStageMessage(e.target.value)}
-                  placeholder="Enter instructions for the AI agent at this stage..."
-                  rows={8}
-                  className="w-full border-gray-200 focus:border-green-500 focus:ring-green-500 resize-none"
-                />
-                <p className="text-xs text-gray-500">
-                  Describe what the agent should do at this stage, questions to ask, and how to respond.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="maxTurns" className="text-sm font-medium text-gray-700">
-                  Max Conversation Turns (Optional)
-                </Label>
-                <Input
-                  id="maxTurns"
-                  type="number"
-                  value={editedMaxTurns}
-                  onChange={(e) => setEditedMaxTurns(e.target.value)}
-                  placeholder="e.g., 5"
-                  className="w-full border-gray-200 focus:border-green-500 focus:ring-green-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="maxTurns">Max Conversation Turns (Optional)</Label>
+              <Input
+                id="maxTurns"
+                type="number"
+                value={editedMaxTurns}
+                onChange={(e) => setEditedMaxTurns(e.target.value)}
+                placeholder="e.g., 5"
+              />
             </div>
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-green-600 hover:bg-green-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

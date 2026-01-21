@@ -1,15 +1,23 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2, AlertTriangle, X } from "lucide-react";
+import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2, AlertTriangle, X, CloudUpload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import CreateAgentDialog from "@/components/dialogs/CreateAgentDialog";
@@ -30,21 +38,43 @@ interface Agent {
   icon?: string;
 }
 
+interface Group {
+  id: string;
+  name: string;
+}
+
 const AgentsPage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Import modal state
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importData, setImportData] = useState<any>(null);
+  const [importGroupId, setImportGroupId] = useState<string>("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchAgents();
+    fetchGroups();
   }, []);
+
+  const fetchGroups = async () => {
+    const response = await api.getGroups();
+    if (!response.error && response.data) {
+      setGroups(response.data);
+    }
+  };
 
   const fetchAgents = async () => {
     setLoading(true);
@@ -74,19 +104,29 @@ const AgentsPage = () => {
   };
 
   const handleImportAgent = () => {
-    fileInputRef.current?.click();
+    setImportModalOpen(true);
+    setImportFile(null);
+    setImportData(null);
+    setImportGroupId("");
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleCloseImportModal = () => {
+    setImportModalOpen(false);
+    setImportFile(null);
+    setImportData(null);
+    setImportGroupId("");
+    setIsDragOver(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
+  const processFile = async (file: File) => {
     try {
       const text = await file.text();
-      const importedData = JSON.parse(text);
+      const data = JSON.parse(text);
 
-      // Validate the imported data has required fields
-      if (!importedData.name) {
+      if (!data.name) {
         toast({
           title: "Invalid file",
           description: "The JSON file must contain at least a 'name' field",
@@ -95,28 +135,8 @@ const AgentsPage = () => {
         return;
       }
 
-      // Create the agent with imported data
-      const agentData = {
-        name: importedData.name + " (Imported)",
-        description: importedData.description || "",
-        group_id: importedData.group_id || null,
-        config: importedData.config || {},
-      };
-
-      const response = await api.createAgent(agentData);
-      if (response.error) {
-        toast({
-          title: "Error importing agent",
-          description: response.error,
-          variant: "destructive",
-        });
-      } else if (response.data) {
-        setAgents([response.data, ...agents]);
-        toast({
-          title: "Agent imported",
-          description: `${response.data.name} has been imported successfully`,
-        });
-      }
+      setImportFile(file);
+      setImportData(data);
     } catch (error) {
       toast({
         title: "Error reading file",
@@ -124,11 +144,80 @@ const AgentsPage = () => {
         variant: "destructive",
       });
     }
+  };
 
-    // Reset the file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      await processFile(file);
     }
+  };
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type === "application/json") {
+      await processFile(file);
+    } else {
+      toast({
+        title: "Invalid file type",
+        description: "Please drop a JSON file",
+        variant: "destructive",
+      });
+    }
+  }, []);
+
+  const handleConfirmImport = async () => {
+    if (!importData || !importGroupId) {
+      toast({
+        title: "Missing information",
+        description: "Please select a group for the agent",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    const agentData = {
+      name: importData.name + " (Imported)",
+      description: importData.description || "",
+      group_id: importGroupId,
+      config: importData.config || {},
+    };
+
+    const response = await api.createAgent(agentData);
+    if (response.error) {
+      toast({
+        title: "Error importing agent",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else if (response.data) {
+      setAgents([response.data, ...agents]);
+      toast({
+        title: "Agent imported",
+        description: `${response.data.name} has been imported successfully`,
+      });
+      handleCloseImportModal();
+    }
+
+    setIsImporting(false);
   };
 
   const handleEditAgent = (agent: Agent) => {
@@ -439,6 +528,112 @@ const AgentsPage = () => {
         onChange={handleFileChange}
         className="hidden"
       />
+
+      {/* Import Agent Modal */}
+      {importModalOpen && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          onClick={handleCloseImportModal}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="text-lg font-semibold text-foreground">Import Agent</h2>
+              <button
+                onClick={handleCloseImportModal}
+                className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Drag & Drop Zone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`
+                  border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all
+                  ${isDragOver
+                    ? "border-purple-500 bg-purple-50"
+                    : importFile
+                      ? "border-green-500 bg-green-50"
+                      : "border-border hover:border-purple-400 hover:bg-purple-50/50"
+                  }
+                `}
+              >
+                <CloudUpload className={`w-10 h-10 mx-auto mb-3 ${importFile ? "text-green-500" : "text-purple-500"}`} />
+                {importFile ? (
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{importFile.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Agent: {importData?.name || "Unknown"}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Drag and drop a JSON file here, or click to select one
+                  </p>
+                )}
+              </div>
+
+              {/* Group Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Group <span className="text-red-500">*</span>
+                </Label>
+                <Select value={importGroupId} onValueChange={setImportGroupId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary/30">
+              <Button
+                variant="outline"
+                onClick={handleCloseImportModal}
+                disabled={isImporting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmImport}
+                disabled={!importFile || !importGroupId || isImporting}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {isImporting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Importing...
+                  </>
+                ) : (
+                  "Import"
+                )}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteModalOpen && agentToDelete && (

@@ -1,9 +1,17 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, Database, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, Database, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface FieldSetterNodeProps {
   id: string;
@@ -53,7 +61,11 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedFieldName(data.fieldName || "");
+    setEditedValue(data.value || "");
+    setEditedValueType(data.valueType || "text");
     setIsEditModalOpen(false);
   };
 
@@ -126,108 +138,84 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Field Setter Configuration</h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-yellow-600 hover:bg-yellow-700 text-white gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Save
-                </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Field Setter Configuration</DialogTitle>
+            <DialogDescription>
+              Set a field value that can be used later in the workflow for conditions or data storage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
             </div>
 
-            <div className="px-6 py-5 space-y-5">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-yellow-500 focus:ring-yellow-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="fieldName">Field Name</Label>
+              <Input
+                id="fieldName"
+                value={editedFieldName}
+                onChange={(e) => setEditedFieldName(e.target.value)}
+                placeholder="e.g., should_export, customer_type"
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="fieldName" className="text-sm font-medium text-gray-700">
-                  Field Name
-                </Label>
-                <Input
-                  id="fieldName"
-                  value={editedFieldName}
-                  onChange={(e) => setEditedFieldName(e.target.value)}
-                  placeholder="e.g., should_export, customer_type"
-                  className="w-full border-gray-200 focus:border-yellow-500 focus:ring-yellow-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="valueType">Value Type</Label>
+              <Select value={editedValueType} onValueChange={setEditedValueType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">Text</SelectItem>
+                  <SelectItem value="boolean">Boolean (true/false)</SelectItem>
+                  <SelectItem value="number">Number</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="valueType" className="text-sm font-medium text-gray-700">
-                  Value Type
-                </Label>
-                <Select value={editedValueType} onValueChange={setEditedValueType}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select type" />
+            <div className="grid gap-2">
+              <Label htmlFor="value">Value</Label>
+              {editedValueType === "boolean" ? (
+                <Select value={String(editedValue)} onValueChange={(v) => setEditedValue(v === "true")}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select value" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text">Text</SelectItem>
-                    <SelectItem value="boolean">Boolean (true/false)</SelectItem>
-                    <SelectItem value="number">Number</SelectItem>
+                    <SelectItem value="true">true</SelectItem>
+                    <SelectItem value="false">false</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="value" className="text-sm font-medium text-gray-700">
-                  Value
-                </Label>
-                {editedValueType === "boolean" ? (
-                  <Select value={String(editedValue)} onValueChange={(v) => setEditedValue(v === "true")}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select value" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="true">true</SelectItem>
-                      <SelectItem value="false">false</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id="value"
-                    type={editedValueType === "number" ? "number" : "text"}
-                    value={editedValue}
-                    onChange={(e) => setEditedValue(editedValueType === "number" ? Number(e.target.value) : e.target.value)}
-                    placeholder="Enter value..."
-                    className="w-full border-gray-200 focus:border-yellow-500 focus:ring-yellow-500"
-                  />
-                )}
-              </div>
+              ) : (
+                <Input
+                  id="value"
+                  type={editedValueType === "number" ? "number" : "text"}
+                  value={editedValue}
+                  onChange={(e) => setEditedValue(editedValueType === "number" ? Number(e.target.value) : e.target.value)}
+                  placeholder="Enter value..."
+                />
+              )}
             </div>
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-yellow-600 hover:bg-yellow-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

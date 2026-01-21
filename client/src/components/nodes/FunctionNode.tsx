@@ -1,10 +1,18 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, Zap, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, Zap, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface FunctionNodeProps {
   id: string;
@@ -60,7 +68,13 @@ const FunctionNode = ({ id, data, onClone, onDelete, onUpdate }: FunctionNodePro
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedFunctionName(data.functionName || "");
+    setEditedFunctionType(data.functionType || "api_call");
+    setEditedUrl(data.url || "");
+    setEditedMethod(data.method || "POST");
+    setEditedParameters(data.parameters || "");
     setIsEditModalOpen(false);
   };
 
@@ -135,131 +149,102 @@ const FunctionNode = ({ id, data, onClone, onDelete, onUpdate }: FunctionNodePro
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Function Configuration</h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-orange-600 hover:bg-orange-700 text-white gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Save
-                </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Function Node Configuration</DialogTitle>
+            <DialogDescription>
+              Configure an API call or function to execute at this stage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
             </div>
 
-            <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-orange-500 focus:ring-orange-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="functionName">Function Name</Label>
+              <Input
+                id="functionName"
+                value={editedFunctionName}
+                onChange={(e) => setEditedFunctionName(e.target.value)}
+                placeholder="e.g., export_call_data"
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="functionName" className="text-sm font-medium text-gray-700">
-                  Function Name
-                </Label>
-                <Input
-                  id="functionName"
-                  value={editedFunctionName}
-                  onChange={(e) => setEditedFunctionName(e.target.value)}
-                  placeholder="e.g., export_call_data"
-                  className="w-full border-gray-200 focus:border-orange-500 focus:ring-orange-500"
-                />
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="functionType">Function Type</Label>
+              <Select value={editedFunctionType} onValueChange={setEditedFunctionType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="api_call">API Call</SelectItem>
+                  <SelectItem value="webhook">Webhook</SelectItem>
+                  <SelectItem value="internal">Internal Function</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="functionType" className="text-sm font-medium text-gray-700">
-                  Function Type
-                </Label>
-                <Select value={editedFunctionType} onValueChange={setEditedFunctionType}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="api_call">API Call</SelectItem>
-                    <SelectItem value="webhook">Webhook</SelectItem>
-                    <SelectItem value="internal">Internal Function</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {editedFunctionType === "api_call" && (
-                <>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="method" className="text-sm font-medium text-gray-700">
-                        Method
-                      </Label>
-                      <Select value={editedMethod} onValueChange={setEditedMethod}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="GET">GET</SelectItem>
-                          <SelectItem value="POST">POST</SelectItem>
-                          <SelectItem value="PUT">PUT</SelectItem>
-                          <SelectItem value="DELETE">DELETE</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="col-span-2 space-y-2">
-                      <Label htmlFor="url" className="text-sm font-medium text-gray-700">
-                        URL
-                      </Label>
-                      <Input
-                        id="url"
-                        value={editedUrl}
-                        onChange={(e) => setEditedUrl(e.target.value)}
-                        placeholder="https://api.example.com/endpoint"
-                        className="w-full border-gray-200 focus:border-orange-500 focus:ring-orange-500"
-                      />
-                    </div>
+            {editedFunctionType === "api_call" && (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="grid gap-2">
+                    <Label htmlFor="method">Method</Label>
+                    <Select value={editedMethod} onValueChange={setEditedMethod}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="GET">GET</SelectItem>
+                        <SelectItem value="POST">POST</SelectItem>
+                        <SelectItem value="PUT">PUT</SelectItem>
+                        <SelectItem value="DELETE">DELETE</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="parameters" className="text-sm font-medium text-gray-700">
-                      Parameters (JSON)
-                    </Label>
-                    <Textarea
-                      id="parameters"
-                      value={editedParameters}
-                      onChange={(e) => setEditedParameters(e.target.value)}
-                      placeholder='{"key": "value"}'
-                      rows={4}
-                      className="w-full border-gray-200 focus:border-orange-500 focus:ring-orange-500 resize-none font-mono text-sm"
+                  <div className="col-span-2 grid gap-2">
+                    <Label htmlFor="url">URL</Label>
+                    <Input
+                      id="url"
+                      value={editedUrl}
+                      onChange={(e) => setEditedUrl(e.target.value)}
+                      placeholder="https://api.example.com/endpoint"
                     />
                   </div>
-                </>
-              )}
-            </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="parameters">Parameters (JSON)</Label>
+                  <Textarea
+                    id="parameters"
+                    value={editedParameters}
+                    onChange={(e) => setEditedParameters(e.target.value)}
+                    placeholder='{"key": "value"}'
+                    className="min-h-[100px] resize-none font-mono text-sm"
+                  />
+                </div>
+              </>
+            )}
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-orange-600 hover:bg-orange-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

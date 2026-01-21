@@ -1,8 +1,16 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, ToggleLeft, ChevronRight, X, Check, Plus, Minus } from "lucide-react";
+import { Copy, Pencil, Trash2, ToggleLeft, ChevronRight, Plus, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface SwitchNodeProps {
   id: string;
@@ -51,7 +59,10 @@ const SwitchNode = ({ id, data, onClone, onDelete, onUpdate }: SwitchNodeProps) 
     setIsEditModalOpen(false);
   };
 
-  const handleCloseModal = () => {
+  const handleCancel = () => {
+    setEditedName(data.label || "");
+    setEditedSwitchField(data.switchField || "");
+    setEditedCases(data.cases || [{ value: "", label: "" }]);
     setIsEditModalOpen(false);
   };
 
@@ -143,108 +154,92 @@ const SwitchNode = ({ id, data, onClone, onDelete, onUpdate }: SwitchNodeProps) 
       </div>
 
       {/* Edit Modal */}
-      {isEditModalOpen && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseModal}
-        >
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">Switch Configuration</h2>
-              <div className="flex items-center gap-2">
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Switch Node Configuration</DialogTitle>
+            <DialogDescription>
+              Configure multiple branches based on different values of a field.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="nodeName">Name</Label>
+              <Input
+                id="nodeName"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                placeholder="Enter node name..."
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="switchField">Switch Field</Label>
+              <Input
+                id="switchField"
+                value={editedSwitchField}
+                onChange={(e) => setEditedSwitchField(e.target.value)}
+                placeholder="e.g., user_choice, intent"
+              />
+              <p className="text-xs text-muted-foreground">
+                The field whose value will determine which case to follow.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Cases</Label>
                 <Button
                   size="sm"
-                  onClick={handleSaveEdit}
-                  className="bg-pink-600 hover:bg-pink-700 text-white gap-1.5"
+                  variant="outline"
+                  onClick={addCase}
+                  className="h-8 gap-1"
                 >
-                  <Check className="w-4 h-4" />
-                  Save
+                  <Plus className="w-3 h-3" />
+                  Add Case
                 </Button>
-                <button
-                  onClick={handleCloseModal}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
-              <div className="space-y-2">
-                <Label htmlFor="nodeName" className="text-sm font-medium text-gray-700">
-                  Name
-                </Label>
-                <Input
-                  id="nodeName"
-                  value={editedName}
-                  onChange={(e) => setEditedName(e.target.value)}
-                  placeholder="Enter node name..."
-                  className="w-full border-gray-200 focus:border-pink-500 focus:ring-pink-500"
-                />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="switchField" className="text-sm font-medium text-gray-700">
-                  Switch Field
-                </Label>
-                <Input
-                  id="switchField"
-                  value={editedSwitchField}
-                  onChange={(e) => setEditedSwitchField(e.target.value)}
-                  placeholder="e.g., user_choice, intent"
-                  className="w-full border-gray-200 focus:border-pink-500 focus:ring-pink-500"
-                />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium text-gray-700">Cases</Label>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={addCase}
-                    className="h-8 gap-1"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Add Case
-                  </Button>
-                </div>
-
-                {editedCases.map((c, i) => (
-                  <div key={i} className="flex gap-2 items-start">
-                    <div className="flex-1 space-y-2">
-                      <Input
-                        value={c.value}
-                        onChange={(e) => updateCase(i, "value", e.target.value)}
-                        placeholder="Value"
-                        className="w-full text-sm"
-                      />
-                      <Input
-                        value={c.label}
-                        onChange={(e) => updateCase(i, "label", e.target.value)}
-                        placeholder="Label (optional)"
-                        className="w-full text-sm"
-                      />
-                    </div>
-                    {editedCases.length > 1 && (
-                      <button
-                        onClick={() => removeCase(i)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                    )}
+              {editedCases.map((c, i) => (
+                <div key={i} className="flex gap-2 items-start p-3 bg-muted/50 rounded-lg">
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      value={c.value}
+                      onChange={(e) => updateCase(i, "value", e.target.value)}
+                      placeholder="Value to match"
+                      className="text-sm"
+                    />
+                    <Input
+                      value={c.label}
+                      onChange={(e) => updateCase(i, "label", e.target.value)}
+                      placeholder="Display label (optional)"
+                      className="text-sm"
+                    />
                   </div>
-                ))}
-              </div>
+                  {editedCases.length > 1 && (
+                    <button
+                      onClick={() => removeCase(i)}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
-      )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} className="bg-pink-600 hover:bg-pink-700">
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
