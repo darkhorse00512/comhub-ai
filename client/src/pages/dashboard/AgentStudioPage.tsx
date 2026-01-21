@@ -21,13 +21,13 @@ import {
   Clock,
   Wrench,
   AlertCircle,
-  PhoneCall,
-  PhoneIncoming,
   Play,
   Sparkles,
+  X,
+  Plus,
+  Voicemail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
@@ -63,6 +63,7 @@ const nodeCategories = [
   { type: "time_limit", label: "Time Limit", icon: Clock, color: "bg-red-100 text-red-600", borderColor: "border-red-400" },
   { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
   { type: "fallback", label: "Fallback", icon: AlertCircle, color: "bg-gray-100 text-gray-600", borderColor: "border-gray-400" },
+  { type: "voicemail", label: "Voicemail", icon: Voicemail, color: "bg-amber-50 text-amber-600", borderColor: "border-amber-300" },
 ];
 
 const leftMenuItems = [
@@ -85,37 +86,9 @@ const AgentStudioPage = () => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
-  const [showStartNodePopup, setShowStartNodePopup] = useState(false);
   const [showTestModal, setShowTestModal] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
-
-  // Check which start node directions already exist
-  const getExistingStartDirections = () => {
-    const startNodes = nodes.filter(n => n.type === "callDirection");
-    return startNodes.map(n => n.data.direction);
-  };
-
-  const hasInboundStart = getExistingStartDirections().includes("inbound");
-  const hasOutboundStart = getExistingStartDirections().includes("outbound");
-
-  // Add start node with specific direction
-  const addStartNode = (direction: "inbound" | "outbound") => {
-    const newNode: Node = {
-      id: `start-${direction}-${Date.now()}`,
-      type: "callDirection",
-      position: { x: 250, y: 250 },
-      data: {
-        label: "Start",
-        direction: direction,
-      },
-    };
-    setNodes([...nodes, newNode]);
-    setShowStartNodePopup(false);
-    toast({
-      title: "Start node added",
-      description: `${direction.charAt(0).toUpperCase() + direction.slice(1)} start node has been added`,
-    });
-  };
+  const [showNodePalette, setShowNodePalette] = useState(true);
 
   // Node action handlers - use functional updates to avoid stale closures
   const handleCloneNode = useCallback((nodeId: string) => {
@@ -584,74 +557,23 @@ const AgentStudioPage = () => {
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden relative">
           {/* Node Palette Sidebar */}
-          {selectedMenuItem === "studio" && (
-            <div className="w-64 border-r border-border bg-background overflow-y-auto overflow-x-visible">
-              <div className="p-4">
-                <div className="mb-4">
-                  <Popover open={showStartNodePopup} onOpenChange={setShowStartNodePopup}>
-                    <PopoverTrigger asChild>
-                      <button
-                        onMouseEnter={() => setShowStartNodePopup(true)}
-                        className="w-full p-3 rounded-lg bg-purple-100 border-2 border-purple-400 text-purple-700 hover:bg-purple-200 transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <PhoneCall className="w-5 h-5" />
-                          <span className="text-sm font-medium">Add Start Node</span>
-                        </div>
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      side="right"
-                      align="start"
-                      sideOffset={0}
-                      className="w-56 p-0 border-2 border-purple-400"
-                      onMouseEnter={() => setShowStartNodePopup(true)}
-                      onMouseLeave={() => setShowStartNodePopup(false)}
-                    >
-                      <button
-                        onClick={() => addStartNode("inbound")}
-                        disabled={hasInboundStart}
-                        className={`w-full p-3 flex items-center gap-3 transition-colors rounded-t-md ${
-                          hasInboundStart
-                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            : "hover:bg-blue-50 text-blue-700"
-                        }`}
-                      >
-                        <PhoneIncoming className="w-5 h-5" />
-                        <div className="flex flex-col items-start">
-                          <span className="text-sm font-medium">Inbound</span>
-                          {hasInboundStart && (
-                            <span className="text-xs text-gray-400">Already exists</span>
-                          )}
-                        </div>
-                      </button>
+          {selectedMenuItem === "studio" && showNodePalette && (
+            <div className="w-56 bg-background overflow-y-auto overflow-x-visible shadow-lg rounded-2xl m-4 border border-border">
+              {/* Close Button */}
+              <div className="flex justify-start p-3">
+                <button
+                  onClick={() => setShowNodePalette(false)}
+                  className="w-8 h-8 rounded-full bg-purple-100 hover:bg-purple-200 flex items-center justify-center transition-colors"
+                >
+                  <X className="w-4 h-4 text-purple-600" />
+                </button>
+              </div>
 
-                      <div className="border-t border-gray-200"></div>
-
-                      <button
-                        onClick={() => addStartNode("outbound")}
-                        disabled={hasOutboundStart}
-                        className={`w-full p-3 flex items-center gap-3 transition-colors rounded-b-md ${
-                          hasOutboundStart
-                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            : "hover:bg-purple-50 text-purple-700"
-                        }`}
-                      >
-                        <PhoneOutgoing className="w-5 h-5" />
-                        <div className="flex flex-col items-start">
-                          <span className="text-sm font-medium">Outbound</span>
-                          {hasOutboundStart && (
-                            <span className="text-xs text-gray-400">Already exists</span>
-                          )}
-                        </div>
-                      </button>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
+              <div className="px-4 pb-4">
+                {/* Add Node Title */}
+                <h2 className="text-base font-semibold text-primary mb-4">
                   Add Node
                 </h2>
 
@@ -663,9 +585,9 @@ const AgentStudioPage = () => {
                         key={nodeType.type}
                         draggable
                         onDragStart={(e) => onDragStart(e, nodeType.type)}
-                        className={`flex items-center gap-3 p-3 rounded-lg border-2 ${nodeType.color} ${nodeType.borderColor} cursor-grab active:cursor-grabbing transition-colors hover:opacity-80`}
+                        className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border ${nodeType.color} ${nodeType.borderColor} cursor-grab active:cursor-grabbing transition-colors hover:opacity-80`}
                       >
-                        <Icon className="w-5 h-5" />
+                        <Icon className="w-4 h-4" />
                         <span className="text-sm font-medium">
                           {nodeType.label}
                         </span>
@@ -674,6 +596,19 @@ const AgentStudioPage = () => {
                   })}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Floating Add Node Button - shown when palette is closed */}
+          {selectedMenuItem === "studio" && !showNodePalette && (
+            <div className="absolute left-4 top-4 z-10">
+              <button
+                onClick={() => setShowNodePalette(true)}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-full shadow-lg transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+                <span className="text-sm font-medium">Add Node</span>
+              </button>
             </div>
           )}
 
