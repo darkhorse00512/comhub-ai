@@ -64,6 +64,14 @@ const AgentsPage = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Edit modal state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [agentToEdit, setAgentToEdit] = useState<Agent | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editGroupId, setEditGroupId] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
   useEffect(() => {
     fetchAgents();
     fetchGroups();
@@ -221,10 +229,58 @@ const AgentsPage = () => {
   };
 
   const handleEditAgent = (agent: Agent) => {
-    toast({
-      title: "Edit Agent",
-      description: "This feature is coming soon!",
+    setAgentToEdit(agent);
+    setEditName(agent.name);
+    setEditDescription(agent.description || "");
+    setEditGroupId(agent.group_id || "");
+    setEditModalOpen(true);
+  };
+
+  const handleCloseEditModal = () => {
+    setEditModalOpen(false);
+    setAgentToEdit(null);
+    setEditName("");
+    setEditDescription("");
+    setEditGroupId("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!agentToEdit || !editName.trim()) {
+      toast({
+        title: "Missing information",
+        description: "Please provide a name for the agent",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSaving(true);
+
+    const response = await api.updateAgent(agentToEdit.id, {
+      name: editName.trim(),
+      description: editDescription.trim(),
+      group_id: editGroupId,
     });
+
+    if (response.error) {
+      toast({
+        title: "Error updating agent",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else if (response.data) {
+      // Update the agent in the local state
+      setAgents(agents.map((a) =>
+        a.id === agentToEdit.id ? { ...a, ...response.data } : a
+      ));
+      toast({
+        title: "Agent updated",
+        description: `${editName} has been updated successfully`,
+      });
+      handleCloseEditModal();
+    }
+
+    setIsSaving(false);
   };
 
   const handleCloneAgent = async (agent: Agent) => {
@@ -700,6 +756,115 @@ const AgentsPage = () => {
                   <>
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Agent
+                  </>
+                )}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Edit Agent Modal */}
+      {editModalOpen && agentToEdit && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          onClick={handleCloseEditModal}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                  <Pencil className="w-5 h-5 text-blue-600" />
+                </div>
+                <h2 className="text-lg font-semibold text-foreground">Edit Agent</h2>
+              </div>
+              <button
+                onClick={handleCloseEditModal}
+                className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Name Field */}
+              <div className="space-y-2">
+                <Label htmlFor="editName" className="text-sm font-medium">
+                  Name <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="editName"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Enter agent name"
+                />
+              </div>
+
+              {/* Description Field */}
+              <div className="space-y-2">
+                <Label htmlFor="editDescription" className="text-sm font-medium">
+                  Description
+                </Label>
+                <Input
+                  id="editDescription"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Enter agent description"
+                />
+              </div>
+
+              {/* Group Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Group <span className="text-red-500">*</span>
+                </Label>
+                <Select value={editGroupId} onValueChange={setEditGroupId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary/30">
+              <Button
+                variant="outline"
+                onClick={handleCloseEditModal}
+                disabled={isSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveEdit}
+                disabled={!editName.trim() || !editGroupId || isSaving}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isSaving ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Save Changes
                   </>
                 )}
               </Button>
