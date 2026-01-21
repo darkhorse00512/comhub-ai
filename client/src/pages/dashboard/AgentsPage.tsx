@@ -5,6 +5,7 @@ import { Search, Plus, Upload, MoreVertical, Pencil, Copy, Download, Trash2, Ale
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -766,110 +767,100 @@ const AgentsPage = () => {
 
       {/* Edit Agent Modal */}
       {editModalOpen && agentToEdit && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center"
-          onClick={handleCloseEditModal}
-        >
-          <div className="absolute inset-0 bg-black/50" />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={handleCloseEditModal}
+          />
+
+          {/* Dialog */}
+          <div className="relative w-full max-w-lg mx-4 bg-background rounded-2xl shadow-2xl border border-border">
+            {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                  <Pencil className="w-5 h-5 text-blue-600" />
-                </div>
-                <h2 className="text-lg font-semibold text-foreground">Edit Agent</h2>
-              </div>
+              <h2 className="text-xl font-semibold text-foreground">Edit Agent</h2>
               <button
                 onClick={handleCloseEditModal}
-                className="p-1.5 rounded-lg hover:bg-secondary transition-colors text-muted-foreground"
+                className="p-2 rounded-lg hover:bg-secondary transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5 text-muted-foreground" />
               </button>
             </div>
 
-            {/* Modal Content */}
-            <div className="px-6 py-5 space-y-5">
-              {/* Name Field */}
-              <div className="space-y-2">
-                <Label htmlFor="editName" className="text-sm font-medium">
-                  Name <span className="text-red-500">*</span>
-                </Label>
+            {/* Form */}
+            <div className="px-6 py-6 space-y-5">
+              {/* Agent Name */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Agent Name <span className="text-red-500">*</span>
+                </label>
                 <Input
-                  id="editName"
+                  type="text"
+                  placeholder="Enter Agent Name"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Enter agent name"
                 />
               </div>
 
-              {/* Description Field */}
-              <div className="space-y-2">
-                <Label htmlFor="editDescription" className="text-sm font-medium">
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Description
-                </Label>
-                <Input
-                  id="editDescription"
+                </label>
+                <Textarea
+                  placeholder="Enter Description"
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
-                  placeholder="Enter agent description"
+                  rows={4}
+                  className="resize-none"
                 />
               </div>
 
-              {/* Group Selection */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
+              {/* Group */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Group <span className="text-red-500">*</span>
-                </Label>
+                </label>
                 <Select value={editGroupId} onValueChange={setEditGroupId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select Group" />
                   </SelectTrigger>
                   <SelectContent>
-                    {groups.map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
-                      </SelectItem>
-                    ))}
+                    {groups.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        No groups available.
+                      </div>
+                    ) : (
+                      groups.map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border bg-secondary/30">
-              <Button
-                variant="outline"
-                onClick={handleCloseEditModal}
-                disabled={isSaving}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSaveEdit}
-                disabled={!editName.trim() || !editGroupId || isSaving}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                {isSaving ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Pencil className="w-4 h-4 mr-2" />
-                    Save Changes
-                  </>
-                )}
-              </Button>
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCloseEditModal}
+                  disabled={isSaving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveEdit}
+                  disabled={!editName.trim() || !editGroupId || isSaving}
+                  className="bg-green-600 hover:bg-green-700 text-white min-w-[100px]"
+                >
+                  {isSaving ? "Saving..." : "Save"}
+                </Button>
+              </div>
             </div>
-          </motion.div>
+          </div>
         </div>
       )}
     </div>

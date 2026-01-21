@@ -516,7 +516,10 @@ const AgentStudioPage = () => {
               onClick={() => navigate("/dashboard/agents")}
               className="mr-2"
             >
-              ← Back
+              <svg width="24" height="20" viewBox="0 0 24 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M23.275 8.025H6.675C6.225 8.025 6.025 7.475 6.325 7.175L11.125 2.375C11.425 2.075 11.425 1.625 11.125 1.325L10.025 0.225C9.725 -0.075 9.275 -0.075 8.975 0.225L0.225 9.025C-0.075 9.325 -0.075 9.775 0.225 10.075L8.975 18.825C9.275 19.125 9.725 19.125 10.025 18.825L11.075 17.775C11.375 17.475 11.375 17.025 11.075 16.725L6.275 11.925C5.975 11.575 6.175 11.025 6.625 11.025H23.225C23.625 11.025 23.975 10.725 23.975 10.325V8.825C23.975 8.425 23.675 8.025 23.275 8.025Z" fill="white"/>
+              </svg>
+              Back
             </Button>
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-purple-500 flex items-center justify-center">
