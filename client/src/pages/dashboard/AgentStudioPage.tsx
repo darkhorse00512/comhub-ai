@@ -491,14 +491,14 @@ const AgentStudioPage = () => {
               <Play className="w-4 h-4 mr-2" />
               Test
             </Button>
-            {/* <Button
+            <Button
               size="sm"
               className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
               onClick={() => setShowAIGenerator(true)}
             >
               <Sparkles className="w-4 h-4 mr-2" />
               Complete by AI
-            </Button> */}
+            </Button>
           </div>
         </div>
 
