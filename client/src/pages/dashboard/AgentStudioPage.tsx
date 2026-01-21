@@ -558,11 +558,11 @@ const AgentStudioPage = () => {
         </div>
 
         <div className="flex-1 flex overflow-hidden relative">
-          {/* Node Palette Sidebar */}
+          {/* Node Palette Sidebar - Sticky */}
           {selectedMenuItem === "studio" && showNodePalette && (
-            <div className="w-56 bg-background overflow-y-auto overflow-x-visible shadow-lg rounded-2xl m-4 border border-border">
+            <div className="absolute left-4 top-4 z-20 w-52 bg-background overflow-y-auto max-h-[calc(100%-2rem)] shadow-lg rounded-2xl border border-border">
               {/* Close Button */}
-              <div className="flex justify-start p-3">
+              <div className="sticky top-0 bg-background flex justify-start p-3 z-10">
                 <button
                   onClick={() => setShowNodePalette(false)}
                   className="w-8 h-8 rounded-full bg-purple-100 hover:bg-purple-200 flex items-center justify-center transition-colors"
@@ -601,7 +601,7 @@ const AgentStudioPage = () => {
 
           {/* Floating Add Node Button - shown when palette is closed */}
           {selectedMenuItem === "studio" && !showNodePalette && (
-            <div className="absolute left-4 top-4 z-10">
+            <div className="absolute left-4 top-4 z-20">
               <button
                 onClick={() => setShowNodePalette(true)}
                 className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-full shadow-lg transition-colors"
