@@ -32,7 +32,16 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
-import StandardNode from "@/components/nodes/StandardNode";
+import ScriptedNode from "@/components/nodes/ScriptedNode";
+import DialogueNode from "@/components/nodes/DialogueNode";
+import FieldSetterNode from "@/components/nodes/FieldSetterNode";
+import JunctionNode from "@/components/nodes/JunctionNode";
+import SwitchNode from "@/components/nodes/SwitchNode";
+import FunctionNode from "@/components/nodes/FunctionNode";
+import CallTransferNode from "@/components/nodes/CallTransferNode";
+import TimeLimitNode from "@/components/nodes/TimeLimitNode";
+import ReconfigureNode from "@/components/nodes/ReconfigureNode";
+import FallbackNode from "@/components/nodes/FallbackNode";
 import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 
@@ -205,8 +214,80 @@ const AgentStudioPage = () => {
         onDelete={handleDeleteNode}
       />
     ),
-    standard: (props: any) => (
-      <StandardNode
+    scripted: (props: any) => (
+      <ScriptedNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    dialogue: (props: any) => (
+      <DialogueNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    field_setter: (props: any) => (
+      <FieldSetterNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    junction: (props: any) => (
+      <JunctionNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    switch: (props: any) => (
+      <SwitchNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    function: (props: any) => (
+      <FunctionNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    call_transfer: (props: any) => (
+      <CallTransferNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    time_limit: (props: any) => (
+      <TimeLimitNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    reconfigure: (props: any) => (
+      <ReconfigureNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    fallback: (props: any) => (
+      <FallbackNode
         {...props}
         onClone={handleCloneNode}
         onDelete={handleDeleteNode}
@@ -361,12 +442,10 @@ const AgentStudioPage = () => {
 
       const newNode: Node = {
         id: `${type}-${Date.now()}`,
-        type: "standard",
+        type: type,
         position,
         data: {
           label: nodeCategory.label,
-          type: type,
-          notes: "",
         },
       };
 

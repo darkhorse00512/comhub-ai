@@ -233,7 +233,11 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     if (nodeType === "callDirection") {
       return { width: 200, height: 100 };
     }
-    return { width: 200, height: 80 };
+    // Standard nodes have a larger size with the new design
+    if (nodeType === "standard") {
+      return { width: 300, height: 180 };
+    }
+    return { width: 280, height: 160 };
   };
 
   // Get node position with handles
