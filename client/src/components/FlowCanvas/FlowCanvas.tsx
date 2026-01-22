@@ -70,6 +70,9 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    // Don't allow node dragging when pan is locked
+    if (isPanLocked) return;
+
     const target = e.target as HTMLElement;
 
     // Don't start drag if clicking on interactive elements
@@ -187,8 +190,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
   // Handle canvas panning
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (isPanLocked) return;
-
     const target = e.target as HTMLElement;
     // Only start panning if clicking on the canvas background or SVG
     if (
@@ -445,7 +446,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
                 position: "absolute",
                 left: node.position.x,
                 top: node.position.y,
-                cursor: draggedNode === node.id ? "grabbing" : "grab",
+                cursor: isPanLocked ? "default" : (draggedNode === node.id ? "grabbing" : "grab"),
                 zIndex: draggedNode === node.id ? 1000 : 1,
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
