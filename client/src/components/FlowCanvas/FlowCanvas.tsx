@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { Plus, Minus, RotateCcw, Lock, Unlock } from "lucide-react";
 import { Node, Edge } from "./types";
 import "./FlowCanvas.css";
 
@@ -35,6 +36,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+  const [isPanLocked, setIsPanLocked] = useState(false);
 
   // Convert screen coordinates to canvas coordinates
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -185,6 +187,8 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
   // Handle canvas panning
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (isPanLocked) return;
+
     const target = e.target as HTMLElement;
     // Only start panning if clicking on the canvas background or SVG
     if (
@@ -471,9 +475,31 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
 
       {/* Controls */}
       <div className="flow-controls">
-        <button onClick={() => setScale((s) => Math.min(s * 1.2, 3))}>+</button>
-        <button onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))}>-</button>
-        <button onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}>&#8857;</button>
+        <button
+          onClick={() => setScale((s) => Math.min(s * 1.2, 3))}
+          title="Zoom In"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))}
+          title="Zoom Out"
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}
+          title="Reset View"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => setIsPanLocked(!isPanLocked)}
+          title={isPanLocked ? "Unlock Panning" : "Lock Panning"}
+          className={isPanLocked ? "active" : ""}
+        >
+          {isPanLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+        </button>
       </div>
     </div>
   );
