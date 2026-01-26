@@ -42,6 +42,7 @@ import CallTransferNode from "@/components/nodes/CallTransferNode";
 import TimeLimitNode from "@/components/nodes/TimeLimitNode";
 import ReconfigureNode from "@/components/nodes/ReconfigureNode";
 import FallbackNode from "@/components/nodes/FallbackNode";
+import VoicemailNode from "@/components/nodes/VoicemailNode";
 import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 
@@ -261,6 +262,14 @@ const AgentStudioPage = () => {
     ),
     fallback: (props: any) => (
       <FallbackNode
+        {...props}
+        onClone={handleCloneNode}
+        onDelete={handleDeleteNode}
+        onUpdate={handleUpdateNode}
+      />
+    ),
+    voicemail: (props: any) => (
+      <VoicemailNode
         {...props}
         onClone={handleCloneNode}
         onDelete={handleDeleteNode}

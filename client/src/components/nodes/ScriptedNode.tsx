@@ -1,9 +1,11 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, FileCode, ChevronRight } from "lucide-react";
+import { Copy, Pencil, Trash2, FileCode, ChevronRight, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { nodeDescriptions } from "@/data/nodeDescriptions";
 
 interface ScriptedNodeProps {
   id: string;
@@ -23,9 +26,11 @@ interface ScriptedNodeProps {
 }
 
 const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodeProps) => {
+  const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
   const [editedScript, setEditedScript] = useState(data.script || "");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleClone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -44,7 +49,31 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
     setIsEditModalOpen(true);
   };
 
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!editedName.trim()) {
+      newErrors.label = "Name is required";
+    }
+
+    if (!editedScript.trim()) {
+      newErrors.script = "Script text is required";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSaveEdit = () => {
+    if (!validateForm()) {
+      toast({
+        title: "Validation Error",
+        description: "Please fix the errors before saving",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (onUpdate) {
       onUpdate(id, {
         ...data,
@@ -53,6 +82,7 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
       });
     }
     setIsEditModalOpen(false);
+    setErrors({});
   };
 
   const handleCancel = () => {
@@ -70,6 +100,26 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-100">
             <FileCode className="w-4 h-4 text-purple-700" />
             <span className="text-sm font-medium text-purple-700">Scripted</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="w-3.5 h-3.5 opacity-60 hover:opacity-100 cursor-help ml-1 text-purple-600" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="font-medium mb-1">{nodeDescriptions.scripted?.tooltip || "A node for speaking predefined script text to the caller."}</p>
+                  {nodeDescriptions.scripted?.examples && (
+                    <div className="text-xs opacity-90 mt-2">
+                      <strong>Examples:</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        {nodeDescriptions.scripted.examples.map((ex, i) => (
+                          <li key={i}>{ex}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Action Buttons */}
@@ -105,9 +155,21 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
             {data.label || "Scripted Node"}
           </h3>
 
-          {/* Script Preview */}
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 min-h-[40px]">
-            {data.script || "No script set"}
+          {/* Script Preview - Enhanced */}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[60px]">
+            {data.script ? (
+              <>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <FileCode className="w-4 h-4 text-purple-600" />
+                  <span className="font-semibold text-purple-700">Script Content</span>
+                </div>
+                <p className="text-gray-700 text-xs line-clamp-3 leading-relaxed">
+                  {data.script}
+                </p>
+              </>
+            ) : (
+              <span className="text-gray-400">No script configured</span>
+            )}
           </div>
         </div>
 
@@ -136,9 +198,16 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
               <Input
                 id="nodeName"
                 value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
+                onChange={(e) => {
+                  setEditedName(e.target.value);
+                  if (errors.label) setErrors({...errors, label: ""});
+                }}
                 placeholder="Enter node name..."
+                className={errors.label ? "border-red-500" : ""}
               />
+              {errors.label && (
+                <p className="text-xs text-red-600 mt-1">{errors.label}</p>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -146,10 +215,16 @@ const ScriptedNode = ({ id, data, onClone, onDelete, onUpdate }: ScriptedNodePro
               <Textarea
                 id="nodeScript"
                 value={editedScript}
-                onChange={(e) => setEditedScript(e.target.value)}
+                onChange={(e) => {
+                  setEditedScript(e.target.value);
+                  if (errors.script) setErrors({...errors, script: ""});
+                }}
                 placeholder="Enter the script text the agent will say..."
-                className="min-h-[120px] resize-none"
+                className={`min-h-[120px] resize-none ${errors.script ? "border-red-500" : ""}`}
               />
+              {errors.script && (
+                <p className="text-xs text-red-600 mt-1">{errors.script}</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 This is the exact text the agent will speak to the caller.
               </p>

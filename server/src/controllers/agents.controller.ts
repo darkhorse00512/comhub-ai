@@ -464,90 +464,544 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
     }
 
     // Build the AI prompt for workflow generation
-    const systemPrompt = `You are an AI assistant that generates phone call workflow configurations. You must respond with valid JSON only, no other text.
+    const systemPrompt = `You are an expert AI assistant that generates phone call workflow configurations. You MUST respond ONLY with valid JSON - no markdown code blocks, no explanations, just raw JSON.
 
-The workflow consists of nodes and edges. Each node has:
-- id: unique string identifier
-- type: either "agentSetup", "callDirection", or "standard"
-- position: {x: number, y: number} - position on the canvas
-- data: object with node-specific data
+## WORKFLOW STRUCTURE
 
-Node types available for "standard" nodes (set data.type to one of these):
-1. "scripted" - Scripted speech node for fixed messages. data fields: { type: "scripted", label: string, content: string, voice: "professional"|"friendly"|"neutral", speed: "normal"|"slow"|"fast" }
-2. "dialogue" - AI dialogue node for conversational responses. data fields: { type: "dialogue", label: string, prompt: string, maxTurns: number, collectFields: string[] }
-3. "field_setter" - Sets/collects user data. data fields: { type: "field_setter", label: string, fieldName: string, fieldType: "text"|"email"|"phone"|"number"|"boolean", required: boolean, validationPrompt: string }
-4. "junction" - Joins multiple paths. data fields: { type: "junction", label: string, condition: "all"|"any"|"first" }
-5. "switch" - Conditional branching. data fields: { type: "switch", label: string, switchField: string, cases: Array<{value: string, label: string}> }
-6. "function" - Execute custom logic. data fields: { type: "function", label: string, functionName: string, parameters: object }
-7. "call_transfer" - Transfer call to human. data fields: { type: "call_transfer", label: string, transferTo: string, transferMessage: string, waitMusic: boolean }
-8. "time_limit" - Set time constraints. data fields: { type: "time_limit", label: string, maxDuration: number, warningAt: number, timeoutAction: "end"|"transfer"|"repeat" }
-9. "reconfigure" - Change agent settings mid-call. data fields: { type: "reconfigure", label: string, newVoice: string, newSpeed: string, newPrompt: string }
-10. "fallback" - Handle errors/fallbacks. data fields: { type: "fallback", label: string, fallbackMessage: string, retryCount: number, escalateTo: string }
+A workflow has two arrays:
+- **nodes**: Array of node objects
+- **edges**: Array of edge objects connecting nodes
 
-Edges connect nodes:
-- id: unique string identifier
-- source: source node id
-- target: target node id
-- animated: boolean (true for visual animation)
+## NODE STRUCTURE
 
-IMPORTANT RULES:
-1. Always start with an "agentSetup" node at position {x: 100, y: 100}
-2. Create separate flow paths for inbound and outbound if both are requested
-3. Use "callDirection" nodes for inbound/outbound entry points
-4. Create logical flows with proper connections
-5. Space nodes appropriately (at least 200px apart horizontally, 150px vertically)
-6. Use meaningful labels and prompts based on the business context
-7. Include error handling with fallback nodes
-8. If transfer to human is requested, include call_transfer nodes
+Every node must have:
+- **id**: Unique string (e.g., "agent-setup", "inbound-greeting-1")
+- **type**: "agentSetup" | "callDirection" | "standard"
+- **position**: {x: number, y: number}
+- **data**: Object with type-specific fields (see below)
 
-Respond with a JSON object containing "nodes" array and "edges" array.`;
+## NODE TYPES AND EXACT DATA STRUCTURES
 
-    const userPrompt = `Generate a complete phone call workflow for the following business:
+### 1. Agent Setup Node (REQUIRED - EXACTLY ONE)
+{
+  "id": "agent-setup",
+  "type": "agentSetup",
+  "position": {"x": 100, "y": 100},
+  "data": {
+    "label": "Agent Setup",
+    "systemMessage": "You are a professional AI assistant for [Business Name]. Your role is to [specific instructions]..."
+  }
+}
 
-BUSINESS INFORMATION:
-- Business Name: ${businessInfo.businessName}
-- Industry: ${businessInfo.industry || 'Not specified'}
+### 2. Call Direction Node (REQUIRED - ONE OR TWO)
+{
+  "id": "call-direction-inbound",
+  "type": "callDirection",
+  "position": {"x": 100, "y": 300},
+  "data": {
+    "label": "Inbound Calls",
+    "direction": "inbound"
+  }
+}
+
+### 3. Scripted Node (for fixed messages)
+{
+  "id": "greeting-1",
+  "type": "standard",
+  "position": {"x": 100, "y": 500},
+  "data": {
+    "type": "scripted",
+    "label": "Welcome Greeting",
+    "content": "Thank you for calling [Business]. This is [Agent Name]. How may I help you today?"
+  }
+}
+
+### 4. Field Setter Node (for data collection)
+{
+  "id": "collect-name",
+  "type": "standard",
+  "position": {"x": 100, "y": 700},
+  "data": {
+    "type": "field_setter",
+    "label": "Collect Customer Name",
+    "fieldName": "customer_name",
+    "valueType": "text",
+    "value": ""
+  }
+}
+
+### 5. Dialogue Node (for AI conversation)
+{
+  "id": "main-conversation",
+  "type": "standard",
+  "position": {"x": 100, "y": 900},
+  "data": {
+    "type": "dialogue",
+    "label": "Main Conversation",
+    "stageMessage": "Listen to the customer's request and provide helpful assistance. Ask clarifying questions if needed.",
+    "maxTurns": 10
+  }
+}
+
+### 6. Junction Node (for True/False branching)
+{
+  "id": "check-resolved",
+  "type": "standard",
+  "position": {"x": 100, "y": 1100},
+  "data": {
+    "type": "junction",
+    "label": "Issue Resolved?",
+    "left": {"field_name": "issue_resolved"},
+    "operator": "==",
+    "right": {"type": "text", "literal": "true"}
+  }
+}
+
+### 7. Switch Node (for multi-way branching)
+{
+  "id": "department-router",
+  "type": "standard",
+  "position": {"x": 100, "y": 1300},
+  "data": {
+    "type": "switch",
+    "label": "Route by Department",
+    "switchField": "department_choice",
+    "cases": [
+      {"value": "1", "label": "Sales"},
+      {"value": "2", "label": "Support"},
+      {"value": "3", "label": "Billing"}
+    ]
+  }
+}
+
+### 8. Call Transfer Node
+{
+  "id": "transfer-human",
+  "type": "standard",
+  "position": {"x": 100, "y": 1500},
+  "data": {
+    "type": "call_transfer",
+    "label": "Transfer to Human Agent",
+    "transferTo": "+15555551234",
+    "transferMessage": "Let me connect you with a specialist who can help you better.",
+    "transferType": "warm"
+  }
+}
+
+### 9. Voicemail Node
+{
+  "id": "after-hours-vm",
+  "type": "standard",
+  "position": {"x": 100, "y": 1700},
+  "data": {
+    "type": "voicemail",
+    "label": "After Hours Voicemail",
+    "greetingMessage": "Thank you for calling. Our office is currently closed. Please leave a message.",
+    "maxDuration": 120,
+    "beepSound": true,
+    "transcribe": true,
+    "saveRecording": true
+  }
+}
+
+### 10. Function Node
+{
+  "id": "lookup-customer",
+  "type": "standard",
+  "position": {"x": 100, "y": 1900},
+  "data": {
+    "type": "function",
+    "label": "Look Up Customer",
+    "functionName": "customer_lookup",
+    "functionType": "api_call",
+    "url": "https://api.example.com/customers",
+    "method": "GET"
+  }
+}
+
+### 11. Fallback Node
+{
+  "id": "fallback-1",
+  "type": "standard",
+  "position": {"x": 100, "y": 2100},
+  "data": {
+    "type": "fallback",
+    "label": "Error Handler",
+    "fallbackMessage": "I'm sorry, I didn't understand that. Could you please repeat?",
+    "retryCount": 3,
+    "escalateTo": "+15555551234"
+  }
+}
+
+## EDGE STRUCTURE
+
+{
+  "id": "edge-1",
+  "source": "agent-setup",
+  "target": "call-direction-inbound",
+  "animated": true
+}
+
+For junction nodes, use sourceHandle:
+{
+  "id": "edge-junction-true",
+  "source": "check-resolved",
+  "target": "thank-you-node",
+  "sourceHandle": "true",
+  "animated": true
+}
+
+## POSITIONING RULES (CRITICAL!)
+
+1. **Agent Setup**: Always at (100, 100)
+2. **Inbound Flow**: Start call direction at (100, 300), then stack vertically at x=100-400 with 200px vertical spacing
+3. **Outbound Flow**: Start call direction at (800, 300), then stack vertically at x=800-1100 with 200px vertical spacing
+4. **Keep flows SEPARATE**: Inbound on left (x < 500), Outbound on right (x >= 800)
+5. **Minimum spacing**: 200px vertically between nodes, 500px horizontally between lanes
+
+## COMPLETE EXAMPLE: INBOUND CUSTOMER SERVICE
+
+{
+  "nodes": [
+    {
+      "id": "agent-setup",
+      "type": "agentSetup",
+      "position": {"x": 100, "y": 100},
+      "data": {
+        "label": "Agent Setup",
+        "systemMessage": "You are a professional customer service AI for Acme Corporation. Be polite, empathetic, and solution-oriented. Listen carefully to customer needs and provide helpful assistance."
+      }
+    },
+    {
+      "id": "inbound-direction",
+      "type": "callDirection",
+      "position": {"x": 100, "y": 300},
+      "data": {
+        "label": "Inbound Calls",
+        "direction": "inbound"
+      }
+    },
+    {
+      "id": "greeting",
+      "type": "standard",
+      "position": {"x": 100, "y": 500},
+      "data": {
+        "type": "scripted",
+        "label": "Welcome Greeting",
+        "content": "Thank you for calling Acme Corporation. My name is Sarah, your AI assistant. How may I help you today?"
+      }
+    },
+    {
+      "id": "collect-name",
+      "type": "standard",
+      "position": {"x": 100, "y": 700},
+      "data": {
+        "type": "field_setter",
+        "label": "Collect Name",
+        "fieldName": "customer_name",
+        "valueType": "text",
+        "value": ""
+      }
+    },
+    {
+      "id": "main-dialogue",
+      "type": "standard",
+      "position": {"x": 100, "y": 900},
+      "data": {
+        "type": "dialogue",
+        "label": "Main Conversation",
+        "stageMessage": "Listen to the customer's inquiry. Ask clarifying questions to understand their needs. Provide helpful information or solutions.",
+        "maxTurns": 10
+      }
+    },
+    {
+      "id": "check-resolved",
+      "type": "standard",
+      "position": {"x": 100, "y": 1100},
+      "data": {
+        "type": "junction",
+        "label": "Issue Resolved?",
+        "left": {"field_name": "issue_resolved"},
+        "operator": "==",
+        "right": {"type": "text", "literal": "true"}
+      }
+    },
+    {
+      "id": "thank-you",
+      "type": "standard",
+      "position": {"x": 300, "y": 1300},
+      "data": {
+        "type": "scripted",
+        "label": "Thank You",
+        "content": "I'm glad I could help you today! Is there anything else you need assistance with?"
+      }
+    },
+    {
+      "id": "transfer",
+      "type": "standard",
+      "position": {"x": -100, "y": 1300},
+      "data": {
+        "type": "call_transfer",
+        "label": "Transfer to Agent",
+        "transferTo": "+15555551234",
+        "transferMessage": "Let me connect you with a specialist who can provide more detailed assistance.",
+        "transferType": "warm"
+      }
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "agent-setup", "target": "inbound-direction", "animated": true},
+    {"id": "e2", "source": "inbound-direction", "target": "greeting", "animated": true},
+    {"id": "e3", "source": "greeting", "target": "collect-name", "animated": true},
+    {"id": "e4", "source": "collect-name", "target": "main-dialogue", "animated": true},
+    {"id": "e5", "source": "main-dialogue", "target": "check-resolved", "animated": true},
+    {"id": "e6", "source": "check-resolved", "target": "thank-you", "sourceHandle": "true", "animated": true},
+    {"id": "e7", "source": "check-resolved", "target": "transfer", "sourceHandle": "false", "animated": true}
+  ]
+}
+
+## CRITICAL REQUIREMENTS
+
+1. **Return ONLY valid JSON** - No markdown, no code blocks, no explanations
+2. **Always include agent-setup node** at (100, 100)
+3. **Always include call-direction nodes** for requested flow types
+4. **Use exact data structures** shown above
+5. **Position nodes properly** - Inbound left (x=100-400), Outbound right (x=800-1100), 200px vertical spacing
+6. **Create realistic dialogue** - Professional, business-appropriate language
+7. **Connect all nodes** - No orphaned nodes, clear paths from start to end
+8. **Handle requested features** - If transfer to human requested, include call_transfer nodes. If field collection requested, include field_setter nodes.
+
+Generate the workflow now.`;
+
+    const userPrompt = `Generate a complete phone call workflow for:
+
+BUSINESS DETAILS:
+- Name: ${businessInfo.businessName}
+- Industry: ${businessInfo.industry || 'General'}
 - Description: ${businessInfo.description}
-- Target Audience: ${businessInfo.targetAudience || 'General'}
-- Main Services/Products: ${businessInfo.mainServices || 'Not specified'}
+- Target Audience: ${businessInfo.targetAudience || 'General public'}
+- Services: ${businessInfo.mainServices || 'Various services'}
 
-CALL FLOW CONFIGURATION:
-- Generate Inbound Flow: ${callFlowConfig.generateInbound ? 'Yes' : 'No'}
-- Generate Outbound Flow: ${callFlowConfig.generateOutbound ? 'Yes' : 'No'}
-- Inbound Purpose: ${callFlowConfig.inboundPurpose || 'General customer support'}
-- Outbound Purpose: ${callFlowConfig.outboundPurpose || 'Sales/follow-up calls'}
-- Information to Collect: ${callFlowConfig.collectInfo?.length > 0 ? callFlowConfig.collectInfo.join(', ') : 'None specified'}
-- Include Human Transfer Option: ${callFlowConfig.transferToHuman ? 'Yes' : 'No'}
-- Business Hours: ${callFlowConfig.businessHours || 'Not specified'}
+WORKFLOW REQUIREMENTS:
 
-Generate a professional, complete workflow that handles all common scenarios for this business. Include proper greetings, information collection, conversation handling, and professional closings.`;
+${callFlowConfig.generateInbound ? `
+=== INBOUND CALL FLOW ===
+Purpose: ${callFlowConfig.inboundPurpose || 'General customer support'}
+
+Required structure:
+1. Agent Setup node (system prompt specific to ${businessInfo.businessName})
+2. Call Direction node with direction="inbound" at position (100, 300)
+3. Greeting (scripted node with warm, professional welcome)
+4. ${callFlowConfig.collectInfo?.length > 0 ? `Information collection (field_setter nodes for: ${callFlowConfig.collectInfo.join(', ')})` : 'Information gathering'}
+5. Main conversation (dialogue node with clear instructions for the AI)
+6. Issue resolution check (junction node)
+7. ${callFlowConfig.transferToHuman ? 'Transfer to human option (call_transfer node)' : 'Closing message'}
+${callFlowConfig.businessHours ? `8. After-hours voicemail (voicemail node for outside ${callFlowConfig.businessHours})` : ''}
+
+Position all inbound nodes in vertical column starting at x=100
+` : ''}
+
+${callFlowConfig.generateOutbound ? `
+=== OUTBOUND CALL FLOW ===
+Purpose: ${callFlowConfig.outboundPurpose || 'Sales and follow-up'}
+
+Required structure:
+1. Call Direction node with direction="outbound" at position (800, 300) - SEPARATE from inbound
+2. Introduction (scripted node asking permission to continue)
+3. Interest check (junction node - prospect_interested)
+4. Main pitch/conversation (dialogue node if interested)
+5. Polite decline handling (scripted node if not interested)
+6. Follow-up scheduling (field_setter for next steps)
+7. Closing thank you (scripted node)
+
+Position all outbound nodes in vertical column starting at x=800 (SEPARATE HORIZONTAL LANE)
+` : ''}
+
+CRITICAL RULES:
+1. Return ONLY valid JSON, no markdown code blocks
+2. Use EXACT node data structures from examples in system prompt
+3. Space nodes 200px apart vertically
+4. Keep inbound (x=100-400) and outbound (x=800-1100) in separate lanes
+5. Create realistic, professional messages appropriate for ${businessInfo.industry}
+6. Include error handling (fallback nodes)
+7. Agent setup system message should reference ${businessInfo.businessName} specifically
+
+Generate the workflow NOW as raw JSON.`;
 
     // Generate workflow using GPT with custom prompt and higher token limit
+    // Lower temperature (0.2) for more consistent, deterministic JSON output
     const aiResponse = await gptService.generateWithCustomPrompt(
       userPrompt,
       systemPrompt,
-      { maxTokens: 4000, temperature: 0.7 }
+      { maxTokens: 4000, temperature: 0.2 }
     );
 
-    // Parse the AI response to extract JSON
+    // Parse the AI response to extract JSON with multiple extraction strategies
     let workflow;
     try {
-      // Try to extract JSON from the response
-      const jsonMatch = aiResponse.text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        workflow = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No JSON found in response');
+      // Strategy 1: Direct parse (if AI returned clean JSON)
+      try {
+        workflow = JSON.parse(aiResponse.text);
+        logger.info('Workflow parsed with direct parse strategy');
+      } catch (directError) {
+        // Strategy 2: Extract from markdown code block
+        const codeBlockMatch = aiResponse.text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        if (codeBlockMatch) {
+          workflow = JSON.parse(codeBlockMatch[1]);
+          logger.info('Workflow parsed from markdown code block');
+        } else {
+          // Strategy 3: Find any JSON object in the response
+          const jsonMatch = aiResponse.text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            throw new Error('No JSON found in AI response');
+          }
+          workflow = JSON.parse(jsonMatch[0]);
+          logger.info('Workflow parsed from general JSON match');
+        }
       }
     } catch (parseError) {
-      logger.error('Error parsing AI workflow response', { error: parseError, response: aiResponse.text });
-      res.status(500).json({ success: false, error: 'Failed to parse generated workflow' });
+      logger.error('Error parsing AI workflow response', {
+        error: parseError,
+        responsePreview: aiResponse.text.substring(0, 500)
+      });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to parse generated workflow. AI did not return valid JSON.',
+        details: parseError instanceof Error ? parseError.message : 'Unknown parsing error'
+      });
       return;
     }
 
-    // Validate the workflow structure
-    if (!workflow.nodes || !Array.isArray(workflow.nodes) || !workflow.edges || !Array.isArray(workflow.edges)) {
-      res.status(500).json({ success: false, error: 'Invalid workflow structure generated' });
+    // Comprehensive workflow validation
+    const validateWorkflow = (wf: any): { valid: boolean; errors: string[] } => {
+      const errors: string[] = [];
+
+      // Basic structure validation
+      if (!wf.nodes || !Array.isArray(wf.nodes)) {
+        errors.push('Missing or invalid nodes array');
+        return { valid: false, errors };
+      }
+      if (!wf.edges || !Array.isArray(wf.edges)) {
+        errors.push('Missing or invalid edges array');
+      }
+
+      if (wf.nodes.length === 0) {
+        errors.push('No nodes generated');
+      }
+
+      const nodeIds = new Set<string>();
+      const positions = new Map<string, { x: number; y: number }>();
+      let hasAgentSetup = false;
+      let hasCallDirection = false;
+
+      // Validate each node
+      wf.nodes.forEach((node: any, idx: number) => {
+        if (!node.id) errors.push(`Node ${idx}: Missing id`);
+        if (!node.type) errors.push(`Node ${idx}: Missing type`);
+        if (!node.position) {
+          errors.push(`Node ${idx}: Missing position`);
+        } else if (typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
+          errors.push(`Node ${idx}: Invalid position coordinates`);
+        }
+        if (!node.data) errors.push(`Node ${idx}: Missing data`);
+
+        // Check for duplicate IDs
+        if (node.id) {
+          if (nodeIds.has(node.id)) {
+            errors.push(`Duplicate node id: ${node.id}`);
+          }
+          nodeIds.add(node.id);
+        }
+
+        // Check position collisions (nodes too close together)
+        if (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number') {
+          positions.forEach((pos, id) => {
+            const distance = Math.sqrt(
+              Math.pow(pos.x - node.position.x, 2) +
+              Math.pow(pos.y - node.position.y, 2)
+            );
+            if (distance < 150 && id !== node.id) {
+              errors.push(
+                `Nodes '${id}' and '${node.id}' are too close (${Math.round(distance)}px). Minimum 150px spacing required.`
+              );
+            }
+          });
+          positions.set(node.id, node.position);
+        }
+
+        // Check for required node types
+        if (node.type === 'agentSetup') hasAgentSetup = true;
+        if (node.type === 'callDirection') hasCallDirection = true;
+
+        // Validate node data structure
+        if (node.type === 'standard' && node.data && !node.data.type) {
+          errors.push(`Node ${node.id}: Standard node missing data.type`);
+        }
+      });
+
+      if (!hasAgentSetup) {
+        errors.push("Missing required 'agentSetup' node");
+      }
+      if (!hasCallDirection) {
+        errors.push("Missing required 'callDirection' node");
+      }
+
+      // Validate edges
+      if (Array.isArray(wf.edges)) {
+        wf.edges.forEach((edge: any, idx: number) => {
+          if (!edge.source) {
+            errors.push(`Edge ${idx}: Missing source`);
+          } else if (!nodeIds.has(edge.source)) {
+            errors.push(`Edge ${idx}: Invalid source node '${edge.source}'`);
+          }
+
+          if (!edge.target) {
+            errors.push(`Edge ${idx}: Missing target`);
+          } else if (!nodeIds.has(edge.target)) {
+            errors.push(`Edge ${idx}: Invalid target node '${edge.target}'`);
+          }
+        });
+
+        // Check for unreachable nodes (nodes not connected to the workflow)
+        const reachable = new Set<string>();
+        const findReachable = (nodeId: string) => {
+          if (reachable.has(nodeId)) return;
+          reachable.add(nodeId);
+          wf.edges.forEach((e: any) => {
+            if (e.source === nodeId && e.target) {
+              findReachable(e.target);
+            }
+          });
+        };
+
+        // Start from agent-setup node
+        const agentSetupNode = wf.nodes.find((n: any) => n.type === 'agentSetup');
+        if (agentSetupNode) {
+          findReachable(agentSetupNode.id);
+        }
+
+        wf.nodes.forEach((node: any) => {
+          if (node.type !== 'agentSetup' && !reachable.has(node.id)) {
+            errors.push(`Node '${node.id}' is unreachable from the workflow entry point`);
+          }
+        });
+      }
+
+      return { valid: errors.length === 0, errors };
+    };
+
+    const validation = validateWorkflow(workflow);
+    if (!validation.valid) {
+      logger.error('Workflow validation failed', {
+        errors: validation.errors,
+        nodeCount: workflow.nodes?.length,
+        edgeCount: workflow.edges?.length
+      });
+      res.status(500).json({
+        success: false,
+        error: 'Generated workflow failed validation',
+        validationErrors: validation.errors
+      });
       return;
     }
 

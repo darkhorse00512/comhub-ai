@@ -1,9 +1,11 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, GitBranch, ChevronRight } from "lucide-react";
+import { Copy, Pencil, Trash2, GitBranch, ChevronRight, HelpCircle, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { nodeDescriptions } from "@/data/nodeDescriptions";
 
 interface JunctionNodeProps {
   id: string;
@@ -23,11 +26,13 @@ interface JunctionNodeProps {
 }
 
 const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodeProps) => {
+  const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
   const [editedFieldName, setEditedFieldName] = useState(data.left?.field_name || "");
   const [editedOperator, setEditedOperator] = useState(data.operator || "==");
   const [editedLiteralValue, setEditedLiteralValue] = useState(data.right?.literal || "");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleClone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -48,7 +53,35 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
     setIsEditModalOpen(true);
   };
 
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!editedName.trim()) {
+      newErrors.label = "Name is required";
+    }
+
+    if (!editedFieldName.trim()) {
+      newErrors.fieldName = "Field name is required";
+    }
+
+    if (!['is_null', 'is_not_null'].includes(editedOperator) && !editedLiteralValue.trim()) {
+      newErrors.literalValue = "Compare value is required for this operator";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSaveEdit = () => {
+    if (!validateForm()) {
+      toast({
+        title: "Validation Error",
+        description: "Please fix the errors before saving",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (onUpdate) {
       onUpdate(id, {
         ...data,
@@ -59,6 +92,7 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
       });
     }
     setIsEditModalOpen(false);
+    setErrors({});
   };
 
   const handleCancel = () => {
@@ -93,6 +127,26 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-100">
             <GitBranch className="w-4 h-4 text-blue-700" />
             <span className="text-sm font-medium text-blue-700">Junction</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="w-3.5 h-3.5 opacity-60 hover:opacity-100 cursor-help ml-1 text-blue-600" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="font-medium mb-1">{nodeDescriptions.junction.tooltip}</p>
+                  {nodeDescriptions.junction.examples && (
+                    <div className="text-xs opacity-90 mt-2">
+                      <strong>Examples:</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        {nodeDescriptions.junction.examples.map((ex, i) => (
+                          <li key={i}>{ex}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Action Buttons */}
@@ -128,9 +182,27 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
             {data.label || "Junction Node"}
           </h3>
 
-          {/* Condition Preview */}
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 min-h-[40px] font-mono">
-            {getConditionDisplay()}
+          {/* Condition Preview - Enhanced */}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[60px]">
+            <div className="flex items-center gap-2 mb-2 font-mono text-xs flex-wrap">
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold">
+                {data.left?.field_name || 'field'}
+              </span>
+              <span className="text-gray-500">{data.operator || '=='}</span>
+              {!['is_null', 'is_not_null'].includes(data.operator) && (
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded font-semibold">
+                  "{data.right?.literal || 'value'}"
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 text-xs">
+              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded flex items-center gap-1">
+                <Check className="w-3 h-3" /> True
+              </span>
+              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded flex items-center gap-1">
+                <X className="w-3 h-3" /> False
+              </span>
+            </div>
           </div>
         </div>
 
@@ -163,9 +235,16 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
               <Input
                 id="nodeName"
                 value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
+                onChange={(e) => {
+                  setEditedName(e.target.value);
+                  if (errors.label) setErrors({...errors, label: ""});
+                }}
                 placeholder="Enter node name..."
+                className={errors.label ? "border-red-500" : ""}
               />
+              {errors.label && (
+                <p className="text-xs text-red-600 mt-1">{errors.label}</p>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -173,9 +252,18 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
               <Input
                 id="fieldName"
                 value={editedFieldName}
-                onChange={(e) => setEditedFieldName(e.target.value)}
-                placeholder="e.g., leaping_call_direction, customer_type"
+                onChange={(e) => {
+                  setEditedFieldName(e.target.value);
+                  if (errors.fieldName) setErrors({...errors, fieldName: ""});
+                }}
+                placeholder="e.g., customer_type, is_business_hours"
               />
+              {errors.fieldName && (
+                <p className="text-xs text-red-600 mt-1">{errors.fieldName}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                The field whose value will be checked
+              </p>
             </div>
 
             <div className="grid gap-2">
@@ -203,9 +291,19 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
                 <Input
                   id="literalValue"
                   value={editedLiteralValue}
-                  onChange={(e) => setEditedLiteralValue(e.target.value)}
-                  placeholder="e.g., outbound, true, 5"
+                  onChange={(e) => {
+                    setEditedLiteralValue(e.target.value);
+                    if (errors.literalValue) setErrors({...errors, literalValue: ""});
+                  }}
+                  placeholder="e.g., VIP, true, 100"
+                  className={errors.literalValue ? "border-red-500" : ""}
                 />
+                {errors.literalValue && (
+                  <p className="text-xs text-red-600 mt-1">{errors.literalValue}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  The value to compare the field against
+                </p>
               </div>
             )}
           </div>

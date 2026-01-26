@@ -1,9 +1,11 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, Database, ChevronRight } from "lucide-react";
+import { Copy, Pencil, Trash2, Database, ChevronRight, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { nodeDescriptions } from "@/data/nodeDescriptions";
 
 interface FieldSetterNodeProps {
   id: string;
@@ -23,11 +26,13 @@ interface FieldSetterNodeProps {
 }
 
 const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterNodeProps) => {
+  const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
   const [editedFieldName, setEditedFieldName] = useState(data.fieldName || "");
   const [editedValue, setEditedValue] = useState(data.value || "");
   const [editedValueType, setEditedValueType] = useState(data.valueType || "text");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleClone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -48,7 +53,37 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
     setIsEditModalOpen(true);
   };
 
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!editedName.trim()) {
+      newErrors.label = "Name is required";
+    }
+
+    if (!editedFieldName.trim()) {
+      newErrors.fieldName = "Field name is required";
+    } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(editedFieldName)) {
+      newErrors.fieldName = "Field name must start with letter/underscore, contain only letters, numbers, underscores";
+    }
+
+    if (editedValueType === 'number' && isNaN(Number(editedValue))) {
+      newErrors.value = "Value must be a valid number";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSaveEdit = () => {
+    if (!validateForm()) {
+      toast({
+        title: "Validation Error",
+        description: "Please fix the errors before saving",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (onUpdate) {
       onUpdate(id, {
         ...data,
@@ -59,6 +94,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
       });
     }
     setIsEditModalOpen(false);
+    setErrors({});
   };
 
   const handleCancel = () => {
@@ -87,6 +123,26 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-yellow-100">
             <Database className="w-4 h-4 text-yellow-700" />
             <span className="text-sm font-medium text-yellow-700">Field Setter</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="w-3.5 h-3.5 opacity-60 hover:opacity-100 cursor-help ml-1 text-yellow-600" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="font-medium mb-1">{nodeDescriptions.field_setter.tooltip}</p>
+                  {nodeDescriptions.field_setter.examples && (
+                    <div className="text-xs opacity-90 mt-2">
+                      <strong>Examples:</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        {nodeDescriptions.field_setter.examples.map((ex, i) => (
+                          <li key={i}>{ex}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Action Buttons */}
@@ -122,9 +178,27 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
             {data.label || "Field Setter Node"}
           </h3>
 
-          {/* Preview */}
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 min-h-[40px] font-mono">
-            {getPreviewText()}
+          {/* Preview - Enhanced */}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[50px]">
+            {data.fieldName ? (
+              <>
+                <div className="flex items-center gap-2 font-mono text-xs mb-1.5">
+                  <Database className="w-4 h-4 text-yellow-600" />
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold">
+                    {data.fieldName}
+                  </span>
+                  <span className="text-gray-400">←</span>
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded">
+                    {String(data.value || '')}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Type: <span className="font-medium">{data.valueType || 'text'}</span>
+                </div>
+              </>
+            ) : (
+              <span className="text-gray-400">No field configured</span>
+            )}
           </div>
         </div>
 
@@ -153,9 +227,16 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
               <Input
                 id="nodeName"
                 value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
+                onChange={(e) => {
+                  setEditedName(e.target.value);
+                  if (errors.label) setErrors({...errors, label: ""});
+                }}
                 placeholder="Enter node name..."
+                className={errors.label ? "border-red-500" : ""}
               />
+              {errors.label && (
+                <p className="text-xs text-red-600 mt-1">{errors.label}</p>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -163,9 +244,19 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
               <Input
                 id="fieldName"
                 value={editedFieldName}
-                onChange={(e) => setEditedFieldName(e.target.value)}
-                placeholder="e.g., should_export, customer_type"
+                onChange={(e) => {
+                  setEditedFieldName(e.target.value);
+                  if (errors.fieldName) setErrors({...errors, fieldName: ""});
+                }}
+                placeholder="e.g., customer_name, order_id"
+                className={errors.fieldName ? "border-red-500" : ""}
               />
+              {errors.fieldName && (
+                <p className="text-xs text-red-600 mt-1">{errors.fieldName}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Variable name to store the value (letters, numbers, underscores only)
+              </p>
             </div>
 
             <div className="grid gap-2">
@@ -199,9 +290,16 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
                   id="value"
                   type={editedValueType === "number" ? "number" : "text"}
                   value={editedValue}
-                  onChange={(e) => setEditedValue(editedValueType === "number" ? Number(e.target.value) : e.target.value)}
+                  onChange={(e) => {
+                    setEditedValue(editedValueType === "number" ? Number(e.target.value) : e.target.value);
+                    if (errors.value) setErrors({...errors, value: ""});
+                  }}
                   placeholder="Enter value..."
+                  className={errors.value ? "border-red-500" : ""}
                 />
+              )}
+              {errors.value && (
+                <p className="text-xs text-red-600 mt-1">{errors.value}</p>
               )}
             </div>
           </div>

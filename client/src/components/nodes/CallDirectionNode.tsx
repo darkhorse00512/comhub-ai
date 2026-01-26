@@ -1,5 +1,7 @@
 import { memo } from "react";
-import { PhoneIncoming, PhoneOutgoing, Trash2 } from "lucide-react";
+import { PhoneIncoming, PhoneOutgoing, Trash2, HelpCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { nodeDescriptions } from "@/data/nodeDescriptions";
 
 interface CallDirectionNodeProps {
   id: string;
@@ -39,6 +41,16 @@ const CallDirectionNode = ({ id, data, isConnectable, onDelete }: CallDirectionN
             >
               {data.label || "Start"}
             </span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className={`w-4 h-4 opacity-60 hover:opacity-100 cursor-help ml-1 ${isInbound ? "text-blue-600" : "text-purple-600"}`} />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="font-medium">{nodeDescriptions.call_direction?.tooltip || "Defines whether this workflow is for inbound or outbound calls."}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Action Buttons - Delete only */}

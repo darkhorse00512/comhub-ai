@@ -1,9 +1,11 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, AlertCircle, ChevronRight } from "lucide-react";
+import { Copy, Pencil, Trash2, AlertCircle, ChevronRight, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { nodeDescriptions } from "@/data/nodeDescriptions";
 
 interface FallbackNodeProps {
   id: string;
@@ -23,11 +26,13 @@ interface FallbackNodeProps {
 }
 
 const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodeProps) => {
+  const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
   const [editedFallbackMessage, setEditedFallbackMessage] = useState(data.fallbackMessage || "");
   const [editedRetryCount, setEditedRetryCount] = useState(data.retryCount || "3");
   const [editedEscalateTo, setEditedEscalateTo] = useState(data.escalateTo || "");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleClone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -48,7 +53,35 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
     setIsEditModalOpen(true);
   };
 
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!editedName.trim()) {
+      newErrors.label = "Name is required";
+    }
+
+    if (!editedFallbackMessage.trim()) {
+      newErrors.fallbackMessage = "Fallback message is required";
+    }
+
+    if (!editedRetryCount || isNaN(Number(editedRetryCount)) || Number(editedRetryCount) < 0) {
+      newErrors.retryCount = "Retry count must be a non-negative number";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleSaveEdit = () => {
+    if (!validateForm()) {
+      toast({
+        title: "Validation Error",
+        description: "Please fix the errors before saving",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (onUpdate) {
       onUpdate(id, {
         ...data,
@@ -59,6 +92,7 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
       });
     }
     setIsEditModalOpen(false);
+    setErrors({});
   };
 
   const handleCancel = () => {
@@ -88,6 +122,26 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-100">
             <AlertCircle className="w-4 h-4 text-gray-700" />
             <span className="text-sm font-medium text-gray-700">Fallback</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="w-3.5 h-3.5 opacity-60 hover:opacity-100 cursor-help ml-1 text-gray-600" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <p className="font-medium mb-1">{nodeDescriptions.fallback?.tooltip || "Handle cases where the agent doesn't understand the user."}</p>
+                  {nodeDescriptions.fallback?.examples && (
+                    <div className="text-xs opacity-90 mt-2">
+                      <strong>Examples:</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        {nodeDescriptions.fallback.examples.map((ex, i) => (
+                          <li key={i}>{ex}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Action Buttons */}
@@ -123,9 +177,33 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
             {data.label || "Fallback Node"}
           </h3>
 
-          {/* Preview */}
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 min-h-[40px]">
-            {getPreviewText()}
+          {/* Preview - Enhanced */}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[70px]">
+            {data.fallbackMessage ? (
+              <>
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertCircle className="w-4 h-4 text-gray-600" />
+                  <span className="font-semibold text-gray-700">Fallback</span>
+                </div>
+                <p className="text-gray-700 text-xs line-clamp-2 leading-relaxed mb-2">
+                  {data.fallbackMessage}
+                </p>
+                <div className="flex gap-2 text-xs">
+                  {data.retryCount && (
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+                      Retries: {data.retryCount}
+                    </span>
+                  )}
+                  {data.escalateTo && (
+                    <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded">
+                      Escalate to {data.escalateTo}
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <span className="text-gray-400">No fallback message set</span>
+            )}
           </div>
         </div>
 
@@ -154,9 +232,16 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
               <Input
                 id="nodeName"
                 value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
+                onChange={(e) => {
+                  setEditedName(e.target.value);
+                  if (errors.label) setErrors({...errors, label: ""});
+                }}
                 placeholder="Enter node name..."
+                className={errors.label ? "border-red-500" : ""}
               />
+              {errors.label && (
+                <p className="text-xs text-red-600 mt-1">{errors.label}</p>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -164,10 +249,16 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
               <Textarea
                 id="fallbackMessage"
                 value={editedFallbackMessage}
-                onChange={(e) => setEditedFallbackMessage(e.target.value)}
+                onChange={(e) => {
+                  setEditedFallbackMessage(e.target.value);
+                  if (errors.fallbackMessage) setErrors({...errors, fallbackMessage: ""});
+                }}
                 placeholder="Message to say when fallback is triggered..."
-                className="min-h-[100px] resize-none"
+                className={`min-h-[100px] resize-none ${errors.fallbackMessage ? "border-red-500" : ""}`}
               />
+              {errors.fallbackMessage && (
+                <p className="text-xs text-red-600 mt-1">{errors.fallbackMessage}</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 This message will be spoken when the agent doesn't understand the user.
               </p>
@@ -179,9 +270,16 @@ const FallbackNode = ({ id, data, onClone, onDelete, onUpdate }: FallbackNodePro
                 id="retryCount"
                 type="number"
                 value={editedRetryCount}
-                onChange={(e) => setEditedRetryCount(e.target.value)}
+                onChange={(e) => {
+                  setEditedRetryCount(e.target.value);
+                  if (errors.retryCount) setErrors({...errors, retryCount: ""});
+                }}
                 placeholder="e.g., 3"
+                className={errors.retryCount ? "border-red-500" : ""}
               />
+              {errors.retryCount && (
+                <p className="text-xs text-red-600 mt-1">{errors.retryCount}</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 Number of times to retry before escalating.
               </p>
