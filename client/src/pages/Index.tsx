@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { Phone, Mic, MessageSquare, Shield, ArrowRight, Zap, Globe, Clock, Play, Sparkles, Users, TrendingUp } from "lucide-react";
+import { Phone, Mic, MessageSquare, Shield, ArrowRight, Zap, Globe, Clock, Play, Sparkles, Users, TrendingUp, BookOpen } from "lucide-react";
 
 const Index = () => {
   const { user, loading } = useAuth();
@@ -27,6 +27,12 @@ const Index = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            <Button variant="ghost" asChild>
+              <Link to="/tutorial" className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4" />
+                Tutorial
+              </Link>
+            </Button>
             {loading ? (
               <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
             ) : user ? (
@@ -126,9 +132,12 @@ const Index = () => {
                     variant="outline"
                     size="xl"
                     className="group border-2 hover:bg-primary/10 hover:border-primary/50 transition-all duration-300"
+                    asChild
                   >
-                    <Play className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    Watch Demo
+                    <Link to="/tutorial">
+                      <BookOpen className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                      Learn How It Works
+                    </Link>
                   </Button>
                 </motion.div>
 
@@ -368,11 +377,17 @@ const Index = () => {
       <footer className="relative z-10 border-t border-border/30">
         <div className="container mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-                <Phone className="w-4 h-4 text-primary-foreground" />
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
+                  <Phone className="w-4 h-4 text-primary-foreground" />
+                </div>
+                <span className="font-semibold text-foreground">VoiceAI</span>
               </div>
-              <span className="font-semibold text-foreground">VoiceAI</span>
+              <Link to="/tutorial" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-2">
+                <BookOpen className="w-4 h-4" />
+                Tutorial
+              </Link>
             </div>
             <p className="text-sm text-muted-foreground">
               © 2024 VoiceAI. All rights reserved.

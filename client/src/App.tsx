@@ -17,6 +17,7 @@ import SettingsPage from "./pages/dashboard/SettingsPage";
 import FeedbackPage from "./pages/dashboard/FeedbackPage";
 import CallHistory from "./pages/CallHistory";
 import BulkDialer from "./pages/BulkDialer";
+import TutorialPage from "./pages/TutorialPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -31,6 +32,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/tutorial" element={<TutorialPage />} />
             <Route path="/dashboard" element={<DashboardLayout><HomePage /></DashboardLayout>} />
             <Route path="/dashboard/agents" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
             <Route path="/dashboard/agents/:agentId/studio" element={<AgentStudioPage />} />

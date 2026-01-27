@@ -25,6 +25,7 @@ import {
   LogOut,
   ChevronRight,
   Bot,
+  BookOpen,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -39,6 +40,7 @@ const navItems = [
   { title: "Groups", icon: Users, path: "/dashboard/groups" },
   { title: "Settings", icon: Settings, path: "/dashboard/settings" },
   { title: "Feedback", icon: MessageSquare, path: "/dashboard/feedback" },
+  { title: "Tutorial", icon: BookOpen, path: "/tutorial" },
 ];
 
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
