@@ -32,7 +32,6 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
-            <Route path="/tutorial" element={<TutorialPage />} />
             <Route path="/dashboard" element={<DashboardLayout><HomePage /></DashboardLayout>} />
             <Route path="/dashboard/agents" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
             <Route path="/dashboard/agents/:agentId/studio" element={<AgentStudioPage />} />
@@ -41,6 +40,7 @@ const App = () => (
             <Route path="/dashboard/groups" element={<DashboardLayout><GroupsPage /></DashboardLayout>} />
             <Route path="/dashboard/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
             <Route path="/dashboard/feedback" element={<DashboardLayout><FeedbackPage /></DashboardLayout>} />
+            <Route path="/dashboard/tutorial" element={<DashboardLayout><TutorialPage /></DashboardLayout>} />
             <Route path="/history" element={<CallHistory />} />
             <Route path="/bulk-dialer" element={<BulkDialer />} />
             <Route path="*" element={<NotFound />} />

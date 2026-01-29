@@ -28,7 +28,7 @@ const Index = () => {
 
           <div className="flex items-center gap-4">
             <Button variant="ghost" asChild>
-              <Link to="/tutorial" className="flex items-center gap-2">
+              <Link to="/dashboard/tutorial" className="flex items-center gap-2">
                 <BookOpen className="w-4 h-4" />
                 Tutorial
               </Link>
@@ -134,7 +134,7 @@ const Index = () => {
                     className="group border-2 hover:bg-primary/10 hover:border-primary/50 transition-all duration-300"
                     asChild
                   >
-                    <Link to="/tutorial">
+                    <Link to="/dashboard/tutorial">
                       <BookOpen className="w-5 h-5 group-hover:scale-110 transition-transform" />
                       Learn How It Works
                     </Link>
@@ -384,7 +384,7 @@ const Index = () => {
                 </div>
                 <span className="font-semibold text-foreground">VoiceAI</span>
               </div>
-              <Link to="/tutorial" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-2">
+              <Link to="/dashboard/tutorial" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-2">
                 <BookOpen className="w-4 h-4" />
                 Tutorial
               </Link>
