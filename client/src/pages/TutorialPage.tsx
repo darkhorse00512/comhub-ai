@@ -18,7 +18,11 @@ import {
   Zap,
   Users,
   PhoneCall,
-  PhoneOutgoing
+  PhoneOutgoing,
+  X,
+  Award,
+  Target,
+  TrendingUp as TrendingUpIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,26 +48,60 @@ const TutorialPage = () => {
     { type: "field_setter", icon: Database, color: "bg-yellow-100 text-yellow-700", borderColor: "border-yellow-300" },
     { type: "junction", icon: GitBranch, color: "bg-blue-100 text-blue-700", borderColor: "border-blue-300" },
     { type: "switch", icon: GitMerge, color: "bg-pink-100 text-pink-700", borderColor: "border-pink-300" },
-    { type: "function", icon: Code, color: "bg-teal-100 text-teal-700", borderColor: "border-teal-300" },
     { type: "call_transfer", icon: PhoneCall, color: "bg-orange-100 text-orange-700", borderColor: "border-orange-300" },
     { type: "time_limit", icon: Clock, color: "bg-red-100 text-red-700", borderColor: "border-red-300" },
     { type: "fallback", icon: AlertTriangle, color: "bg-amber-100 text-amber-700", borderColor: "border-amber-300" },
-    { type: "voicemail", icon: Voicemail, color: "bg-amber-100 text-amber-700", borderColor: "border-amber-300" },
+    { type: "voicemail", icon: Voicemail, color: "bg-slate-100 text-slate-700", borderColor: "border-slate-300" },
+    { type: "reconfigure", icon: Settings, color: "bg-cyan-100 text-cyan-700", borderColor: "border-cyan-300" },
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-16">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center gap-3 mb-4">
-            <BookOpen className="w-12 h-12" />
-            <h1 className="text-4xl font-bold">Call System Tutorial</h1>
+      <div className="relative bg-gradient-to-br from-blue-600 via-blue-700 to-purple-700 text-white py-20 overflow-hidden">
+        {/* Background decorations */}
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-white rounded-full blur-3xl"></div>
+          <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-300 rounded-full blur-3xl"></div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-6 relative z-10">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="p-3 bg-white/20 backdrop-blur-sm rounded-2xl">
+              <BookOpen className="w-10 h-10" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs font-semibold">
+                  Complete Guide
+                </span>
+                <span className="px-3 py-1 bg-white/20 backdrop-blur-sm rounded-full text-xs font-semibold">
+                  12 Node Types
+                </span>
+              </div>
+              <h1 className="text-5xl font-bold">Call System Tutorial</h1>
+            </div>
           </div>
-          <p className="text-xl text-blue-100 max-w-3xl">
-            Learn how to build powerful AI-driven call workflows for inbound and outbound calls.
-            Master each node type and create professional call systems with ease.
+          <p className="text-xl text-blue-50 max-w-3xl leading-relaxed">
+            Master AI-driven call workflows with our comprehensive guide. Learn to build professional
+            inbound and outbound call systems that delight your customers.
           </p>
+
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-6 mt-10 max-w-2xl">
+            <div className="text-center">
+              <div className="text-4xl font-bold mb-1">12</div>
+              <div className="text-sm text-blue-100">Node Types</div>
+            </div>
+            <div className="text-center">
+              <div className="text-4xl font-bold mb-1">4</div>
+              <div className="text-sm text-blue-100">Ready Templates</div>
+            </div>
+            <div className="text-center">
+              <div className="text-4xl font-bold mb-1">∞</div>
+              <div className="text-sm text-blue-100">Possibilities</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -214,40 +252,56 @@ const TutorialPage = () => {
                 const description = nodeDescriptions[nodeType.type];
 
                 return (
-                  <Card key={nodeType.type} className="border-2 hover:shadow-lg transition-shadow">
-                    <CardHeader>
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className={`p-2 rounded-lg ${nodeType.color}`}>
-                          <Icon className="w-5 h-5" />
+                  <Card
+                    key={nodeType.type}
+                    className="border-2 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 hover:-translate-y-1 bg-gradient-to-br from-white to-gray-50"
+                  >
+                    <CardHeader className="pb-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className={`p-3 rounded-xl ${nodeType.color} shadow-md`}>
+                          <Icon className="w-6 h-6" />
                         </div>
-                        <CardTitle className="text-xl">{description?.title || nodeType.type}</CardTitle>
+                        <div className="flex-1">
+                          <CardTitle className="text-xl mb-1">{description?.title || nodeType.type}</CardTitle>
+                          <div className="flex items-center gap-2">
+                            <Award className="w-3 h-3 text-blue-500" />
+                            <span className="text-xs text-gray-500 font-medium">Essential Node</span>
+                          </div>
+                        </div>
                       </div>
-                      <CardDescription className="text-base leading-relaxed">
+                      <CardDescription className="text-base leading-relaxed text-gray-700">
                         {description?.tooltip}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="pt-0">
                       {description?.examples && (
-                        <div className="space-y-2">
-                          <p className="text-sm font-semibold text-gray-700">Examples:</p>
-                          <ul className="space-y-1.5">
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <div className="h-px flex-1 bg-gradient-to-r from-blue-200 to-transparent"></div>
+                            <p className="text-xs font-bold text-blue-600 uppercase tracking-wide">Use Cases</p>
+                            <div className="h-px flex-1 bg-gradient-to-l from-blue-200 to-transparent"></div>
+                          </div>
+                          <ul className="space-y-2">
                             {description.examples.map((example, idx) => (
-                              <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
-                                <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                                <span>{example}</span>
+                              <li key={idx} className="text-sm text-gray-700 flex items-start gap-2 pl-2">
+                                <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                <span className="leading-relaxed">{example}</span>
                               </li>
                             ))}
                           </ul>
                         </div>
                       )}
                       {description?.useCases && (
-                        <div className="space-y-2 mt-4">
-                          <p className="text-sm font-semibold text-gray-700">Use Cases:</p>
-                          <ul className="space-y-1.5">
+                        <div className="space-y-3 mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2">
+                            <Lightbulb className="w-4 h-4 text-yellow-500" />
+                            <p className="text-xs font-bold text-yellow-600 uppercase tracking-wide">Scenarios</p>
+                          </div>
+                          <ul className="space-y-2">
                             {description.useCases.map((useCase, idx) => (
-                              <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
-                                <Lightbulb className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                                <span>{useCase}</span>
+                              <li key={idx} className="text-sm text-gray-700 flex items-start gap-2 pl-2">
+                                <Target className="w-4 h-4 text-orange-500 mt-0.5 flex-shrink-0" />
+                                <span className="leading-relaxed">{useCase}</span>
                               </li>
                             ))}
                           </ul>
@@ -273,13 +327,13 @@ const TutorialPage = () => {
 
             <div className="space-y-6">
               {/* Step 1 */}
-              <Card className="border-l-4 border-l-purple-500">
+              <Card className="border-l-4 border-l-purple-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-purple-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-purple-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-purple-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       1
                     </div>
-                    Start with Agent Setup
+                    <span className="text-xl">Start with Agent Setup</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -306,13 +360,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 2 */}
-              <Card className="border-l-4 border-l-indigo-500">
+              <Card className="border-l-4 border-l-indigo-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-indigo-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-indigo-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       2
                     </div>
-                    Add Call Direction Node
+                    <span className="text-xl">Add Call Direction Node</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -333,13 +387,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 3 */}
-              <Card className="border-l-4 border-l-blue-500">
+              <Card className="border-l-4 border-l-blue-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-blue-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       3
                     </div>
-                    Create Greeting (Scripted Node)
+                    <span className="text-xl">Create Greeting (Scripted Node)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -356,13 +410,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 4 */}
-              <Card className="border-l-4 border-l-yellow-500">
+              <Card className="border-l-4 border-l-yellow-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-yellow-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-yellow-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-yellow-600 to-yellow-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       4
                     </div>
-                    Collect Information (Field Setter Nodes)
+                    <span className="text-xl">Collect Information (Field Setter Nodes)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -384,13 +438,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 5 */}
-              <Card className="border-l-4 border-l-green-500">
+              <Card className="border-l-4 border-l-green-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-green-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-green-600 to-green-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       5
                     </div>
-                    Main Conversation (Dialogue Node)
+                    <span className="text-xl">Main Conversation (Dialogue Node)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -411,13 +465,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 6 */}
-              <Card className="border-l-4 border-l-blue-500">
+              <Card className="border-l-4 border-l-blue-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-blue-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       6
                     </div>
-                    Add Branching Logic (Junction/Switch Nodes)
+                    <span className="text-xl">Add Branching Logic (Junction/Switch Nodes)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -444,13 +498,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 7 */}
-              <Card className="border-l-4 border-l-orange-500">
+              <Card className="border-l-4 border-l-orange-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-orange-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-orange-600 to-orange-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       7
                     </div>
-                    Handle Escalation (Call Transfer Node)
+                    <span className="text-xl">Handle Escalation (Call Transfer Node)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -467,13 +521,13 @@ const TutorialPage = () => {
               </Card>
 
               {/* Step 8 */}
-              <Card className="border-l-4 border-l-green-500">
+              <Card className="border-l-4 border-l-green-500 hover:shadow-lg transition-shadow bg-gradient-to-r from-green-50/50 to-white">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 bg-gradient-to-br from-green-600 to-green-700 text-white rounded-xl flex items-center justify-center font-bold text-lg shadow-lg">
                       8
                     </div>
-                    Close the Call (Scripted Node)
+                    <span className="text-xl">Close the Call (Scripted Node)</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -999,20 +1053,59 @@ const TutorialPage = () => {
       </div>
 
       {/* CTA Section */}
-      <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white py-12 mt-16">
-        <div className="max-w-4xl mx-auto px-6 text-center">
-          <h2 className="text-3xl font-bold mb-4">Ready to Build Your Call System?</h2>
-          <p className="text-xl text-purple-100 mb-6">
-            Start creating professional AI-driven call workflows today
+      <div className="relative bg-gradient-to-br from-purple-700 via-blue-700 to-indigo-800 text-white py-20 mt-16 overflow-hidden">
+        {/* Background decorations */}
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-0 right-1/4 w-96 h-96 bg-white rounded-full blur-3xl"></div>
+          <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-purple-300 rounded-full blur-3xl"></div>
+        </div>
+
+        <div className="max-w-4xl mx-auto px-6 text-center relative z-10">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/20 backdrop-blur-sm rounded-full mb-6">
+            <TrendingUpIcon className="w-4 h-4" />
+            <span className="text-sm font-semibold">Start Building Today</span>
+          </div>
+
+          <h2 className="text-4xl md:text-5xl font-bold mb-4">Ready to Build Your Call System?</h2>
+          <p className="text-xl text-purple-100 mb-8 leading-relaxed">
+            Join thousands of businesses creating professional AI-driven call workflows
           </p>
-          <Button
-            size="lg"
-            className="bg-white text-purple-600 hover:bg-purple-50 text-lg px-8 py-6"
-            onClick={() => window.location.href = '/dashboard'}
-          >
-            <Zap className="w-5 h-5 mr-2" />
-            Go to Agent Studio
-          </Button>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Button
+              size="lg"
+              className="bg-white text-purple-700 hover:bg-purple-50 hover:scale-105 transition-all text-lg px-8 py-6 shadow-2xl"
+              onClick={() => window.location.href = '/dashboard'}
+            >
+              <Zap className="w-5 h-5 mr-2" />
+              Go to Agent Studio
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-2 border-white text-white hover:bg-white/10 text-lg px-8 py-6"
+              onClick={() => setActiveSection('overview')}
+            >
+              <BookOpen className="w-5 h-5 mr-2" />
+              Review Tutorial
+            </Button>
+          </div>
+
+          {/* Trust indicators */}
+          <div className="grid grid-cols-3 gap-8 mt-12 pt-8 border-t border-white/20">
+            <div className="text-center">
+              <div className="text-3xl font-bold mb-1">5min</div>
+              <div className="text-sm text-purple-200">Quick Start</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold mb-1">24/7</div>
+              <div className="text-sm text-purple-200">Always Available</div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold mb-1">Free</div>
+              <div className="text-sm text-purple-200">No Credit Card</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

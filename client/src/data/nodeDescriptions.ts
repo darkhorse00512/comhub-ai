@@ -74,24 +74,6 @@ export const nodeDescriptions: NodeDescriptions = {
     }
   },
 
-  function: {
-    title: "Function Call",
-    tooltip: "Executes API calls, webhooks, or internal functions. Enables integration with external systems.",
-    examples: [
-      "Look up customer in database",
-      "Send webhook notification",
-      "Check inventory availability",
-      "Validate order status"
-    ],
-    fields: {
-      functionName: "Name of the function to execute",
-      functionType: "api_call, webhook, or internal",
-      url: "API endpoint URL (for API calls)",
-      method: "HTTP method: GET, POST, PUT, DELETE",
-      parameters: "JSON parameters to send with the request"
-    }
-  },
-
   call_transfer: {
     title: "Call Transfer",
     tooltip: "Routes the call to a phone number or extension. Ends AI interaction and hands off to human/system.",
@@ -126,16 +108,16 @@ export const nodeDescriptions: NodeDescriptions = {
 
   reconfigure: {
     title: "Reconfigure Agent",
-    tooltip: "Changes agent settings mid-conversation. Adjust voice, speed, language, or behavior on the fly.",
+    tooltip: "Changes agent settings mid-conversation. Adjust voice, speed, language, or behavior dynamically during the call.",
     examples: [
-      "Switch to Spanish language",
-      "Change to slower speaking speed",
-      "Use different voice for different sections",
-      "Adjust tone from formal to casual"
+      "Switch to Spanish language for bilingual support",
+      "Change to slower speaking speed for clarity",
+      "Use different voice for different call sections",
+      "Adjust tone from formal to casual based on customer"
     ],
     fields: {
-      setting: "What to change: voice, speed, language, or prompt",
-      newValue: "New value for the setting"
+      setting: "What to change: voice, speed, language, or prompt style",
+      newValue: "New value for the selected setting"
     }
   },
 
