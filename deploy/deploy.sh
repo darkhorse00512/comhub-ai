@@ -18,7 +18,7 @@ echo -e "${GREEN}   ComHub AI Deployment Script${NC}"
 echo -e "${GREEN}=========================================${NC}"
 
 # Configuration
-APP_DIR="/var/www/comhubai"
+APP_DIR="/home/comhub-ai"
 DOMAIN="voip.comhubai.com"
 
 # Check if running as root or with sudo

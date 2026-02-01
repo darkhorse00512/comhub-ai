@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'comhubai-server',
       script: './dist/server.js',
-      cwd: '/var/www/comhubai/server',
+      cwd: '/home/comhub-ai/server',
       instances: 'max',
       exec_mode: 'cluster',
       env: {

@@ -12,7 +12,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-APP_DIR="/var/www/comhubai"
+APP_DIR="/home/comhub-ai"
 
 echo -e "${GREEN}=========================================${NC}"
 echo -e "${GREEN}   ComHub AI Update Script${NC}"

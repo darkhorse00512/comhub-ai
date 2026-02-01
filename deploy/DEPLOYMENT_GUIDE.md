@@ -27,17 +27,17 @@ git clone YOUR_REPO_URL comhubai
 **Option B: Using SCP (from your local machine)**
 ```bash
 # Run this from your local machine (Windows PowerShell)
-scp -r f:\comhubai.com\* root@YOUR_VPS_IP:/var/www/comhubai/
+scp -r f:\comhubai.com\* root@YOUR_VPS_IP:/home/comhub-ai/
 ```
 
 **Option C: Using FileZilla/SFTP**
 - Connect to VPS via SFTP
-- Upload all files to `/var/www/comhubai/`
+- Upload all files to `/home/comhub-ai/`
 
 ### Step 3: Run Deployment Script
 
 ```bash
-cd /var/www/comhubai
+cd /home/comhub-ai
 chmod +x deploy/deploy.sh
 sudo ./deploy/deploy.sh
 ```
@@ -54,14 +54,14 @@ This script will:
 
 **Server Environment:**
 ```bash
-cd /var/www/comhubai/server
+cd /home/comhub-ai/server
 cp ../deploy/server.env.production .env
 nano .env  # Edit with your actual values
 ```
 
 **Client Environment:**
 ```bash
-cd /var/www/comhubai/client
+cd /home/comhub-ai/client
 cp ../deploy/client.env.production .env.production
 nano .env.production  # Edit with your actual values
 ```
@@ -70,12 +70,12 @@ nano .env.production  # Edit with your actual values
 
 ```bash
 # Build Server
-cd /var/www/comhubai/server
+cd /home/comhub-ai/server
 npm install
 npm run build
 
 # Build Client
-cd /var/www/comhubai/client
+cd /home/comhub-ai/client
 npm install
 npm run build
 ```
@@ -84,7 +84,7 @@ npm run build
 
 ```bash
 # Copy nginx config
-sudo cp /var/www/comhubai/deploy/nginx.conf /etc/nginx/sites-available/voip.comhubai.com
+sudo cp /home/comhub-ai/deploy/nginx.conf /etc/nginx/sites-available/voip.comhubai.com
 
 # Enable site
 sudo ln -sf /etc/nginx/sites-available/voip.comhubai.com /etc/nginx/sites-enabled/
@@ -108,7 +108,7 @@ sudo certbot --nginx -d voip.comhubai.com
 ### Step 8: Start Server with PM2
 
 ```bash
-cd /var/www/comhubai/server
+cd /home/comhub-ai/server
 pm2 start ecosystem.config.js
 pm2 save
 ```
@@ -183,14 +183,14 @@ certbot certificates      # List certificates
 
 Run the update script:
 ```bash
-cd /var/www/comhubai
+cd /home/comhub-ai
 ./deploy/update.sh
 ```
 
 Or manually:
 ```bash
 # Pull latest code
-cd /var/www/comhubai
+cd /home/comhub-ai
 git pull
 
 # Rebuild server
@@ -235,8 +235,8 @@ tail -f /var/log/comhubai/app.log
 
 **Permission Errors**
 ```bash
-chown -R www-data:www-data /var/www/comhubai
-chmod -R 755 /var/www/comhubai
+chown -R www-data:www-data /home/comhub-ai
+chmod -R 755 /home/comhub-ai
 ```
 
 **Build Failures**
@@ -254,7 +254,7 @@ npm install
 ## File Structure on VPS
 
 ```
-/var/www/comhubai/
+/home/comhub-ai/
 ├── client/
 │   ├── dist/          # Built React app (served by Nginx)
 │   ├── src/
