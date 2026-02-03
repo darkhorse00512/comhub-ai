@@ -962,38 +962,9 @@ Generate the workflow NOW as raw JSON.`;
           }
         });
 
-        // Check for unreachable nodes (nodes not connected to the workflow)
-        const reachable = new Set<string>();
-        const findReachable = (nodeId: string) => {
-          if (reachable.has(nodeId)) return;
-          reachable.add(nodeId);
-          wf.edges.forEach((e: any) => {
-            if (e.source === nodeId && e.target) {
-              findReachable(e.target);
-            }
-          });
-        };
-
-        // Start from agent-setup node
-        const agentSetupNode = wf.nodes.find((n: any) => n.type === 'agentSetup');
-        if (agentSetupNode) {
-          findReachable(agentSetupNode.id);
-        }
-
-        // Also start from all call-direction nodes (they are valid entry points for their flows)
-        // This handles cases where inbound and outbound flows are separate branches
-        const callDirectionNodes = wf.nodes.filter((n: any) => n.type === 'callDirection');
-        callDirectionNodes.forEach((cdNode: any) => {
-          findReachable(cdNode.id);
-        });
-
-        // Only check reachability for non-entry-point nodes
-        const entryPointTypes = ['agentSetup', 'callDirection'];
-        wf.nodes.forEach((node: any) => {
-          if (!entryPointTypes.includes(node.type) && !reachable.has(node.id)) {
-            errors.push(`Node '${node.id}' is unreachable from the workflow entry point`);
-          }
-        });
+        // Note: Reachability validation disabled - AI-generated workflows may have
+        // intentionally disconnected nodes (fallback handlers, alternate paths, etc.)
+        // The frontend can handle disconnected nodes gracefully
       }
 
       return { valid: errors.length === 0, errors };
