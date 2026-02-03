@@ -506,27 +506,33 @@ Basic: {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": tr
 Junction True: {"id": "e-true", "source": "check-1", "target": "thanks", "sourceHandle": "true", "animated": true}
 Junction False: {"id": "e-false", "source": "check-1", "target": "transfer", "sourceHandle": "false", "animated": true}
 
-## LAYOUT RULES
-- Agent Setup: x=400, y=50 (center top)
-- Inbound flow: x=100-400, starts at y=200
-- Outbound flow: x=600-900, starts at y=200
-- Vertical spacing: 150px between rows
-- Agent-setup connects to ALL call-direction nodes
+## HORIZONTAL LAYOUT RULES (CRITICAL - NODES FLOW LEFT TO RIGHT!)
+- Agent Setup: x=50, y=300 (left side, vertically centered)
+- Inbound CallDirection: x=300, y=150 (top row)
+- Outbound CallDirection: x=300, y=450 (bottom row)
+- Flow direction: LEFT → RIGHT (x increases by 350px per node)
+- Inbound flow nodes: y=150 (top row), x increases: 300, 650, 1000, 1350, 1700...
+- Outbound flow nodes: y=450 (bottom row), x increases: 300, 650, 1000, 1350, 1700...
+- Horizontal spacing: 350px between nodes
+- Vertical spacing: 300px between inbound and outbound rows
+- Branch nodes (from junction): position vertically offset, same x
 
-## EXAMPLE
+## EXAMPLE (HORIZONTAL FLOW)
 {
   "nodes": [
-    {"id": "agent-setup", "type": "agentSetup", "position": {"x": 400, "y": 50}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}},
-    {"id": "inbound", "type": "callDirection", "position": {"x": 200, "y": 200}, "data": {"label": "Inbound", "direction": "inbound"}},
-    {"id": "outbound", "type": "callDirection", "position": {"x": 600, "y": 200}, "data": {"label": "Outbound", "direction": "outbound"}},
-    {"id": "greeting", "type": "scripted", "position": {"x": 200, "y": 350}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}},
-    {"id": "intro", "type": "scripted", "position": {"x": 600, "y": 350}, "data": {"label": "Introduction", "script": "Hi, this is an AI calling."}}
+    {"id": "agent-setup", "type": "agentSetup", "position": {"x": 50, "y": 300}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}},
+    {"id": "inbound", "type": "callDirection", "position": {"x": 300, "y": 150}, "data": {"label": "Inbound", "direction": "inbound"}},
+    {"id": "outbound", "type": "callDirection", "position": {"x": 300, "y": 450}, "data": {"label": "Outbound", "direction": "outbound"}},
+    {"id": "greeting", "type": "scripted", "position": {"x": 650, "y": 150}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}},
+    {"id": "dialogue", "type": "dialogue", "position": {"x": 1000, "y": 150}, "data": {"label": "Conversation", "stageMessage": "Help the customer.", "maxTurns": 10}},
+    {"id": "intro", "type": "scripted", "position": {"x": 650, "y": 450}, "data": {"label": "Introduction", "script": "Hi, this is an AI calling."}}
   ],
   "edges": [
     {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": true},
     {"id": "e2", "source": "agent-setup", "target": "outbound", "animated": true},
     {"id": "e3", "source": "inbound", "target": "greeting", "animated": true},
-    {"id": "e4", "source": "outbound", "target": "intro", "animated": true}
+    {"id": "e4", "source": "greeting", "target": "dialogue", "animated": true},
+    {"id": "e5", "source": "outbound", "target": "intro", "animated": true}
   ]
 }
 
@@ -547,20 +553,20 @@ ${callFlowConfig.generateOutbound ? `- OUTBOUND flow (purpose: ${callFlowConfig.
 ${callFlowConfig.transferToHuman ? '- Include call_transfer node for human escalation' : ''}
 ${callFlowConfig.collectInfo?.length > 0 ? `- Collect: ${callFlowConfig.collectInfo.join(', ')} (use field_setter nodes)` : ''}
 
-LAYOUT REQUIREMENTS:
-- Agent Setup at x=400, y=50 (center top)
-- Inbound CallDirection at x=200, y=200 (left side)
-- Outbound CallDirection at x=700, y=200 (right side)
-- Connect agent-setup to BOTH call-direction nodes
-- Nodes flow TOP to BOTTOM with 150px vertical spacing
-- Inbound flow nodes: x=100-350
-- Outbound flow nodes: x=600-850
+HORIZONTAL LAYOUT (CRITICAL - LEFT TO RIGHT FLOW!):
+- Agent Setup: x=50, y=300 (left side)
+- Inbound CallDirection: x=300, y=150 (top row)
+- Outbound CallDirection: x=300, y=450 (bottom row)
+- Inbound nodes flow LEFT→RIGHT at y=150: x=650, 1000, 1350, 1700...
+- Outbound nodes flow LEFT→RIGHT at y=450: x=650, 1000, 1350, 1700...
+- Horizontal spacing: 350px between nodes
+- Agent-setup connects to BOTH call-direction nodes
 
 REMEMBER:
-- Use "script" field for scripted nodes (NOT "content")
-- Return ONLY raw JSON, no markdown
-- All nodes need proper data structure
-- Professional messages for ${businessInfo.industry} industry`;
+- HORIZONTAL flow (x increases), NOT vertical
+- Use "script" field for scripted nodes
+- Return ONLY raw JSON
+- Professional messages for ${businessInfo.industry}`;
 
     // Generate workflow using GPT with custom prompt and higher token limit
     // Lower temperature (0.2) for more consistent, deterministic JSON output
