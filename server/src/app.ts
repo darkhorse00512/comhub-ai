@@ -9,6 +9,9 @@ import routes from './routes';
 
 const app: Application = express();
 
+// Trust proxy (nginx) for correct IP detection and X-Forwarded-For handling
+app.set('trust proxy', 1);
+
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
