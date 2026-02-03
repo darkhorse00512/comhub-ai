@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, FileCode, MessageSquare, Database, GitBranch, ToggleLeft, Zap, Phone, Clock, Wrench, AlertCircle, ChevronRight, X, Check } from "lucide-react";
+import { Copy, Pencil, Trash2, FileCode, MessageSquare, Database, GitBranch, ToggleLeft, Zap, Phone, Clock, Wrench, AlertCircle, ChevronRight, X, Check, Voicemail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,6 +92,13 @@ const nodeTypeConfigs: Record<string, {
     bgColor: "bg-gray-100",
     borderColor: "border-gray-300",
   },
+  voicemail: {
+    icon: Voicemail,
+    label: "Voicemail",
+    color: "text-cyan-700",
+    bgColor: "bg-cyan-100",
+    borderColor: "border-cyan-300",
+  },
 };
 
 const StandardNode = ({ id, data, onClone, onDelete, onUpdate }: StandardNodeProps) => {
@@ -139,27 +146,33 @@ const StandardNode = ({ id, data, onClone, onDelete, onUpdate }: StandardNodePro
   const getNodeContent = () => {
     switch (nodeType) {
       case "scripted":
-        return data.script || "No script set";
+        return data.script || data.content || "No script set";
       case "dialogue":
-        return data.topic || data.objective || "No dialogue configured";
+        return data.stageMessage || data.topic || data.objective || "No dialogue configured";
       case "field_setter":
         return data.fieldName ? `Collect: ${data.fieldName}` : "No field configured";
       case "junction":
-        return data.conditionField || "No condition set";
+        const fieldName = data.left?.field_name || data.conditionField || "";
+        const operator = data.operator || "==";
+        const value = data.right?.literal || "";
+        return fieldName ? `${fieldName} ${operator} ${value}` : "No condition set";
       case "switch":
-        return data.prompt || "No menu prompt set";
+        return data.switchField || data.prompt || "No switch field set";
       case "function":
         return data.functionName || "No function configured";
       case "call_transfer":
-        return data.destination || "No destination set";
+        return data.transferTo || data.destination || "No destination set";
       case "time_limit":
-        return data.duration ? `${data.duration}s timeout` : "No limit set";
+        const duration = data.maxDuration || data.duration;
+        return duration ? `${duration}s timeout` : "No limit set";
       case "reconfigure":
-        return data.setting || "No setting configured";
+        return data.setting ? `${data.setting}: ${data.newValue || ''}` : "No setting configured";
       case "fallback":
         return data.fallbackMessage || "No fallback message";
+      case "voicemail":
+        return data.greetingMessage || "No greeting set";
       default:
-        return data.script || "";
+        return data.script || data.content || "";
     }
   };
 

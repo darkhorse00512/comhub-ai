@@ -472,153 +472,55 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
   "edges": [...]   // Array of edge connections
 }
 
-## NODE TYPES WITH EXACT DATA STRUCTURES
+## NODE TYPES - USE THE TYPE DIRECTLY (NOT "standard")
 
-### 1. AgentSetup Node (REQUIRED - exactly one, at top)
-{
-  "id": "agent-setup",
-  "type": "agentSetup",
-  "position": {"x": 400, "y": 50},
-  "data": {
-    "label": "Agent Setup",
-    "systemMessage": "You are a professional AI assistant for [Business]. Be helpful, polite, and efficient."
-  }
-}
+### 1. AgentSetup Node (REQUIRED - exactly one)
+{"id": "agent-setup", "type": "agentSetup", "position": {"x": 400, "y": 50}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}}
 
-### 2. CallDirection Node (connects below agent-setup)
-{
-  "id": "inbound-direction",
-  "type": "callDirection",
-  "position": {"x": 200, "y": 200},
-  "data": {
-    "label": "Inbound Calls",
-    "direction": "inbound"
-  }
-}
+### 2. CallDirection Node
+{"id": "inbound", "type": "callDirection", "position": {"x": 200, "y": 200}, "data": {"label": "Inbound", "direction": "inbound"}}
 
-### 3. Scripted Node (IMPORTANT: use "script" not "content")
-{
-  "id": "greeting",
-  "type": "standard",
-  "position": {"x": 200, "y": 350},
-  "data": {
-    "type": "scripted",
-    "label": "Welcome Greeting",
-    "script": "Thank you for calling! How may I help you today?"
-  }
-}
+### 3. Scripted Node (type: "scripted", use "script" field)
+{"id": "greeting", "type": "scripted", "position": {"x": 200, "y": 350}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}}
 
-### 4. Dialogue Node (AI conversation)
-{
-  "id": "main-dialogue",
-  "type": "standard",
-  "position": {"x": 200, "y": 500},
-  "data": {
-    "type": "dialogue",
-    "label": "Main Conversation",
-    "stageMessage": "Listen to the customer and provide helpful assistance.",
-    "maxTurns": 10
-  }
-}
+### 4. Dialogue Node (type: "dialogue")
+{"id": "dialogue-1", "type": "dialogue", "position": {"x": 200, "y": 500}, "data": {"label": "Conversation", "stageMessage": "Listen and respond helpfully.", "maxTurns": 10}}
 
-### 5. FieldSetter Node (collect data)
-{
-  "id": "collect-info",
-  "type": "standard",
-  "position": {"x": 200, "y": 650},
-  "data": {
-    "type": "field_setter",
-    "label": "Collect Name",
-    "fieldName": "customer_name",
-    "valueType": "text",
-    "value": ""
-  }
-}
+### 5. FieldSetter Node (type: "field_setter")
+{"id": "collect-1", "type": "field_setter", "position": {"x": 200, "y": 650}, "data": {"label": "Collect Name", "fieldName": "customer_name", "valueType": "text", "value": ""}}
 
-### 6. Junction Node (True/False branching)
-{
-  "id": "check-condition",
-  "type": "standard",
-  "position": {"x": 200, "y": 800},
-  "data": {
-    "type": "junction",
-    "label": "Issue Resolved?",
-    "left": {"field_name": "resolved"},
-    "operator": "==",
-    "right": {"type": "text", "literal": "true"}
-  }
-}
+### 6. Junction Node (type: "junction", for True/False branching)
+{"id": "check-1", "type": "junction", "position": {"x": 200, "y": 800}, "data": {"label": "Resolved?", "left": {"field_name": "resolved"}, "operator": "==", "right": {"type": "text", "literal": "true"}}}
 
-### 7. CallTransfer Node
-{
-  "id": "transfer",
-  "type": "standard",
-  "position": {"x": 400, "y": 950},
-  "data": {
-    "type": "call_transfer",
-    "label": "Transfer to Human",
-    "transferTo": "+15551234567",
-    "transferMessage": "Connecting you to a specialist.",
-    "transferType": "warm",
-    "waitMusic": true
-  }
-}
+### 7. CallTransfer Node (type: "call_transfer")
+{"id": "transfer-1", "type": "call_transfer", "position": {"x": 400, "y": 950}, "data": {"label": "Transfer", "transferTo": "+15551234567", "transferMessage": "Connecting you.", "transferType": "warm"}}
 
-### 8. Voicemail Node
-{
-  "id": "voicemail",
-  "type": "standard",
-  "position": {"x": 600, "y": 350},
-  "data": {
-    "type": "voicemail",
-    "label": "Leave Voicemail",
-    "greetingMessage": "Please leave a message after the beep.",
-    "maxDuration": 120,
-    "beepSound": true,
-    "transcribe": true,
-    "saveRecording": true
-  }
-}
+### 8. Voicemail Node (type: "voicemail")
+{"id": "vm-1", "type": "voicemail", "position": {"x": 600, "y": 350}, "data": {"label": "Voicemail", "greetingMessage": "Leave a message.", "maxDuration": 120, "beepSound": true, "transcribe": true, "saveRecording": true}}
 
-### 9. Fallback Node
-{
-  "id": "fallback",
-  "type": "standard",
-  "position": {"x": 50, "y": 950},
-  "data": {
-    "type": "fallback",
-    "label": "Error Handler",
-    "fallbackMessage": "I'm sorry, could you please repeat that?",
-    "retryCount": 3,
-    "escalateTo": "+15551234567"
-  }
-}
+### 9. Fallback Node (type: "fallback")
+{"id": "fallback-1", "type": "fallback", "position": {"x": 50, "y": 950}, "data": {"label": "Fallback", "fallbackMessage": "Sorry, could you repeat?", "retryCount": 3, "escalateTo": "+15551234567"}}
 
 ## EDGE STRUCTURE
-Basic edge:
-{"id": "e1", "source": "agent-setup", "target": "inbound-direction", "animated": true}
+Basic: {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": true}
+Junction True: {"id": "e-true", "source": "check-1", "target": "thanks", "sourceHandle": "true", "animated": true}
+Junction False: {"id": "e-false", "source": "check-1", "target": "transfer", "sourceHandle": "false", "animated": true}
 
-Junction edges (use sourceHandle "true" or "false"):
-{"id": "e-true", "source": "check-condition", "target": "thank-you", "sourceHandle": "true", "animated": true}
-{"id": "e-false", "source": "check-condition", "target": "transfer", "sourceHandle": "false", "animated": true}
+## LAYOUT RULES
+- Agent Setup: x=400, y=50 (center top)
+- Inbound flow: x=100-400, starts at y=200
+- Outbound flow: x=600-900, starts at y=200
+- Vertical spacing: 150px between rows
+- Agent-setup connects to ALL call-direction nodes
 
-## HORIZONTAL LAYOUT RULES (CRITICAL!)
-- Agent Setup: Center top at x=400, y=50
-- Flow direction: LEFT to RIGHT (x increases)
-- Inbound flow: Start at x=200, y=200
-- Outbound flow: Start at x=700, y=200
-- Node spacing: 150px horizontal, 150px vertical
-- Branch nodes: Position side by side horizontally
-- BOTH call-direction nodes must connect FROM agent-setup
-
-## COMPLETE EXAMPLE
+## EXAMPLE
 {
   "nodes": [
-    {"id": "agent-setup", "type": "agentSetup", "position": {"x": 400, "y": 50}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI assistant."}},
+    {"id": "agent-setup", "type": "agentSetup", "position": {"x": 400, "y": 50}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}},
     {"id": "inbound", "type": "callDirection", "position": {"x": 200, "y": 200}, "data": {"label": "Inbound", "direction": "inbound"}},
     {"id": "outbound", "type": "callDirection", "position": {"x": 600, "y": 200}, "data": {"label": "Outbound", "direction": "outbound"}},
-    {"id": "greeting", "type": "standard", "position": {"x": 200, "y": 350}, "data": {"type": "scripted", "label": "Greeting", "script": "Hello! How can I help?"}},
-    {"id": "intro", "type": "standard", "position": {"x": 600, "y": 350}, "data": {"type": "scripted", "label": "Introduction", "script": "Hi, this is an AI calling from Acme Corp."}}
+    {"id": "greeting", "type": "scripted", "position": {"x": 200, "y": 350}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}},
+    {"id": "intro", "type": "scripted", "position": {"x": 600, "y": 350}, "data": {"label": "Introduction", "script": "Hi, this is an AI calling."}}
   ],
   "edges": [
     {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": true},
@@ -628,13 +530,12 @@ Junction edges (use sourceHandle "true" or "false"):
   ]
 }
 
-## REQUIREMENTS
+## CRITICAL REQUIREMENTS
 1. Return ONLY valid JSON
-2. Use "script" field for scripted nodes (NOT "content")
-3. Agent-setup connects to ALL call-direction nodes
-4. Horizontal layout (x increases left to right)
-5. All nodes must have proper data structure
-6. All edges must have valid source/target IDs`;
+2. Node "type" must be: agentSetup, callDirection, scripted, dialogue, field_setter, junction, call_transfer, voicemail, fallback
+3. DO NOT use "standard" as type - use the specific type directly
+4. Use "script" field for scripted nodes
+5. Agent-setup must connect to all call-direction nodes`;
 
     const userPrompt = `Generate a workflow for: ${businessInfo.businessName}
 Industry: ${businessInfo.industry || 'General'}
@@ -766,9 +667,10 @@ REMEMBER:
         if (node.type === 'agentSetup') hasAgentSetup = true;
         if (node.type === 'callDirection') hasCallDirection = true;
 
-        // Validate node data structure
-        if (node.type === 'standard' && node.data && !node.data.type) {
-          errors.push(`Node ${node.id}: Standard node missing data.type`);
+        // Validate node type is one of the allowed types
+        const validTypes = ['agentSetup', 'callDirection', 'scripted', 'dialogue', 'field_setter', 'junction', 'switch', 'call_transfer', 'voicemail', 'fallback', 'time_limit', 'reconfigure', 'function'];
+        if (node.type && !validTypes.includes(node.type)) {
+          errors.push(`Node ${node.id}: Invalid type '${node.type}'`);
         }
       });
 
