@@ -980,8 +980,17 @@ Generate the workflow NOW as raw JSON.`;
           findReachable(agentSetupNode.id);
         }
 
+        // Also start from all call-direction nodes (they are valid entry points for their flows)
+        // This handles cases where inbound and outbound flows are separate branches
+        const callDirectionNodes = wf.nodes.filter((n: any) => n.type === 'callDirection');
+        callDirectionNodes.forEach((cdNode: any) => {
+          findReachable(cdNode.id);
+        });
+
+        // Only check reachability for non-entry-point nodes
+        const entryPointTypes = ['agentSetup', 'callDirection'];
         wf.nodes.forEach((node: any) => {
-          if (node.type !== 'agentSetup' && !reachable.has(node.id)) {
+          if (!entryPointTypes.includes(node.type) && !reachable.has(node.id)) {
             errors.push(`Node '${node.id}' is unreachable from the workflow entry point`);
           }
         });
