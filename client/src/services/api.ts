@@ -991,6 +991,77 @@ export const api = {
       return { data: null, error: (error as Error).message };
     }
   },
+
+  // Test Call Session APIs - For saving test calls to history
+  async createTestCallSession(
+    agentId: string,
+    direction: "inbound" | "outbound"
+  ): Promise<ApiResponse<{ callSessionId: string }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/calls/test-session`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ agentId, direction }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create test call session");
+      }
+
+      const data = await response.json();
+      return { data: { callSessionId: data.callSessionId }, error: null };
+    } catch (error) {
+      console.error("Error creating test call session:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async addTestCallMessage(
+    callSessionId: string,
+    role: "user" | "ai",
+    content: string
+  ): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/calls/${callSessionId}/test-message`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ role, content }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to add test call message");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error adding test call message:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async endTestCallSession(callSessionId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/calls/${callSessionId}/end-test`, {
+        method: "POST",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to end test call session");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error ending test call session:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
 };
 
 export type { CallHistoryItem, ApiResponse };

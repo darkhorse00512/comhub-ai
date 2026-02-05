@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { FlowCanvas, Node, Edge } from "@/components/FlowCanvas";
 import {
@@ -30,6 +30,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
+import UnsavedChangesModal from "@/components/UnsavedChangesModal";
 import AgentSetupNode from "@/components/nodes/AgentSetupNode";
 import CallDirectionNode from "@/components/nodes/CallDirectionNode";
 import ScriptedNode from "@/components/nodes/ScriptedNode";
@@ -90,6 +91,34 @@ const AgentStudioPage = () => {
   const [showTestModal, setShowTestModal] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [showNodePalette, setShowNodePalette] = useState(true);
+
+  // Unsaved changes tracking
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  const savedStateRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
+
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = useCallback(() => {
+    if (!savedStateRef.current) return false;
+    const savedNodes = JSON.stringify(savedStateRef.current.nodes);
+    const savedEdges = JSON.stringify(savedStateRef.current.edges);
+    const currentNodes = JSON.stringify(nodes);
+    const currentEdges = JSON.stringify(edges);
+    return savedNodes !== currentNodes || savedEdges !== currentEdges;
+  }, [nodes, edges]);
+
+  // Handle browser beforeunload event
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // Node action handlers - use functional updates to avoid stale closures
   const handleCloneNode = useCallback((nodeId: string) => {
@@ -302,8 +331,11 @@ const AgentStudioPage = () => {
       // Load flow from agent config
       if (response.data?.config?.flow) {
         const loadedNodes = response.data.config.flow.nodes || [];
+        const loadedEdges = response.data.config.flow.edges || [];
         setNodes(loadedNodes);
-        setEdges(response.data.config.flow.edges || []);
+        setEdges(loadedEdges);
+        // Save the initial state for unsaved changes detection
+        savedStateRef.current = { nodes: loadedNodes, edges: loadedEdges };
       } else {
         // Initialize with default Agent Setup node
         initializeDefaultFlow();
@@ -346,6 +378,8 @@ const AgentStudioPage = () => {
 
     setNodes(defaultNodes);
     setEdges(defaultEdges);
+    // Save the initial state for unsaved changes detection
+    savedStateRef.current = { nodes: defaultNodes, edges: defaultEdges };
   };
 
   const handleConnect = (sourceId: string, targetId: string) => {
@@ -358,9 +392,10 @@ const AgentStudioPage = () => {
     setEdges([...edges, newEdge]);
   };
 
-  const handleSave = async () => {
-    if (!agent) return;
+  const handleSave = async (showToast = true): Promise<boolean> => {
+    if (!agent) return false;
 
+    setIsSaving(true);
     const flowData = {
       nodes,
       edges,
@@ -373,17 +408,68 @@ const AgentStudioPage = () => {
       },
     });
 
+    setIsSaving(false);
+
     if (response.error) {
-      toast({
-        title: "Error saving agent",
-        description: response.error,
-        variant: "destructive",
-      });
+      if (showToast) {
+        toast({
+          title: "Error saving agent",
+          description: response.error,
+          variant: "destructive",
+        });
+      }
+      return false;
+    } else {
+      // Update saved state after successful save
+      savedStateRef.current = { nodes, edges };
+      if (showToast) {
+        toast({
+          title: "Agent saved",
+          description: "Your changes have been saved successfully",
+        });
+      }
+      return true;
+    }
+  };
+
+  // Handle back button click with unsaved changes check
+  const handleBackClick = () => {
+    if (hasUnsavedChanges()) {
+      setPendingNavigation("/dashboard/agents");
+      setShowUnsavedModal(true);
+    } else {
+      navigate("/dashboard/agents");
+    }
+  };
+
+  // Handle save from modal
+  const handleModalSave = async () => {
+    const saved = await handleSave(false);
+    if (saved) {
+      setShowUnsavedModal(false);
+      if (pendingNavigation) {
+        navigate(pendingNavigation);
+        setPendingNavigation(null);
+      }
     } else {
       toast({
-        title: "Agent saved",
-        description: "Your changes have been saved successfully",
+        title: "Error saving",
+        description: "Could not save changes. Please try again.",
+        variant: "destructive",
       });
+    }
+  };
+
+  // Handle revert from modal
+  const handleModalRevert = () => {
+    if (savedStateRef.current) {
+      setNodes(savedStateRef.current.nodes);
+      setEdges(savedStateRef.current.edges);
+    }
+    setShowUnsavedModal(false);
+    if (pendingNavigation) {
+      navigate(pendingNavigation);
+      setPendingNavigation(null);
     }
   };
 
@@ -495,7 +581,7 @@ const AgentStudioPage = () => {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navigate("/dashboard/agents")}
+              onClick={handleBackClick}
               className="mr-2"
             >
               <svg width="24" height="20" viewBox="0 0 24 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -526,7 +612,7 @@ const AgentStudioPage = () => {
               <Database className="w-4 h-4 mr-2" />
               Fields
             </Button>
-            <Button variant="outline" size="sm" onClick={handleSave}>
+            <Button variant="outline" size="sm" onClick={() => handleSave()}>
               <Save className="w-4 h-4 mr-2" />
               Save
             </Button>
@@ -679,6 +765,15 @@ const AgentStudioPage = () => {
           agentId={agent.id}
         />
       )}
+
+      {/* Unsaved Changes Modal */}
+      <UnsavedChangesModal
+        isOpen={showUnsavedModal}
+        onClose={() => setShowUnsavedModal(false)}
+        onSave={handleModalSave}
+        onRevert={handleModalRevert}
+        isSaving={isSaving}
+      />
     </div>
   );
 };

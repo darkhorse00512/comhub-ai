@@ -297,6 +297,115 @@ export class CallController {
       });
     }
   }
+
+  // Create a test call session (for UI test modal)
+  async createTestCallSession(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      const { agentId, direction } = req.body;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      if (!direction || !['inbound', 'outbound'].includes(direction)) {
+        res.status(400).json({ error: 'Valid direction (inbound/outbound) is required' });
+        return;
+      }
+
+      logger.info('Creating test call session', { userId, agentId, direction });
+
+      // Create a call session marked as a test call
+      const callSession = await callService.createCallSession(
+        userId,
+        direction,
+        direction === 'inbound' ? 'test-caller' : undefined,
+        direction === 'outbound' ? 'test-callee' : undefined
+      );
+
+      // Update status to active immediately for test calls
+      await callService.updateCallStatus(callSession.id, 'active', `test-session-${callSession.id}`);
+
+      res.status(200).json({
+        success: true,
+        callSessionId: callSession.id,
+      });
+    } catch (error) {
+      logger.error('Failed to create test call session:', error);
+      res.status(500).json({
+        error: 'Failed to create test call session',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Add a message to a test call session
+  async addTestCallMessage(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      const { callSessionId } = req.params;
+      const { role, content } = req.body;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      if (!role || !['user', 'ai'].includes(role)) {
+        res.status(400).json({ error: 'Valid role (user/ai) is required' });
+        return;
+      }
+
+      if (!content) {
+        res.status(400).json({ error: 'Content is required' });
+        return;
+      }
+
+      logger.info('Adding test call message', { callSessionId, role, contentLength: content.length });
+
+      await callService.addCallMessage(callSessionId, role, content);
+
+      res.status(200).json({
+        success: true,
+        message: 'Message added successfully',
+      });
+    } catch (error) {
+      logger.error('Failed to add test call message:', error);
+      res.status(500).json({
+        error: 'Failed to add test call message',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // End a test call session
+  async endTestCallSession(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      const { callSessionId } = req.params;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      logger.info('Ending test call session', { callSessionId });
+
+      await callService.updateCallStatus(callSessionId, 'ended');
+
+      res.status(200).json({
+        success: true,
+        message: 'Test call session ended',
+      });
+    } catch (error) {
+      logger.error('Failed to end test call session:', error);
+      res.status(500).json({
+        error: 'Failed to end test call session',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
 }
 
 export const callController = new CallController();

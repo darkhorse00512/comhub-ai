@@ -12,6 +12,11 @@ router.post('/initiate', validate(schemas.initiateCall), callController.initiate
 // Test inbound call - simulates an inbound call for testing AI greeting
 router.post('/test-inbound', callController.testInboundCall);
 
+// Test call session routes - for saving test calls to history
+router.post('/test-session', callController.createTestCallSession);
+router.post('/:callSessionId/test-message', callController.addTestCallMessage);
+router.post('/:callSessionId/end-test', callController.endTestCallSession);
+
 router.post('/:callSessionId/end', callController.endCall);
 
 router.get('/history', callController.getCallHistory);

@@ -156,6 +156,7 @@ const TestAgentModal = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+  const [callSessionId, setCallSessionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -164,6 +165,15 @@ const TestAgentModal = ({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([]);
+
+  // Save message to call history
+  const saveMessageToHistory = async (sessionId: string, role: "user" | "ai", content: string) => {
+    try {
+      await api.addTestCallMessage(sessionId, role, content);
+    } catch (error) {
+      console.error("Failed to save message to history:", error);
+    }
+  };
 
   // Check if the direction has a start node
   const hasInboundStart = nodes.some(
@@ -198,6 +208,19 @@ const TestAgentModal = ({
       setMessages([]);
       conversationHistoryRef.current = [];
       setCallDuration(0);
+
+      // Create a test call session for history tracking
+      let sessionId: string | null = null;
+      try {
+        const sessionResult = await api.createTestCallSession(agentId, activeTab);
+        if (sessionResult.data?.callSessionId) {
+          sessionId = sessionResult.data.callSessionId;
+          setCallSessionId(sessionId);
+        }
+      } catch (sessionError) {
+        console.error("Failed to create test call session:", sessionError);
+        // Continue without session - call will work but won't be saved to history
+      }
 
       // Start call duration timer
       timerRef.current = setInterval(() => {
@@ -234,6 +257,11 @@ const TestAgentModal = ({
           content: aiGreeting,
         });
 
+        // Save AI greeting to history
+        if (sessionId) {
+          saveMessageToHistory(sessionId, "ai", aiGreeting);
+        }
+
         // Speak the greeting
         await speakText(aiGreeting);
       }
@@ -253,9 +281,9 @@ const TestAgentModal = ({
     } finally {
       setIsLoading(false);
     }
-  }, [activeTab, nodes, edges, toast]);
+  }, [activeTab, nodes, edges, toast, agentId]);
 
-  const endCall = useCallback(() => {
+  const endCall = useCallback(async () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -274,15 +302,25 @@ const TestAgentModal = ({
       audioRef.current.pause();
     }
 
+    // End the test call session
+    if (callSessionId) {
+      try {
+        await api.endTestCallSession(callSessionId);
+      } catch (error) {
+        console.error("Failed to end test call session:", error);
+      }
+      setCallSessionId(null);
+    }
+
     setIsCallActive(false);
     setIsRecording(false);
     setIsSpeaking(false);
 
     toast({
       title: "Call Ended",
-      description: `Call duration: ${formatDuration(callDuration)}`,
+      description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast]);
+  }, [callDuration, toast, callSessionId]);
 
   const generateAIResponse = async (
     userMessage: string,
@@ -459,6 +497,11 @@ const TestAgentModal = ({
       content: text,
     });
 
+    // Save user message to history
+    if (callSessionId) {
+      saveMessageToHistory(callSessionId, "user", text);
+    }
+
     setIsLoading(true);
     setInputMessage("");
 
@@ -478,6 +521,11 @@ const TestAgentModal = ({
           role: "assistant",
           content: aiResponse,
         });
+
+        // Save AI response to history
+        if (callSessionId) {
+          saveMessageToHistory(callSessionId, "ai", aiResponse);
+        }
 
         // Speak the response
         await speakText(aiResponse);
