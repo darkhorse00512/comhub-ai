@@ -46,6 +46,8 @@ import FallbackNode from "@/components/nodes/FallbackNode";
 import VoicemailNode from "@/components/nodes/VoicemailNode";
 import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
+import HistoryPanel from "@/components/HistoryPanel";
+import FieldsPanel from "@/components/FieldsPanel";
 
 interface Agent {
   id: string;
@@ -91,6 +93,8 @@ const AgentStudioPage = () => {
   const [showTestModal, setShowTestModal] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [showNodePalette, setShowNodePalette] = useState(true);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showFieldsPanel, setShowFieldsPanel] = useState(false);
 
   // Unsaved changes tracking
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
@@ -604,11 +608,11 @@ const AgentStudioPage = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setShowHistoryPanel(true)}>
               <History className="w-4 h-4 mr-2" />
               History
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setShowFieldsPanel(true)}>
               <Database className="w-4 h-4 mr-2" />
               Fields
             </Button>
@@ -773,6 +777,22 @@ const AgentStudioPage = () => {
         onSave={handleModalSave}
         onRevert={handleModalRevert}
         isSaving={isSaving}
+      />
+
+      {/* History Panel */}
+      {agent && (
+        <HistoryPanel
+          isOpen={showHistoryPanel}
+          onClose={() => setShowHistoryPanel(false)}
+          agentId={agent.id}
+        />
+      )}
+
+      {/* Fields Panel */}
+      <FieldsPanel
+        isOpen={showFieldsPanel}
+        onClose={() => setShowFieldsPanel(false)}
+        nodes={nodes}
       />
     </div>
   );
