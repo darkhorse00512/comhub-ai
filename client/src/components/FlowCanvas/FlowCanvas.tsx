@@ -1,7 +1,13 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { Plus, Minus, RotateCcw, Lock, Unlock } from "lucide-react";
 import { Node, Edge } from "./types";
 import "./FlowCanvas.css";
+
+export interface FlowCanvasRef {
+  screenToCanvas: (screenX: number, screenY: number) => { x: number; y: number };
+  getScale: () => number;
+  getPan: () => { x: number; y: number };
+}
 
 interface FlowCanvasProps {
   nodes: Node[];
@@ -12,14 +18,14 @@ interface FlowCanvasProps {
   nodeComponents: Record<string, React.ComponentType<any>>;
 }
 
-export const FlowCanvas: React.FC<FlowCanvasProps> = ({
+export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   nodes,
   edges,
   onNodesChange,
   onEdgesChange,
   onConnect,
   nodeComponents,
-}) => {
+}, ref) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [nodeDimensions, setNodeDimensions] = useState<Map<string, { width: number; height: number }>>(new Map());
@@ -50,6 +56,13 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     const y = (screenY - canvasRect.top) / scale - pan.y;
     return { x, y };
   }, [scale, pan]);
+
+  // Expose methods to parent component
+  useImperativeHandle(ref, () => ({
+    screenToCanvas,
+    getScale: () => scale,
+    getPan: () => pan,
+  }), [screenToCanvas, scale, pan]);
 
   // Measure node dimensions after render
   useEffect(() => {
@@ -170,6 +183,44 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     };
   }, [handleMouseMove, handleMouseUp]);
 
+  // Handle zoom with mouse wheel - use passive: false to prevent browser zoom
+  const handleWheelEvent = useCallback((e: WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) return;
+
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.min(Math.max(scale * delta, 0.1), 3);
+
+    // Mouse position relative to canvas container
+    const mouseX = e.clientX - canvasRect.left;
+    const mouseY = e.clientY - canvasRect.top;
+
+    // Current canvas position under mouse (before zoom)
+    const canvasX = mouseX / scale - pan.x;
+    const canvasY = mouseY / scale - pan.y;
+
+    // New pan to keep the same canvas point under mouse
+    const newPanX = mouseX / newScale - canvasX;
+    const newPanY = mouseY / newScale - canvasY;
+
+    setScale(newScale);
+    setPan({ x: newPanX, y: newPanY });
+  }, [scale, pan]);
+
+  // Attach wheel event listener with passive: false for proper preventDefault
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener('wheel', handleWheelEvent, { passive: false });
+    return () => {
+      canvas.removeEventListener('wheel', handleWheelEvent);
+    };
+  }, [handleWheelEvent]);
+
   // Handle connection start
   const handleConnectionStart = (
     e: React.MouseEvent,
@@ -205,30 +256,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
     }
   };
 
-  // Handle zoom with mouse position as center
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
-
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.min(Math.max(scale * delta, 0.1), 3);
-
-    // Mouse position relative to canvas container
-    const mouseX = e.clientX - canvasRect.left;
-    const mouseY = e.clientY - canvasRect.top;
-
-    // Current canvas position under mouse (before zoom)
-    const canvasX = mouseX / scale - pan.x;
-    const canvasY = mouseY / scale - pan.y;
-
-    // New pan to keep the same canvas point under mouse
-    const newPanX = mouseX / newScale - canvasX;
-    const newPanY = mouseY / newScale - canvasY;
-
-    setScale(newScale);
-    setPan({ x: newPanX, y: newPanY });
-  };
 
   // Get fallback node dimensions based on node type
   const getFallbackNodeDimensions = (nodeType: string) => {
@@ -388,7 +415,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       ref={canvasRef}
       className="flow-canvas"
       onMouseDown={handleCanvasMouseDown}
-      onWheel={handleWheel}
     >
       <div
         className="flow-canvas-content"
@@ -504,4 +530,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({
       </div>
     </div>
   );
-};
+});
+
+FlowCanvas.displayName = "FlowCanvas";

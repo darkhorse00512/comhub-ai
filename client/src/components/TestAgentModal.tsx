@@ -67,6 +67,7 @@ const generateSystemPromptFromWorkflow = (
   // Build workflow description by traversing the graph
   const workflowSteps: string[] = [];
   const visited = new Set<string>();
+  let stepNumber = 1;
 
   const traverseWorkflow = (nodeId: string, depth: number = 0) => {
     if (visited.has(nodeId) || depth > 10) return;
@@ -79,33 +80,53 @@ const generateSystemPromptFromWorkflow = (
     if (node.type !== "agentSetup" && node.type !== "callDirection") {
       const nodeLabel = node.data?.label || node.type;
       const nodeType = node.data?.type || node.type;
-      const nodeNotes = node.data?.notes;
 
-      let stepDescription = `- ${nodeLabel}`;
-      if (nodeType === "scripted") {
-        stepDescription += " (follow the script exactly)";
-      } else if (nodeType === "dialogue") {
-        stepDescription += " (engage in natural conversation)";
+      let stepDescription = `\n### Step ${stepNumber}: ${nodeLabel}`;
+      stepNumber++;
+
+      // Include actual content from nodes
+      if (nodeType === "scripted" && node.data?.script) {
+        stepDescription += `\n**Type:** Scripted Message (say exactly this)`;
+        stepDescription += `\n**Script:** "${node.data.script}"`;
+      } else if (nodeType === "dialogue" && node.data?.stageMessage) {
+        stepDescription += `\n**Type:** AI Dialogue (engage naturally)`;
+        stepDescription += `\n**Instructions:** ${node.data.stageMessage}`;
+        if (node.data?.maxTurns) {
+          stepDescription += `\n**Max turns:** ${node.data.maxTurns}`;
+        }
       } else if (nodeType === "field_setter") {
-        stepDescription += " (collect and save information)";
+        stepDescription += `\n**Type:** Collect Information`;
+        if (node.data?.fieldName) {
+          stepDescription += `\n**Field to collect:** ${node.data.fieldName}`;
+        }
+        if (node.data?.question) {
+          stepDescription += `\n**Ask:** "${node.data.question}"`;
+        }
       } else if (nodeType === "junction") {
-        stepDescription += " (decision point based on conditions)";
+        stepDescription += `\n**Type:** Decision Point`;
+        if (node.data?.conditionField || node.data?.left?.field_name) {
+          stepDescription += `\n**Check:** ${node.data?.conditionField || node.data?.left?.field_name}`;
+        }
       } else if (nodeType === "switch") {
-        stepDescription += " (route based on user input)";
-      } else if (nodeType === "function") {
-        stepDescription += " (perform a specific action)";
+        stepDescription += `\n**Type:** Menu/Options`;
+        if (node.data?.switchField) {
+          stepDescription += `\n**Based on:** ${node.data.switchField}`;
+        }
       } else if (nodeType === "call_transfer") {
-        stepDescription += " (transfer the call to another party)";
-      } else if (nodeType === "time_limit") {
-        stepDescription += " (time-bound action)";
-      } else if (nodeType === "reconfigure") {
-        stepDescription += " (adjust settings)";
+        stepDescription += `\n**Type:** Transfer Call`;
+        if (node.data?.transferMessage) {
+          stepDescription += `\n**Say before transfer:** "${node.data.transferMessage}"`;
+        }
       } else if (nodeType === "fallback") {
-        stepDescription += " (handle unexpected situations)";
-      }
-
-      if (nodeNotes) {
-        stepDescription += `: ${nodeNotes}`;
+        stepDescription += `\n**Type:** Fallback Handler`;
+        if (node.data?.fallbackMessage) {
+          stepDescription += `\n**Say:** "${node.data.fallbackMessage}"`;
+        }
+      } else if (nodeType === "voicemail") {
+        stepDescription += `\n**Type:** Voicemail`;
+        if (node.data?.greetingMessage) {
+          stepDescription += `\n**Greeting:** "${node.data.greetingMessage}"`;
+        }
       }
 
       workflowSteps.push(stepDescription);
@@ -125,15 +146,18 @@ const generateSystemPromptFromWorkflow = (
   let systemPrompt = baseSystemMessage;
 
   if (workflowSteps.length > 0) {
-    systemPrompt += `\n\n## Call Flow (${direction === "inbound" ? "Inbound Call" : "Outbound Call"}):\n`;
+    systemPrompt += `\n\n## Call Flow (${direction === "inbound" ? "Inbound Call" : "Outbound Call"}):`;
+    systemPrompt += `\nFollow these steps in order during the conversation:`;
     systemPrompt += workflowSteps.join("\n");
   }
 
-  systemPrompt += `\n\n## Guidelines:
+  systemPrompt += `\n\n## Important Guidelines:
+- Follow the workflow steps above in sequence
+- For "Scripted Message" steps, say the script text exactly as written
+- For "AI Dialogue" steps, follow the instructions and engage naturally
 - Keep responses concise and natural for voice conversation
 - Be friendly, professional, and helpful
 - If you don't understand something, ask for clarification
-- Guide the conversation according to the workflow above
 - For ${direction} calls: ${direction === "inbound" ? "The customer is calling you, greet them warmly and assist with their needs." : "You are initiating the call, introduce yourself and state the purpose clearly."}`;
 
   return systemPrompt;
@@ -157,13 +181,14 @@ const TestAgentModal = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [callSessionId, setCallSessionId] = useState<string | null>(null);
+  const [currentWorkflowStep, setCurrentWorkflowStep] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recognitionRef = useRef<any>(null);
   const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([]);
 
   // Save message to call history
@@ -183,9 +208,15 @@ const TestAgentModal = ({
     (n) => n.type === "callDirection" && n.data?.direction === "outbound"
   );
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom when messages change - use scrollTop instead of scrollIntoView
+  // to prevent layout issues with modal
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (scrollAreaRef.current) {
+      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    }
   }, [messages]);
 
   // Cleanup on unmount
@@ -208,6 +239,7 @@ const TestAgentModal = ({
       setMessages([]);
       conversationHistoryRef.current = [];
       setCallDuration(0);
+      setCurrentWorkflowStep("Initializing call...");
 
       // Create a test call session for history tracking
       let sessionId: string | null = null;
@@ -237,12 +269,14 @@ const TestAgentModal = ({
       });
 
       // Generate initial AI greeting
+      setCurrentWorkflowStep("Generating greeting...");
       const greetingPrompt =
         activeTab === "inbound"
           ? "The customer just called. Greet them warmly and ask how you can help."
           : "You are starting an outbound call. Introduce yourself and state the purpose of the call.";
 
       const aiGreeting = await generateAIResponse(greetingPrompt, systemPrompt);
+      setCurrentWorkflowStep("Following workflow...");
 
       if (aiGreeting) {
         const greetingMessage: Message = {
@@ -294,8 +328,9 @@ const TestAgentModal = ({
       streamRef.current = null;
     }
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
 
     if (audioRef.current) {
@@ -324,17 +359,27 @@ const TestAgentModal = ({
 
   const generateAIResponse = async (
     userMessage: string,
-    systemPrompt?: string
+    initialSystemPrompt?: string
   ): Promise<string | null> => {
     try {
-      // Use the conversation history for context
-      const messages = [
-        ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : conversationHistoryRef.current),
-        { role: "user", content: userMessage },
-      ];
+      // Build messages array - always include full conversation history
+      let messages: Array<{ role: string; content: string }>;
+
+      if (initialSystemPrompt) {
+        // This is the initial greeting - start fresh with system prompt
+        messages = [
+          { role: "system", content: initialSystemPrompt },
+          { role: "user", content: userMessage },
+        ];
+      } else {
+        // Ongoing conversation - use the stored history
+        messages = [
+          ...conversationHistoryRef.current,
+          { role: "user", content: userMessage },
+        ];
+      }
 
       // Call backend API to generate response
-      // For now, we'll use a simple fetch to OpenAI-compatible endpoint
       const headers: HeadersInit = {
         "Content-Type": "application/json",
       };
@@ -350,10 +395,7 @@ const TestAgentModal = ({
           method: "POST",
           headers,
           body: JSON.stringify({
-            messages: systemPrompt ? messages : [
-              ...conversationHistoryRef.current,
-              { role: "user", content: userMessage },
-            ],
+            messages,
             direction: activeTab,
           }),
         }
@@ -402,25 +444,64 @@ const TestAgentModal = ({
 
   const startRecording = async () => {
     try {
+      // Check for Web Speech API support
+      const SpeechRecognitionAPI = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (!SpeechRecognitionAPI) {
+        toast({
+          title: "Speech Recognition Not Supported",
+          description: "Your browser doesn't support speech recognition. Please use text input.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Request microphone permission first
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      // Create speech recognition instance
+      const recognition = new SpeechRecognitionAPI();
+      recognitionRef.current = recognition;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = async (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript && transcript.trim()) {
+          await handleUserMessage(transcript);
         }
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        await processAudioInput(audioBlob);
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === 'no-speech') {
+          toast({
+            title: "No speech detected",
+            description: "Please speak into your microphone",
+          });
+        } else if (event.error !== 'aborted') {
+          toast({
+            title: "Microphone Error",
+            description: `Speech recognition error: ${event.error}`,
+            variant: "destructive",
+          });
+        }
+        setIsRecording(false);
       };
 
-      mediaRecorder.start();
+      recognition.onend = () => {
+        setIsRecording(false);
+        // Stop the stream when recognition ends
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+      };
+
+      recognition.start();
       setIsRecording(true);
     } catch (error) {
       console.error("Error starting recording:", error);
@@ -433,52 +514,15 @@ const TestAgentModal = ({
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
     setIsRecording(false);
-  };
-
-  const processAudioInput = async (audioBlob: Blob) => {
-    try {
-      setIsLoading(true);
-
-      // For now, use Web Speech API for transcription
-      // In production, you'd send this to the backend for Whisper transcription
-      const transcribedText = await transcribeAudio(audioBlob);
-
-      if (transcribedText) {
-        await handleUserMessage(transcribedText);
-      }
-    } catch (error) {
-      console.error("Error processing audio:", error);
-      toast({
-        title: "Error",
-        description: "Failed to process audio input",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const transcribeAudio = async (audioBlob: Blob): Promise<string | null> => {
-    // Use Web Speech API for browser-based transcription
-    return new Promise((resolve) => {
-      if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-        toast({
-          title: "Speech Recognition Not Supported",
-          description: "Please use text input instead",
-          variant: "destructive",
-        });
-        resolve(null);
-        return;
-      }
-
-      // For simplicity, we'll just prompt the user to use text input
-      // In production, send to backend for Whisper transcription
-      resolve(null);
-    });
   };
 
   const handleUserMessage = async (text: string) => {
@@ -504,9 +548,11 @@ const TestAgentModal = ({
 
     setIsLoading(true);
     setInputMessage("");
+    setCurrentWorkflowStep("Processing response...");
 
     try {
       const aiResponse = await generateAIResponse(text);
+      setCurrentWorkflowStep("Following workflow...");
 
       if (aiResponse) {
         const aiMessage: Message = {
@@ -548,7 +594,7 @@ const TestAgentModal = ({
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -617,13 +663,15 @@ const TestAgentModal = ({
                 messages={messages}
                 inputMessage={inputMessage}
                 messagesEndRef={messagesEndRef}
+                scrollAreaRef={scrollAreaRef}
+                currentWorkflowStep={currentWorkflowStep}
                 onStartCall={startCall}
                 onEndCall={endCall}
                 onStartRecording={startRecording}
                 onStopRecording={stopRecording}
                 onInputChange={setInputMessage}
                 onSendMessage={handleSendMessage}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 formatDuration={formatDuration}
               />
             )}
@@ -644,13 +692,15 @@ const TestAgentModal = ({
                 messages={messages}
                 inputMessage={inputMessage}
                 messagesEndRef={messagesEndRef}
+                scrollAreaRef={scrollAreaRef}
+                currentWorkflowStep={currentWorkflowStep}
                 onStartCall={startCall}
                 onEndCall={endCall}
                 onStartRecording={startRecording}
                 onStopRecording={stopRecording}
                 onInputChange={setInputMessage}
                 onSendMessage={handleSendMessage}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 formatDuration={formatDuration}
               />
             )}
@@ -671,13 +721,15 @@ interface CallInterfaceProps {
   messages: Message[];
   inputMessage: string;
   messagesEndRef: React.RefObject<HTMLDivElement>;
+  scrollAreaRef: React.RefObject<HTMLDivElement>;
+  currentWorkflowStep: string | null;
   onStartCall: () => void;
   onEndCall: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
   onInputChange: (value: string) => void;
   onSendMessage: () => void;
-  onKeyPress: (e: React.KeyboardEvent) => void;
+  onKeyDown: (e: React.KeyboardEvent) => void;
   formatDuration: (seconds: number) => string;
 }
 
@@ -690,42 +742,54 @@ const CallInterface = ({
   messages,
   inputMessage,
   messagesEndRef,
+  scrollAreaRef,
+  currentWorkflowStep,
   onStartCall,
   onEndCall,
   onStartRecording,
   onStopRecording,
   onInputChange,
   onSendMessage,
-  onKeyPress,
+  onKeyDown,
   formatDuration,
 }: CallInterfaceProps) => {
   return (
     <div className="flex-1 flex flex-col">
       {/* Call Status Bar */}
       {isCallActive && (
-        <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-sm font-medium text-green-700">
-              Call Active
-            </span>
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span className="text-sm font-medium text-green-700">
+                Call Active
+              </span>
+            </div>
+            <div className="flex items-center gap-4">
+              {isSpeaking && (
+                <div className="flex items-center gap-1 text-purple-600">
+                  <Volume2 className="w-4 h-4 animate-pulse" />
+                  <span className="text-xs">Speaking...</span>
+                </div>
+              )}
+              <span className="text-sm font-mono text-green-700">
+                {formatDuration(callDuration)}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-4">
-            {isSpeaking && (
-              <div className="flex items-center gap-1 text-purple-600">
-                <Volume2 className="w-4 h-4 animate-pulse" />
-                <span className="text-xs">Speaking...</span>
+          {currentWorkflowStep && (
+            <div className="mt-2 pt-2 border-t border-green-200">
+              <div className="flex items-center gap-2 text-xs text-green-600">
+                <Bot className="w-3 h-3" />
+                <span>{currentWorkflowStep}</span>
               </div>
-            )}
-            <span className="text-sm font-mono text-green-700">
-              {formatDuration(callDuration)}
-            </span>
-          </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Messages Area */}
-      <ScrollArea className="flex-1 border rounded-lg p-4 mb-4">
+      <ScrollArea ref={scrollAreaRef} className="flex-1 border rounded-lg p-4 mb-4">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center text-muted-foreground">
             {isCallActive ? (
@@ -789,7 +853,7 @@ const CallInterface = ({
             <Input
               value={inputMessage}
               onChange={(e) => onInputChange(e.target.value)}
-              onKeyPress={onKeyPress}
+              onKeyDown={onKeyDown}
               placeholder="Type a message..."
               disabled={isLoading}
               className="flex-1"

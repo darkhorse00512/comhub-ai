@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { FlowCanvas, Node, Edge } from "@/components/FlowCanvas";
+import { FlowCanvas, FlowCanvasRef, Node, Edge } from "@/components/FlowCanvas";
 import {
   Save,
   Upload,
@@ -101,6 +101,7 @@ const AgentStudioPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const savedStateRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
+  const flowCanvasRef = useRef<FlowCanvasRef>(null);
 
   // Check if there are unsaved changes
   const hasUnsavedChanges = useCallback(() => {
@@ -484,11 +485,21 @@ const AgentStudioPage = () => {
     });
   };
 
-  const handleDeploy = () => {
-    toast({
-      title: "Deploy Agent",
-      description: "Deploying agent...",
-    });
+  const handleDeploy = async () => {
+    // Deploy means save and activate the agent
+    const saved = await handleSave(false);
+    if (saved) {
+      toast({
+        title: "Agent Deployed Successfully",
+        description: `${agent?.name} is now live and ready to handle calls.`,
+      });
+    } else {
+      toast({
+        title: "Deploy Failed",
+        description: "Could not deploy agent. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
@@ -503,11 +514,24 @@ const AgentStudioPage = () => {
       const type = event.dataTransfer.getData("application/nodeType");
       if (!type) return;
 
-      const canvasRect = event.currentTarget.getBoundingClientRect();
-      const position = {
-        x: event.clientX - canvasRect.left - 100,
-        y: event.clientY - canvasRect.top - 50,
-      };
+      // Use canvas ref to convert screen coordinates to canvas coordinates
+      // This accounts for zoom and pan
+      let position: { x: number; y: number };
+      if (flowCanvasRef.current) {
+        const canvasPos = flowCanvasRef.current.screenToCanvas(event.clientX, event.clientY);
+        // Offset by half the typical node size to center the drop
+        position = {
+          x: canvasPos.x - 140,
+          y: canvasPos.y - 60,
+        };
+      } else {
+        // Fallback if ref not available
+        const canvasRect = event.currentTarget.getBoundingClientRect();
+        position = {
+          x: event.clientX - canvasRect.left - 100,
+          y: event.clientY - canvasRect.top - 50,
+        };
+      }
 
       const nodeCategory = nodeCategories.find((n) => n.type === type);
       if (!nodeCategory) return;
@@ -718,6 +742,7 @@ const AgentStudioPage = () => {
             onDragOver={onDragOver}
           >
             <FlowCanvas
+              ref={flowCanvasRef}
               nodes={nodes}
               edges={edges}
               onNodesChange={setNodes}
