@@ -59,6 +59,9 @@ class SettingsController {
       }
 
       const {
+        display_name,
+        company,
+        timezone,
         email_notifications,
         call_alerts,
         weekly_report,
@@ -72,6 +75,9 @@ class SettingsController {
 
       // Build update object with only provided fields
       const updateData: any = {};
+      if (display_name !== undefined) updateData.display_name = display_name;
+      if (company !== undefined) updateData.company = company;
+      if (timezone !== undefined) updateData.timezone = timezone;
       if (email_notifications !== undefined) updateData.email_notifications = email_notifications;
       if (call_alerts !== undefined) updateData.call_alerts = call_alerts;
       if (weekly_report !== undefined) updateData.weekly_report = weekly_report;

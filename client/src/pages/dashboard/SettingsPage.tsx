@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,13 +29,19 @@ import {
   Bot,
   Volume2,
   Save,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { api } from "@/services/api";
 
 const SettingsPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
+  const [savingAI, setSavingAI] = useState(false);
 
   const [profileForm, setProfileForm] = useState({
     name: user?.email?.split("@")[0] || "",
@@ -59,25 +65,106 @@ const SettingsPage = () => {
     silenceTimeout: "2",
   });
 
-  const handleSaveProfile = () => {
-    toast({
-      title: "Profile updated",
-      description: "Your profile settings have been saved",
+  // Load settings from API on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      const response = await api.getSettings();
+      if (response.data) {
+        const s = response.data;
+        setProfileForm((prev) => ({
+          ...prev,
+          name: s.display_name || prev.name,
+          company: s.company || "",
+          timezone: s.timezone || "Europe/Berlin",
+        }));
+        setNotificationSettings({
+          emailNotifications: s.email_notifications ?? true,
+          callAlerts: s.call_alerts ?? true,
+          weeklyReport: s.weekly_report ?? false,
+          marketingEmails: s.marketing_emails ?? false,
+        });
+        setAiSettings({
+          voiceModel: s.ai_voice_model || "alloy",
+          language: s.ai_language || "en-US",
+          greeting: s.ai_greeting || "Hey there! Here is ComHub AI. What can I help you with today?",
+          maxCallDuration: s.ai_max_call_duration?.toString() || "30",
+          silenceTimeout: s.ai_silence_timeout?.toString() || "2",
+        });
+      }
+    };
+    loadSettings();
+  }, []);
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true);
+    const response = await api.updateSettings({
+      display_name: profileForm.name,
+      company: profileForm.company,
+      timezone: profileForm.timezone,
     });
+    setSavingProfile(false);
+
+    if (response.error) {
+      toast({
+        title: "Error saving profile",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Profile updated",
+        description: "Your profile settings have been saved",
+      });
+    }
   };
 
-  const handleSaveNotifications = () => {
-    toast({
-      title: "Notifications updated",
-      description: "Your notification preferences have been saved",
+  const handleSaveNotifications = async () => {
+    setSavingNotifications(true);
+    const response = await api.updateSettings({
+      email_notifications: notificationSettings.emailNotifications,
+      call_alerts: notificationSettings.callAlerts,
+      weekly_report: notificationSettings.weeklyReport,
+      marketing_emails: notificationSettings.marketingEmails,
     });
+    setSavingNotifications(false);
+
+    if (response.error) {
+      toast({
+        title: "Error saving notifications",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Notifications updated",
+        description: "Your notification preferences have been saved",
+      });
+    }
   };
 
-  const handleSaveAI = () => {
-    toast({
-      title: "AI settings updated",
-      description: "Your AI configuration has been saved",
+  const handleSaveAI = async () => {
+    setSavingAI(true);
+    const response = await api.updateSettings({
+      ai_voice_model: aiSettings.voiceModel,
+      ai_language: aiSettings.language,
+      ai_greeting: aiSettings.greeting,
+      ai_max_call_duration: parseInt(aiSettings.maxCallDuration) || 30,
+      ai_silence_timeout: parseInt(aiSettings.silenceTimeout) || 2,
     });
+    setSavingAI(false);
+
+    if (response.error) {
+      toast({
+        title: "Error saving AI settings",
+        description: response.error,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "AI settings updated",
+        description: "Your AI configuration has been saved",
+      });
+    }
   };
 
   return (
@@ -196,9 +283,9 @@ const SettingsPage = () => {
                   </div>
                 </div>
 
-                <Button onClick={handleSaveProfile} className="gap-2">
-                  <Save className="w-4 h-4" />
-                  Save Profile
+                <Button onClick={handleSaveProfile} disabled={savingProfile} className="gap-2">
+                  {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {savingProfile ? "Saving..." : "Save Profile"}
                 </Button>
               </CardContent>
             </Card>
@@ -300,9 +387,9 @@ const SettingsPage = () => {
                   </div>
                 </div>
 
-                <Button onClick={handleSaveNotifications} className="gap-2">
-                  <Save className="w-4 h-4" />
-                  Save Preferences
+                <Button onClick={handleSaveNotifications} disabled={savingNotifications} className="gap-2">
+                  {savingNotifications ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {savingNotifications ? "Saving..." : "Save Preferences"}
                 </Button>
               </CardContent>
             </Card>
@@ -423,9 +510,9 @@ const SettingsPage = () => {
                   </div>
                 </div>
 
-                <Button onClick={handleSaveAI} className="gap-2">
-                  <Save className="w-4 h-4" />
-                  Save AI Settings
+                <Button onClick={handleSaveAI} disabled={savingAI} className="gap-2">
+                  {savingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {savingAI ? "Saving..." : "Save AI Settings"}
                 </Button>
               </CardContent>
             </Card>

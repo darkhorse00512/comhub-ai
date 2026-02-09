@@ -77,6 +77,10 @@ END $$;
 CREATE TABLE IF NOT EXISTS user_settings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  -- Profile Settings
+  display_name TEXT,
+  company TEXT,
+  timezone TEXT DEFAULT 'Europe/Berlin',
   -- Notification Settings
   email_notifications BOOLEAN DEFAULT true,
   call_alerts BOOLEAN DEFAULT true,
