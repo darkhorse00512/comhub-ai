@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -99,7 +98,6 @@ const SettingsPage = () => {
   const [aiSettings, setAiSettings] = useState({
     voiceModel: "alloy",
     language: "en-US",
-    greeting: "Hey there! Here is ComHub AI. What can I help you with today?",
     maxCallDuration: "30",
     silenceTimeout: "2",
   });
@@ -125,7 +123,6 @@ const SettingsPage = () => {
         setAiSettings({
           voiceModel: s.ai_voice_model || "alloy",
           language: s.ai_language || "en-US",
-          greeting: s.ai_greeting || "Hey there! Here is ComHub AI. What can I help you with today?",
           maxCallDuration: s.ai_max_call_duration?.toString() || "30",
           silenceTimeout: s.ai_silence_timeout?.toString() || "2",
         });
@@ -367,7 +364,6 @@ const SettingsPage = () => {
     const response = await api.updateSettings({
       ai_voice_model: aiSettings.voiceModel,
       ai_language: aiSettings.language,
-      ai_greeting: aiSettings.greeting,
       ai_max_call_duration: parseInt(aiSettings.maxCallDuration) || 30,
       ai_silence_timeout: parseInt(aiSettings.silenceTimeout) || 2,
     });
@@ -757,21 +753,6 @@ const SettingsPage = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="greeting">AI Greeting Message</Label>
-                  <Textarea
-                    id="greeting"
-                    value={aiSettings.greeting}
-                    onChange={(e) =>
-                      setAiSettings({ ...aiSettings, greeting: e.target.value })
-                    }
-                    rows={3}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    This message will be spoken when the AI answers a call
-                  </p>
                 </div>
 
                 <div className="grid sm:grid-cols-2 gap-4">
