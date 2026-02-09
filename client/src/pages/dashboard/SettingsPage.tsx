@@ -73,7 +73,7 @@ const SettingsPage = () => {
       if (response.data) {
         const s = response.data;
         setProfileForm({
-          name: s.display_name || user?.email?.split("@")[0] || "",
+          name: s.display_name || "",
           email: user?.email || "",
           company: s.company || "",
           timezone: s.timezone || "Europe/Berlin",
@@ -91,12 +91,6 @@ const SettingsPage = () => {
           maxCallDuration: s.ai_max_call_duration?.toString() || "30",
           silenceTimeout: s.ai_silence_timeout?.toString() || "2",
         });
-      } else {
-        // API failed or no data - use email as fallback for display name
-        setProfileForm((prev) => ({
-          ...prev,
-          name: user?.email?.split("@")[0] || "",
-        }));
       }
       setLoadingSettings(false);
     };
