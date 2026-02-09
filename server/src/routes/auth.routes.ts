@@ -13,4 +13,6 @@ router.get('/verify', authController.verifyToken);
 
 router.get('/profile', authMiddleware, authController.getProfile);
 
+router.delete('/account', authMiddleware, authController.deleteAccount);
+
 export default router;

@@ -883,6 +883,27 @@ export const api = {
     }
   },
 
+  // Account APIs
+  async deleteAccount(): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/auth/account`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete account");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting account:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   // Settings APIs
   async getSettings(): Promise<ApiResponse<any>> {
     try {

@@ -236,6 +236,67 @@ export class AuthController {
     }
   }
 
+  async deleteAccount(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      const email = (req as any).user?.email;
+
+      if (!userId) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+
+      // Delete user settings
+      await supabase
+        .from("user_settings")
+        .delete()
+        .eq("user_id", userId);
+
+      // Delete user's agents
+      await supabase
+        .from("agents")
+        .delete()
+        .eq("user_id", userId);
+
+      // Delete user's call sessions
+      await supabase
+        .from("call_sessions")
+        .delete()
+        .eq("user_id", userId);
+
+      // Delete user from users table
+      await supabase
+        .from("users")
+        .delete()
+        .eq("id", userId);
+
+      // Delete from Supabase Auth using admin API
+      try {
+        const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
+        if (authDeleteError) {
+          logger.warn("Failed to delete Supabase Auth user (may not have admin access):", authDeleteError);
+        }
+      } catch (authErr) {
+        logger.warn("Supabase Auth admin deletion not available:", authErr);
+      }
+
+      logger.info("Account deleted successfully", { userId, email });
+
+      res.status(200).json({
+        success: true,
+        message: "Account deleted successfully",
+      });
+    } catch (error) {
+      logger.error("Failed to delete account:", error);
+      res.status(500).json({
+        error: "Failed to delete account",
+        details: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
   async getProfile(req: Request, res: Response): Promise<void> {
     try {
       const userId = (req as any).user?.userId;
