@@ -39,12 +39,13 @@ const SettingsPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
 
+  const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [savingAI, setSavingAI] = useState(false);
 
   const [profileForm, setProfileForm] = useState({
-    name: user?.email?.split("@")[0] || "",
+    name: "",
     email: user?.email || "",
     company: "",
     timezone: "Europe/Berlin",
@@ -71,12 +72,12 @@ const SettingsPage = () => {
       const response = await api.getSettings();
       if (response.data) {
         const s = response.data;
-        setProfileForm((prev) => ({
-          ...prev,
-          name: s.display_name || prev.name,
+        setProfileForm({
+          name: s.display_name || user?.email?.split("@")[0] || "",
+          email: user?.email || "",
           company: s.company || "",
           timezone: s.timezone || "Europe/Berlin",
-        }));
+        });
         setNotificationSettings({
           emailNotifications: s.email_notifications ?? true,
           callAlerts: s.call_alerts ?? true,
@@ -90,10 +91,17 @@ const SettingsPage = () => {
           maxCallDuration: s.ai_max_call_duration?.toString() || "30",
           silenceTimeout: s.ai_silence_timeout?.toString() || "2",
         });
+      } else {
+        // API failed or no data - use email as fallback for display name
+        setProfileForm((prev) => ({
+          ...prev,
+          name: user?.email?.split("@")[0] || "",
+        }));
       }
+      setLoadingSettings(false);
     };
     loadSettings();
-  }, []);
+  }, [user]);
 
   const handleSaveProfile = async () => {
     setSavingProfile(true);
@@ -166,6 +174,22 @@ const SettingsPage = () => {
       });
     }
   };
+
+  if (loadingSettings) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-foreground mb-2">Settings</h1>
+          <p className="text-muted-foreground">
+            Manage your account settings and preferences
+          </p>
+        </div>
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto">
