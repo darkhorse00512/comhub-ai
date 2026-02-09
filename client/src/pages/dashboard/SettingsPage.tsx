@@ -75,10 +75,12 @@ const SettingsPage = () => {
 
   // Password change
   const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
     newPassword: "",
     confirmPassword: "",
   });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -216,9 +218,18 @@ const SettingsPage = () => {
   };
 
   const handleChangePassword = async () => {
+    if (!passwordForm.currentPassword) {
+      toast({
+        title: "Current password required",
+        description: "Please enter your current password.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!passwordForm.newPassword) {
       toast({
-        title: "Password required",
+        title: "New password required",
         description: "Please enter a new password.",
         variant: "destructive",
       });
@@ -245,6 +256,23 @@ const SettingsPage = () => {
 
     setChangingPassword(true);
     try {
+      // Verify current password by re-authenticating
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user?.email || "",
+        password: passwordForm.currentPassword,
+      });
+
+      if (signInError) {
+        toast({
+          title: "Incorrect current password",
+          description: "The current password you entered is wrong.",
+          variant: "destructive",
+        });
+        setChangingPassword(false);
+        return;
+      }
+
+      // Current password verified, now update to new password
       const { error } = await supabase.auth.updateUser({
         password: passwordForm.newPassword,
       });
@@ -256,7 +284,7 @@ const SettingsPage = () => {
           variant: "destructive",
         });
       } else {
-        setPasswordForm({ newPassword: "", confirmPassword: "" });
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
         toast({
           title: "Password updated",
           description: "Your password has been changed successfully.",
@@ -810,6 +838,28 @@ const SettingsPage = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="currentPassword">Current Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="currentPassword"
+                      type={showCurrentPassword ? "text" : "password"}
+                      placeholder="Enter your current password"
+                      value={passwordForm.currentPassword}
+                      onChange={(e) =>
+                        setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
+                      }
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="newPassword">New Password</Label>
                   <div className="relative">
                     <Input
@@ -870,7 +920,7 @@ const SettingsPage = () => {
                 )}
                 <Button
                   onClick={handleChangePassword}
-                  disabled={changingPassword || !passwordForm.newPassword || !passwordForm.confirmPassword}
+                  disabled={changingPassword || !passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword}
                   className="gap-2"
                 >
                   {changingPassword ? (
