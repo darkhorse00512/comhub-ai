@@ -185,6 +185,12 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
   // Handle zoom with mouse wheel - use passive: false to prevent browser zoom
   const handleWheelEvent = useCallback((e: WheelEvent) => {
+    // Don't zoom if a dialog/modal is open over the canvas
+    const target = e.target as HTMLElement;
+    if (target.closest('[role="dialog"]') || target.closest('[data-radix-portal]')) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
