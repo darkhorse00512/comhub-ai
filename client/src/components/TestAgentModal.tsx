@@ -24,10 +24,37 @@ import {
   MessageSquare,
   AudioLines,
   Info,
+  History,
+  ArrowLeft,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+  Clock,
+  ChevronRight,
 } from "lucide-react";
+import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import { Node, Edge } from "@/components/FlowCanvas";
+
+interface HistoryCallItem {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: "ringing" | "active" | "ended" | "failed";
+  direction: "inbound" | "outbound";
+  callerNumber: string | null;
+  calleeNumber: string | null;
+  duration?: number;
+  recordingUrl?: string;
+}
+
+interface HistoryMessage {
+  id: string;
+  role: "user" | "ai";
+  content: string;
+  timestamp: string;
+}
 
 interface Message {
   id: string;
@@ -79,14 +106,21 @@ const evaluateCondition = (
 // Parse AI response to detect stage completion signal
 const parseAIResponse = (
   response: string
-): { text: string; isComplete: boolean } => {
+): { text: string; isComplete: boolean; transition?: string } => {
+  // Check for [TRANSITION:name] first
+  const transitionMatch = response.match(/\[TRANSITION:([^\]]+)\]/);
+  const transition = transitionMatch ? transitionMatch[1].trim() : undefined;
+
   const isComplete =
-    response.includes("[NEXT]") || response.includes("[STAGE_COMPLETE]");
+    !!transition ||
+    response.includes("[NEXT]") ||
+    response.includes("[STAGE_COMPLETE]");
   const text = response
+    .replace(/\[TRANSITION:[^\]]+\]/g, "")
     .replace(/\[NEXT\]/g, "")
     .replace(/\[STAGE_COMPLETE\]/g, "")
     .trim();
-  return { text, isComplete };
+  return { text, isComplete, transition };
 };
 
 const TestAgentModal = ({
@@ -110,6 +144,14 @@ const TestAgentModal = ({
   const [callSessionId, setCallSessionId] = useState<string | null>(null);
   const [currentWorkflowStep, setCurrentWorkflowStep] = useState<string | null>(null);
 
+  // History state
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyData, setHistoryData] = useState<HistoryCallItem[]>([]);
+  const [selectedHistoryCall, setSelectedHistoryCall] = useState<HistoryCallItem | null>(null);
+  const [historyMessages, setHistoryMessages] = useState<HistoryMessage[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingHistoryMessages, setLoadingHistoryMessages] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -123,7 +165,7 @@ const TestAgentModal = ({
   const isSpeakingRef = useRef(false);
   const agentSystemMessageRef = useRef("");
   const workflowFieldsRef = useRef<Record<string, any>>({});
-  const dialogueResolveRef = useRef<(() => void) | null>(null);
+  const dialogueResolveRef = useRef<((transition?: string) => void) | null>(null);
   const activeDialogueNodeRef = useRef<Node | null>(null);
   const dialogueTurnCountRef = useRef(0);
   const dialogueMessagesRef = useRef<Array<{ role: string; content: string }>>([]);
@@ -408,12 +450,66 @@ const TestAgentModal = ({
     prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || "Dialogue"}"`;
     prompt += `\n\n### Stage Instructions:\n${node.data?.stageMessage || "Engage in natural conversation with the caller."}`;
 
+    // Extra instructions
+    const extraInstructions: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
+    if (extraInstructions.length > 0) {
+      prompt += `\n\n### Additional Instructions:`;
+      extraInstructions.forEach((inst: string, idx: number) => {
+        prompt += `\n${idx + 1}. ${inst}`;
+      });
+    }
+
+    // Stage overrides
+    const overrides: Array<{ key: string; value: string }> = (node.data?.stageOverrides || []).filter((o: any) => o.key.trim());
+    if (overrides.length > 0) {
+      prompt += `\n\n### Stage Settings Overrides:`;
+      overrides.forEach((o: any) => {
+        prompt += `\n- ${o.key}: ${o.value}`;
+      });
+    }
+
+    // Enabled functions
+    const enabledFunctions: Array<{ name: string; enabled: boolean }> = (node.data?.functions || []).filter((f: any) => f.enabled);
+    if (enabledFunctions.length > 0) {
+      prompt += `\n\n### Available Functions:`;
+      prompt += `\nYou have access to the following functions in this stage: ${enabledFunctions.map((f: any) => f.name).join(", ")}`;
+      prompt += `\nYou can reference these functions when appropriate in the conversation.`;
+    }
+
+    // Enabled knowledge bases
+    const enabledKBs: Array<{ name: string; enabled: boolean }> = (node.data?.knowledgeBases || []).filter((kb: any) => kb.enabled);
+    if (enabledKBs.length > 0) {
+      prompt += `\n\n### Knowledge Bases:`;
+      prompt += `\nYou have access to the following knowledge bases: ${enabledKBs.map((kb: any) => kb.name).join(", ")}`;
+      prompt += `\nUse information from these knowledge bases to provide accurate, informed responses.`;
+    }
+
     const maxTurns = parseInt(node.data?.maxTurns);
     if (maxTurns > 0) {
       prompt += `\n\nYou have a maximum of ${maxTurns} conversation turns in this stage.`;
     }
 
-    prompt += `\n\n### Important Rules:
+    // Transitions
+    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+
+    if (transitions.length > 0) {
+      prompt += `\n\n### Transitions:
+This stage has the following named transitions:
+${transitions.map((t: any) => `- "${t.name}"`).join("\n")}
+
+When the conversation reaches a point where it should move to a specific transition, append [TRANSITION:transition_name] at the very end of your response.
+For example: [TRANSITION:${transitions[0].name}]
+
+### Important Rules:
+- Follow the stage instructions precisely
+- Keep responses concise and natural for voice conversation
+- Be friendly and professional
+- Choose the most appropriate transition based on the conversation outcome
+- Only include [TRANSITION:name] when the stage objectives are fulfilled and you are ready to move on
+- Do NOT say the transition signal aloud - it is an invisible system signal
+- If the conversation needs to continue, do NOT include any transition signal`;
+    } else {
+      prompt += `\n\n### Important Rules:
 - Follow the stage instructions precisely
 - Keep responses concise and natural for voice conversation
 - Be friendly and professional
@@ -421,6 +517,7 @@ const TestAgentModal = ({
 - Only include [NEXT] when the stage objectives are truly fulfilled
 - Do NOT say "[NEXT]" aloud - it is an invisible system signal
 - If the conversation needs to continue, do NOT include [NEXT]`;
+    }
 
     return prompt;
   }, []);
@@ -475,10 +572,10 @@ const TestAgentModal = ({
     [edges]
   );
 
-  // --- Dialogue stage execution (blocks until complete) ---
+  // --- Dialogue stage execution (blocks until complete, returns transition name if any) ---
   const runDialogueStage = useCallback(
-    async (node: Node): Promise<void> => {
-      return new Promise<void>((resolve) => {
+    async (node: Node): Promise<string | undefined> => {
+      return new Promise<string | undefined>((resolve) => {
         dialogueResolveRef.current = resolve;
         activeDialogueNodeRef.current = node;
         dialogueTurnCountRef.current = 0;
@@ -495,12 +592,12 @@ const TestAgentModal = ({
           "Begin the conversation for this stage. Greet or address the caller following your stage instructions."
         ).then(async (response) => {
           if (!isCallActiveRef.current) {
-            resolve();
+            resolve(undefined);
             return;
           }
 
           if (response) {
-            const { text, isComplete } = parseAIResponse(response);
+            const { text, isComplete, transition } = parseAIResponse(response);
             await outputAndSpeak(text, node.data?.label);
             dialogueMessagesRef.current.push({
               role: "assistant",
@@ -510,7 +607,7 @@ const TestAgentModal = ({
             if (isComplete) {
               activeDialogueNodeRef.current = null;
               dialogueResolveRef.current = null;
-              resolve();
+              resolve(transition);
               return;
             }
 
@@ -526,7 +623,7 @@ const TestAgentModal = ({
             );
             activeDialogueNodeRef.current = null;
             dialogueResolveRef.current = null;
-            resolve();
+            resolve(undefined);
           }
         });
       });
@@ -570,7 +667,7 @@ const TestAgentModal = ({
       }
 
       if (aiResponse) {
-        const { text: responseText, isComplete } = parseAIResponse(aiResponse);
+        const { text: responseText, isComplete, transition } = parseAIResponse(aiResponse);
         await outputAndSpeak(responseText, dialogueNode.data?.label);
         dialogueMessagesRef.current.push({
           role: "assistant",
@@ -588,10 +685,13 @@ const TestAgentModal = ({
           if (maxTurns > 0 && dialogueTurnCountRef.current >= maxTurns && !isComplete) {
             addMessage("system", `Max turns (${maxTurns}) reached. Moving to next stage.`);
           }
+          if (transition) {
+            addMessage("system", `Transition: ${transition}`);
+          }
           const resolve = dialogueResolveRef.current;
           activeDialogueNodeRef.current = null;
           dialogueResolveRef.current = null;
-          resolve?.();
+          resolve?.(transition);
         } else {
           // Continue listening in audio mode
           if (callModeRef.current === "audio" && isCallActiveRef.current) {
@@ -646,11 +746,28 @@ const TestAgentModal = ({
           case "dialogue": {
             // AI handles this stage - blocks until dialogue completes
             setIsLoading(false);
-            await runDialogueStage(node);
+            const transitionName = await runDialogueStage(node);
             if (!isCallActiveRef.current) return;
             // Small pause before next node
             await new Promise((r) => setTimeout(r, 300));
-            currentId = getNextNodeId(currentId);
+
+            // Use transition name to pick the correct outgoing edge
+            const nodeTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+            const outEdges = edges.filter((e) => e.source === node.id);
+
+            if (transitionName && nodeTransitions.length > 0) {
+              const transitionIndex = nodeTransitions.findIndex(
+                (t) => t.name.toLowerCase() === transitionName.toLowerCase()
+              );
+              if (transitionIndex >= 0 && outEdges[transitionIndex]) {
+                currentId = outEdges[transitionIndex].target;
+              } else {
+                // Transition name didn't match - fall back to first edge
+                currentId = outEdges[0]?.target || null;
+              }
+            } else {
+              currentId = getNextNodeId(currentId);
+            }
             break;
           }
 
@@ -907,7 +1024,7 @@ const TestAgentModal = ({
 
     // Resolve any pending dialogue stage
     if (dialogueResolveRef.current) {
-      dialogueResolveRef.current();
+      dialogueResolveRef.current(undefined);
       dialogueResolveRef.current = null;
     }
     activeDialogueNodeRef.current = null;
@@ -1061,10 +1178,62 @@ const TestAgentModal = ({
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // --- History functions ---
+  const fetchHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const result = await api.getCallHistory();
+      if (!result.error) {
+        setHistoryData(result.data || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch call history:", error);
+    }
+    setLoadingHistory(false);
+  }, []);
+
+  const openHistory = useCallback(() => {
+    setShowHistory(true);
+    setSelectedHistoryCall(null);
+    setHistoryMessages([]);
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const closeHistory = useCallback(() => {
+    setShowHistory(false);
+    setSelectedHistoryCall(null);
+    setHistoryMessages([]);
+  }, []);
+
+  const selectHistoryCall = useCallback(async (call: HistoryCallItem) => {
+    setSelectedHistoryCall(call);
+    setLoadingHistoryMessages(true);
+    try {
+      const result = await api.getCallMessages(call.id);
+      if (!result.error) {
+        setHistoryMessages(result.data || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch call messages:", error);
+    }
+    setLoadingHistoryMessages(false);
+  }, []);
+
+  const formatHistoryDuration = (startedAt: string, endedAt: string | null): string => {
+    if (!endedAt) return "0:00";
+    const start = new Date(startedAt).getTime();
+    const end = new Date(endedAt).getTime();
+    const seconds = Math.floor((end - start) / 1000);
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
   const handleClose = () => {
     if (isCallActive) {
       endCall();
     }
+    setShowHistory(false);
     onClose();
   };
 
@@ -1072,13 +1241,59 @@ const TestAgentModal = ({
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
         <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
-          <DialogTitle className="flex items-center gap-2">
-            <Bot className="w-5 h-5 text-purple-500" />
-            Test Agent: {agentName}
-          </DialogTitle>
+          {showHistory ? (
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectedHistoryCall ? () => { setSelectedHistoryCall(null); setHistoryMessages([]); } : closeHistory}
+                  className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-gray-600" />
+                </button>
+                <History className="w-5 h-5 text-purple-500" />
+                {selectedHistoryCall ? "Call Details" : "Call History"}
+              </div>
+              {!selectedHistoryCall && (
+                <button
+                  onClick={fetchHistory}
+                  disabled={loadingHistory}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingHistory ? "animate-spin" : ""}`} />
+                </button>
+              )}
+            </DialogTitle>
+          ) : (
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-purple-500" />
+                Test Agent: {agentName}
+              </div>
+              {!isCallActive && (
+                <button
+                  onClick={openHistory}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                  title="View call history"
+                >
+                  <History className="w-4 h-4 text-gray-500" />
+                </button>
+              )}
+            </DialogTitle>
+          )}
         </DialogHeader>
 
         <div className="flex-1 flex flex-col min-h-0 px-5 pb-5">
+          {showHistory ? (
+            <CallHistoryView
+              historyData={historyData}
+              selectedCall={selectedHistoryCall}
+              historyMessages={historyMessages}
+              loadingHistory={loadingHistory}
+              loadingMessages={loadingHistoryMessages}
+              onSelectCall={selectHistoryCall}
+              formatDurationFromDates={formatHistoryDuration}
+            />
+          ) : (
           <Tabs
             value={activeTab}
             onValueChange={(v) =>
@@ -1175,9 +1390,247 @@ const TestAgentModal = ({
               )}
             </TabsContent>
           </Tabs>
+          )}
         </div>
       </DialogContent>
     </Dialog>
+  );
+};
+
+// --- Call History View component ---
+interface CallHistoryViewProps {
+  historyData: HistoryCallItem[];
+  selectedCall: HistoryCallItem | null;
+  historyMessages: HistoryMessage[];
+  loadingHistory: boolean;
+  loadingMessages: boolean;
+  onSelectCall: (call: HistoryCallItem) => void;
+  formatDurationFromDates: (startedAt: string, endedAt: string | null) => string;
+}
+
+const CallHistoryView = ({
+  historyData,
+  selectedCall,
+  historyMessages,
+  loadingHistory,
+  loadingMessages,
+  onSelectCall,
+  formatDurationFromDates,
+}: CallHistoryViewProps) => {
+  const getStatusConfig = (status: string) => {
+    switch (status) {
+      case "ended":
+        return { icon: CheckCircle, color: "text-green-600", bg: "bg-green-50", border: "border-green-200", label: "Completed" };
+      case "active":
+        return { icon: Phone, color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200", label: "Active" };
+      case "failed":
+        return { icon: XCircle, color: "text-red-600", bg: "bg-red-50", border: "border-red-200", label: "Failed" };
+      default:
+        return { icon: Clock, color: "text-yellow-600", bg: "bg-yellow-50", border: "border-yellow-200", label: "Ringing" };
+    }
+  };
+
+  // Selected call detail view
+  if (selectedCall) {
+    const statusInfo = getStatusConfig(selectedCall.status);
+    const StatusIcon = statusInfo.icon;
+
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        {/* Call Info */}
+        <div className={`rounded-xl p-4 mb-3 ${statusInfo.bg} border ${statusInfo.border}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className={`p-2 rounded-lg bg-white/80`}>
+                {selectedCall.direction === "inbound" ? (
+                  <PhoneIncoming className={`w-5 h-5 ${statusInfo.color}`} />
+                ) : (
+                  <PhoneOutgoing className={`w-5 h-5 ${statusInfo.color}`} />
+                )}
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900 capitalize">
+                  {selectedCall.direction} Call
+                </p>
+                <p className="text-xs text-gray-500">
+                  {format(new Date(selectedCall.startedAt), "MMM d, yyyy 'at' h:mm a")}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <StatusIcon className={`w-4 h-4 ${statusInfo.color}`} />
+              <span className={`text-xs font-medium ${statusInfo.color}`}>{statusInfo.label}</span>
+            </div>
+          </div>
+          <div className="flex gap-4">
+            <div className="flex items-center gap-1.5 text-xs text-gray-600">
+              <Clock className="w-3.5 h-3.5" />
+              <span className="font-medium">{formatDurationFromDates(selectedCall.startedAt, selectedCall.endedAt)}</span>
+            </div>
+            {(selectedCall.callerNumber || selectedCall.calleeNumber) && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <Phone className="w-3.5 h-3.5" />
+                <span>{selectedCall.direction === "inbound" ? selectedCall.callerNumber : selectedCall.calleeNumber}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Conversation */}
+        <div className="flex items-center gap-2 mb-2 px-1">
+          <MessageSquare className="w-4 h-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-700">Conversation</span>
+          <span className="text-xs text-gray-400">
+            {historyMessages.length} message{historyMessages.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+
+        <ScrollArea className="flex-1 min-h-0 border rounded-xl">
+          <div className="p-3">
+            {loadingMessages ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : historyMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <MessageSquare className="w-8 h-8 text-gray-200 mb-2" />
+                <p className="text-sm text-muted-foreground">No messages recorded</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {historyMessages.map((msg) => (
+                  <div key={msg.id}>
+                    <div
+                      className={`flex gap-2.5 ${
+                        msg.role === "user" ? "justify-end" : "justify-start"
+                      }`}
+                    >
+                      {msg.role === "ai" && (
+                        <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Bot className="w-3.5 h-3.5 text-purple-600" />
+                        </div>
+                      )}
+                      <div
+                        className={`max-w-[80%] rounded-xl px-3.5 py-2.5 ${
+                          msg.role === "user"
+                            ? "bg-blue-500 text-white"
+                            : "bg-gray-100 text-gray-900"
+                        }`}
+                      >
+                        <p className="text-sm leading-relaxed">{msg.content}</p>
+                        <span
+                          className={`text-[10px] mt-1.5 block ${
+                            msg.role === "user" ? "text-blue-100" : "text-gray-400"
+                          }`}
+                        >
+                          {format(new Date(msg.timestamp), "h:mm:ss a")}
+                        </span>
+                      </div>
+                      {msg.role === "user" && (
+                        <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <User className="w-3.5 h-3.5 text-blue-600" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  }
+
+  // Call list view
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      {loadingHistory ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+            <span className="text-sm text-muted-foreground">Loading history...</span>
+          </div>
+        </div>
+      ) : historyData.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center">
+          <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
+            <Phone className="w-7 h-7 text-gray-300" />
+          </div>
+          <p className="font-medium text-gray-700 mb-1">No call history yet</p>
+          <p className="text-xs text-muted-foreground max-w-[250px]">
+            Test calls and real calls will appear here once you start testing
+          </p>
+        </div>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="space-y-2">
+            {historyData.map((call) => {
+              const statusInfo = getStatusConfig(call.status);
+              const StatusIcon = statusInfo.icon;
+              const duration = formatDurationFromDates(call.startedAt, call.endedAt);
+
+              return (
+                <button
+                  key={call.id}
+                  onClick={() => onSelectCall(call)}
+                  className="w-full text-left rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all p-3.5 group"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-1.5 rounded-lg ${statusInfo.bg}`}>
+                        {call.direction === "inbound" ? (
+                          <PhoneIncoming className={`w-4 h-4 ${statusInfo.color}`} />
+                        ) : (
+                          <PhoneOutgoing className={`w-4 h-4 ${statusInfo.color}`} />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 capitalize">
+                          {call.direction} Call
+                        </p>
+                        <p className="text-[11px] text-gray-400">
+                          {format(new Date(call.startedAt), "MMM d, yyyy h:mm a")}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <div className="flex items-center gap-1">
+                          <StatusIcon className={`w-3.5 h-3.5 ${statusInfo.color}`} />
+                          <span className={`text-xs font-medium ${statusInfo.color}`}>
+                            {statusInfo.label}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-gray-400 font-mono">
+                          {duration}
+                        </span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-purple-400 transition-colors" />
+                    </div>
+                  </div>
+                  {(call.callerNumber || call.calleeNumber) &&
+                    call.callerNumber !== "test-caller" &&
+                    call.calleeNumber !== "test-callee" && (
+                    <div className="text-[11px] text-gray-400 ml-9">
+                      {call.direction === "inbound" ? call.callerNumber : call.calleeNumber}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      )}
+
+      {historyData.length > 0 && (
+        <div className="pt-3 mt-2 border-t shrink-0">
+          <p className="text-xs text-center text-muted-foreground">
+            {historyData.length} call{historyData.length !== 1 ? "s" : ""} in history
+          </p>
+        </div>
+      )}
+    </div>
   );
 };
 
