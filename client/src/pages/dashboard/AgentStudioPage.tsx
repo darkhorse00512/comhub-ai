@@ -26,6 +26,7 @@ import {
   X,
   Plus,
   Voicemail,
+  Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -38,7 +39,7 @@ import DialogueNode from "@/components/nodes/DialogueNode";
 import FieldSetterNode from "@/components/nodes/FieldSetterNode";
 import JunctionNode from "@/components/nodes/JunctionNode";
 import SwitchNode from "@/components/nodes/SwitchNode";
-import FunctionNode from "@/components/nodes/FunctionNode";
+import PlayAudioNode from "@/components/nodes/PlayAudioNode";
 import CallTransferNode from "@/components/nodes/CallTransferNode";
 import TimeLimitNode from "@/components/nodes/TimeLimitNode";
 import ReconfigureNode from "@/components/nodes/ReconfigureNode";
@@ -62,7 +63,7 @@ const nodeCategories = [
   { type: "field_setter", label: "Field Setter", icon: Zap, color: "bg-yellow-100 text-yellow-600", borderColor: "border-yellow-400" },
   { type: "junction", label: "Junction", icon: GitBranch, color: "bg-purple-100 text-purple-600", borderColor: "border-purple-400" },
   { type: "switch", label: "Switch", icon: ToggleLeft, color: "bg-pink-100 text-pink-600", borderColor: "border-pink-400" },
-  { type: "function", label: "Function", icon: Zap, color: "bg-orange-100 text-orange-600", borderColor: "border-orange-400" },
+  { type: "play_audio", label: "Play Audio", icon: Volume2, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
   { type: "call_transfer", label: "Call Transfer", icon: Phone, color: "bg-teal-100 text-teal-600", borderColor: "border-teal-400" },
   { type: "time_limit", label: "Time Limit", icon: Clock, color: "bg-red-100 text-red-600", borderColor: "border-red-400" },
   { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
@@ -263,8 +264,8 @@ const AgentStudioPage = () => {
         onUpdate={handleUpdateNode}
       />
     ),
-    function: (props: any) => (
-      <FunctionNode
+    play_audio: (props: any) => (
+      <PlayAudioNode
         {...props}
         onClone={handleCloneNode}
         onDelete={handleDeleteNode}

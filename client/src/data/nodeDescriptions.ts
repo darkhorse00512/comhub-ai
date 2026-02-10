@@ -161,6 +161,21 @@ export const nodeDescriptions: NodeDescriptions = {
     }
   },
 
+  play_audio: {
+    title: "Play Audio",
+    tooltip: "Plays a pre-recorded audio file during the call. Upload MP3, M4A, or WAV files, or record audio directly.",
+    examples: [
+      "Play hold music or jingle",
+      "Play a pre-recorded greeting",
+      "Play legal disclaimer audio",
+      "Play promotional message"
+    ],
+    fields: {
+      audioFile: "The audio file to play (MP3, M4A, or WAV, up to 15MB)",
+      fallbackText: "Text the agent will speak if the audio file fails to play"
+    }
+  },
+
   voicemail: {
     title: "Voicemail",
     tooltip: "Records a message from the caller when agents are unavailable. Includes transcription and notification options.",
