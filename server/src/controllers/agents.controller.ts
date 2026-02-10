@@ -224,12 +224,141 @@ export const updateAgent = async (req: AuthRequest, res: Response): Promise<void
 
     logger.info('Agent updated successfully', { userId, agentId: id });
 
+    // Auto-create a version snapshot when config is updated (flow saved)
+    if (config !== undefined) {
+      try {
+        const { data: lastVersion } = await supabase
+          .from('agent_versions')
+          .select('version_number')
+          .eq('agent_id', id)
+          .order('version_number', { ascending: false })
+          .limit(1)
+          .single();
+
+        const nextVersion = (lastVersion?.version_number || 0) + 1;
+        const nodeCount = config?.flow?.nodes?.length || 0;
+        const edgeCount = config?.flow?.edges?.length || 0;
+
+        await supabase
+          .from('agent_versions')
+          .insert({
+            agent_id: id,
+            user_id: userId,
+            version_number: nextVersion,
+            name: data.name || 'Untitled Agent',
+            config: config,
+            node_count: nodeCount,
+            edge_count: edgeCount,
+          });
+
+        logger.info('Agent version snapshot created', { agentId: id, version: nextVersion });
+      } catch (versionError) {
+        logger.error('Failed to create agent version snapshot', { error: versionError });
+      }
+    }
+
     res.status(200).json({
       success: true,
       data
     });
   } catch (error) {
     logger.error('Unexpected error updating agent', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * Get version history for an agent
+ */
+export const getAgentVersions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('agent_versions')
+      .select('id, agent_id, version_number, name, node_count, edge_count, created_at')
+      .eq('agent_id', id)
+      .eq('user_id', userId)
+      .order('version_number', { ascending: false });
+
+    if (error) {
+      logger.error('Error fetching agent versions', { error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+      return;
+    }
+
+    res.status(200).json({ success: true, data: data || [] });
+  } catch (error) {
+    logger.error('Unexpected error fetching agent versions', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * Restore an agent to a specific version
+ */
+export const restoreAgentVersion = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id, versionId } = req.params;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    // Fetch the version
+    const { data: version, error: versionError } = await supabase
+      .from('agent_versions')
+      .select('*')
+      .eq('id', versionId)
+      .eq('agent_id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (versionError || !version) {
+      res.status(404).json({ success: false, error: 'Version not found' });
+      return;
+    }
+
+    // Update the agent's config with the version's config
+    const { data, error } = await supabase
+      .from('agents')
+      .update({ config: version.config })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select(`
+        *,
+        groups:group_id (
+          id,
+          name
+        )
+      `)
+      .single();
+
+    if (error) {
+      logger.error('Error restoring agent version', { error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+      return;
+    }
+
+    logger.info('Agent restored to version', { agentId: id, versionId, versionNumber: version.version_number });
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    logger.error('Unexpected error restoring agent version', { error });
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -754,5 +883,7 @@ export default {
   deleteAgent,
   cloneAgent,
   testChat,
-  generateWorkflow
+  generateWorkflow,
+  getAgentVersions,
+  restoreAgentVersion
 };

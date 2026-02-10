@@ -1064,6 +1064,49 @@ export const api = {
     }
   },
 
+  // Agent Version History APIs
+  async getAgentVersions(agentId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${agentId}/versions`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch agent versions");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching agent versions:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async restoreAgentVersion(agentId: string, versionId: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${agentId}/versions/${versionId}/restore`, {
+        method: "POST",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to restore agent version");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error restoring agent version:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   async endTestCallSession(callSessionId: string): Promise<ApiResponse<void>> {
     try {
       const headers = await getAuthHeaders();

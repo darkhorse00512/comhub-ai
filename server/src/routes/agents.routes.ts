@@ -31,4 +31,10 @@ router.post('/:id/test-chat', agentsController.testChat);
 // Generate workflow using AI
 router.post('/:id/generate-workflow', agentsController.generateWorkflow);
 
+// Agent version history
+router.get('/:id/versions', agentsController.getAgentVersions);
+
+// Restore agent to a specific version
+router.post('/:id/versions/:versionId/restore', agentsController.restoreAgentVersion);
+
 export default router;

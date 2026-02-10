@@ -830,6 +830,19 @@ const AgentStudioPage = () => {
           isOpen={showHistoryPanel}
           onClose={() => setShowHistoryPanel(false)}
           agentId={agent.id}
+          onRestore={(config) => {
+            // Load the restored version's flow into the canvas
+            if (config?.flow) {
+              setNodes(config.flow.nodes || []);
+              setEdges(config.flow.edges || []);
+              savedStateRef.current = {
+                nodes: config.flow.nodes || [],
+                edges: config.flow.edges || [],
+              };
+            }
+            // Update the agent object with restored config
+            setAgent((prev: any) => prev ? { ...prev, config } : prev);
+          }}
         />
       )}
 
