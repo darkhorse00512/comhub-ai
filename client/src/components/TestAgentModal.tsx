@@ -71,6 +71,7 @@ interface TestAgentModalProps {
   agentName: string;
   nodes: Node[];
   edges: Edge[];
+  initialMode?: CallMode;
 }
 
 type CallMode = "text" | "audio";
@@ -130,6 +131,7 @@ const TestAgentModal = ({
   agentName,
   nodes,
   edges,
+  initialMode,
 }: TestAgentModalProps) => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"inbound" | "outbound">("inbound");
@@ -170,6 +172,13 @@ const TestAgentModal = ({
   const dialogueTurnCountRef = useRef(0);
   const dialogueMessagesRef = useRef<Array<{ role: string; content: string }>>([]);
   const callSessionIdRef = useRef<string | null>(null);
+
+  // Set mode when modal opens with initialMode
+  useEffect(() => {
+    if (isOpen && initialMode) {
+      setCallMode(initialMode);
+    }
+  }, [isOpen, initialMode]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -1481,7 +1490,7 @@ const CallHistoryView = ({
           </span>
         </div>
 
-        <ScrollArea className="flex-1 min-h-0 border rounded-xl">
+        <div className="flex-1 h-0 overflow-y-auto border rounded-xl">
           <div className="p-3">
             {loadingMessages ? (
               <div className="flex items-center justify-center py-12">
@@ -1533,7 +1542,7 @@ const CallHistoryView = ({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
     );
   }
@@ -1559,7 +1568,7 @@ const CallHistoryView = ({
           </p>
         </div>
       ) : (
-        <ScrollArea className="flex-1 min-h-0">
+        <div className="flex-1 h-0 overflow-y-auto">
           <div className="space-y-2">
             {historyData.map((call) => {
               const statusInfo = getStatusConfig(call.status);
@@ -1616,7 +1625,7 @@ const CallHistoryView = ({
               );
             })}
           </div>
-        </ScrollArea>
+        </div>
       )}
 
       {historyData.length > 0 && (

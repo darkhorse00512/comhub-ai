@@ -144,3 +144,51 @@
   display: block;
   border-radius: 4px;
 }
+
+/* Mouse Action Hints */
+.flow-action-hints {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+  user-select: none;
+  pointer-events: none;
+}
+
+.flow-action-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.flow-action-hint-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.flow-action-hint-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.flow-action-hint-divider {
+  width: 1px;
+  height: 20px;
+  background: #e5e7eb;
+  flex-shrink: 0;
+}

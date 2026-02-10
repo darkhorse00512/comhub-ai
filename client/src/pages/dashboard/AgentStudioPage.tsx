@@ -21,8 +21,8 @@ import {
   Clock,
   Wrench,
   AlertCircle,
-  Play,
   Sparkles,
+  AudioLines,
   X,
   Plus,
   Voicemail,
@@ -91,6 +91,7 @@ const AgentStudioPage = () => {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
   const [showTestModal, setShowTestModal] = useState(false);
+  const [testMode, setTestMode] = useState<"text" | "audio">("text");
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [showNodePalette, setShowNodePalette] = useState(true);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
@@ -663,14 +664,6 @@ const AgentStudioPage = () => {
             </Button>
             <Button
               size="sm"
-              className="bg-purple-600 hover:bg-purple-700 text-white"
-              onClick={() => setShowTestModal(true)}
-            >
-              <Play className="w-4 h-4 mr-2" />
-              Test
-            </Button>
-            <Button
-              size="sm"
               className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
               onClick={() => setShowAIGenerator(true)}
             >
@@ -719,6 +712,32 @@ const AgentStudioPage = () => {
                   })}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Fixed Test Buttons - Right Side */}
+          {selectedMenuItem === "studio" && (
+            <div className="absolute right-4 top-4 z-20 flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  setTestMode("text");
+                  setShowTestModal(true);
+                }}
+                className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
+                title="Test (Text Mode)"
+              >
+                <MessageSquare className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setTestMode("audio");
+                  setShowTestModal(true);
+                }}
+                className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
+                title="Test (Audio Mode)"
+              >
+                <AudioLines className="w-5 h-5" />
+              </button>
             </div>
           )}
 
@@ -779,6 +798,7 @@ const AgentStudioPage = () => {
           agentName={agent.name}
           nodes={nodes}
           edges={edges}
+          initialMode={testMode}
         />
       )}
 

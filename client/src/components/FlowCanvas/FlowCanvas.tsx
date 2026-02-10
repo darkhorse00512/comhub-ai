@@ -3,6 +3,31 @@ import { Plus, Minus, RotateCcw, Lock, Unlock } from "lucide-react";
 import { Node, Edge } from "./types";
 import "./FlowCanvas.css";
 
+// Mouse hint SVG icons for the action hints panel
+const MouseLeftIcon = () => (
+  <svg width="20" height="26" viewBox="0 0 20 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="18" height="24" rx="9" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    <line x1="10" y1="1" x2="10" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="2" y="2" width="8" height="10" rx="4" fill="currentColor" opacity="0.25" />
+  </svg>
+);
+
+const MouseRightIcon = () => (
+  <svg width="20" height="26" viewBox="0 0 20 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="18" height="24" rx="9" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    <line x1="10" y1="1" x2="10" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="10" y="2" width="8" height="10" rx="4" fill="currentColor" opacity="0.25" />
+  </svg>
+);
+
+const MouseScrollIcon = () => (
+  <svg width="20" height="26" viewBox="0 0 20 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="18" height="24" rx="9" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    <line x1="10" y1="1" x2="10" y2="12" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="7.5" y="3.5" width="5" height="7" rx="2.5" stroke="currentColor" strokeWidth="1.2" fill="currentColor" opacity="0.25" />
+  </svg>
+);
+
 export interface FlowCanvasRef {
   screenToCanvas: (screenX: number, screenY: number) => { x: number; y: number };
   getScale: () => number;
@@ -83,6 +108,12 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    // Right-click or middle-click on a node = start panning (bubble to canvas handler)
+    if (e.button === 2 || e.button === 1) {
+      // Don't stop propagation - let it bubble to handleCanvasMouseDown
+      return;
+    }
+
     // Don't allow node dragging when pan is locked
     if (isPanLocked) return;
 
@@ -245,10 +276,19 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     });
   };
 
-  // Handle canvas panning
+  // Handle canvas panning - left-click on background or right-click anywhere
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Right-click (button 2) or middle-click (button 1) = pan from anywhere
+    if (e.button === 2 || e.button === 1) {
+      e.preventDefault();
+      setIsPanning(true);
+      setPanStart({ x: e.clientX, y: e.clientY });
+      setPanOffset({ x: pan.x, y: pan.y });
+      return;
+    }
+
+    // Left-click on canvas background = pan
     const target = e.target as HTMLElement;
-    // Only start panning if clicking on the canvas background or SVG
     if (
       target === canvasRef.current ||
       target.classList.contains("flow-canvas-content") ||
@@ -261,6 +301,11 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       setPanOffset({ x: pan.x, y: pan.y });
     }
   };
+
+  // Prevent context menu on canvas so right-click can be used for panning
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
 
 
   // Get fallback node dimensions based on node type
@@ -421,6 +466,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       ref={canvasRef}
       className="flow-canvas"
       onMouseDown={handleCanvasMouseDown}
+      onContextMenu={handleContextMenu}
     >
       <div
         className="flow-canvas-content"
@@ -533,6 +579,24 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         >
           {isPanLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
         </button>
+      </div>
+
+      {/* Mouse Action Hints */}
+      <div className="flow-action-hints">
+        <div className="flow-action-hint">
+          <span className="flow-action-hint-icon"><MouseLeftIcon /></span>
+          <span className="flow-action-hint-label">Select</span>
+        </div>
+        <div className="flow-action-hint-divider" />
+        <div className="flow-action-hint">
+          <span className="flow-action-hint-icon"><MouseRightIcon /></span>
+          <span className="flow-action-hint-label">Pan</span>
+        </div>
+        <div className="flow-action-hint-divider" />
+        <div className="flow-action-hint">
+          <span className="flow-action-hint-icon"><MouseScrollIcon /></span>
+          <span className="flow-action-hint-label">Zoom</span>
+        </div>
       </div>
     </div>
   );
