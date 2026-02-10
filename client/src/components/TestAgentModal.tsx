@@ -1354,7 +1354,7 @@ For example: [TRANSITION:${transitions[0].name}]
                   onInputChange={setInputMessage}
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
-                  onModeChange={setCallMode}
+
                   formatDuration={formatDuration}
                 />
               )}
@@ -1389,7 +1389,7 @@ For example: [TRANSITION:${transitions[0].name}]
                   onInputChange={setInputMessage}
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
-                  onModeChange={setCallMode}
+
                   formatDuration={formatDuration}
                 />
               )}
@@ -1660,7 +1660,6 @@ interface CallInterfaceProps {
   onInputChange: (value: string) => void;
   onSendMessage: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
-  onModeChange: (mode: CallMode) => void;
   formatDuration: (seconds: number) => string;
 }
 
@@ -1684,7 +1683,6 @@ const CallInterface = ({
   onInputChange,
   onSendMessage,
   onKeyDown,
-  onModeChange,
   formatDuration,
 }: CallInterfaceProps) => {
   return (
@@ -1837,30 +1835,6 @@ const CallInterface = ({
               ) : (
                 <Send className="w-4 h-4" />
               )}
-            </Button>
-          </div>
-        )}
-
-        {/* Mode Selection - before call starts */}
-        {!isCallActive && (
-          <div className="flex items-center justify-center gap-2">
-            <Button
-              variant={callMode === "text" ? "default" : "outline"}
-              size="sm"
-              onClick={() => onModeChange("text")}
-              className="gap-2"
-            >
-              <MessageSquare className="w-4 h-4" />
-              Text Mode
-            </Button>
-            <Button
-              variant={callMode === "audio" ? "default" : "outline"}
-              size="sm"
-              onClick={() => onModeChange("audio")}
-              className="gap-2"
-            >
-              <AudioLines className="w-4 h-4" />
-              Audio Mode
             </Button>
           </div>
         )}
