@@ -1242,40 +1242,36 @@ For example: [TRANSITION:${transitions[0].name}]
       <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
         <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
           {showHistory ? (
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={selectedHistoryCall ? () => { setSelectedHistoryCall(null); setHistoryMessages([]); } : closeHistory}
-                  className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  <ArrowLeft className="w-5 h-5 text-gray-600" />
-                </button>
-                <History className="w-5 h-5 text-purple-500" />
-                {selectedHistoryCall ? "Call Details" : "Call History"}
-              </div>
+            <DialogTitle className="flex items-center gap-2">
+              <button
+                onClick={selectedHistoryCall ? () => { setSelectedHistoryCall(null); setHistoryMessages([]); } : closeHistory}
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <History className="w-5 h-5 text-purple-500" />
+              {selectedHistoryCall ? "Call Details" : "Call History"}
               {!selectedHistoryCall && (
                 <button
                   onClick={fetchHistory}
                   disabled={loadingHistory}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="p-1 rounded-lg hover:bg-white/10 transition-colors ml-1"
                 >
-                  <RefreshCw className={`w-4 h-4 text-gray-500 ${loadingHistory ? "animate-spin" : ""}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 opacity-50 hover:opacity-100 ${loadingHistory ? "animate-spin" : ""}`} />
                 </button>
               )}
             </DialogTitle>
           ) : (
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-purple-500" />
-                Test Agent: {agentName}
-              </div>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="w-5 h-5 text-purple-500" />
+              Test Agent: {agentName}
               {!isCallActive && (
                 <button
                   onClick={openHistory}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="ml-1 p-1.5 rounded-lg hover:bg-white/10 transition-colors"
                   title="View call history"
                 >
-                  <History className="w-4 h-4 text-gray-500" />
+                  <History className="w-4 h-4 opacity-50 hover:opacity-100" />
                 </button>
               )}
             </DialogTitle>
