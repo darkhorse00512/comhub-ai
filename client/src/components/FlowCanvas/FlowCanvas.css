@@ -192,3 +192,20 @@
   background: #e5e7eb;
   flex-shrink: 0;
 }
+
+/* Selection rectangle */
+.flow-selection-rect {
+  border: 2px dashed #7c3aed;
+  background: rgba(124, 58, 237, 0.08);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 999;
+}
+
+/* Selected node highlight */
+.flow-node-selected {
+  outline: 2.5px solid #7c3aed;
+  outline-offset: 4px;
+  border-radius: 16px;
+  box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.12);
+}

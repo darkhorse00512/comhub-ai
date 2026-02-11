@@ -69,6 +69,14 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [isPanLocked, setIsPanLocked] = useState(false);
 
+  // Selection state
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionRect, setSelectionRect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const [isDraggingSelected, setIsDraggingSelected] = useState(false);
+  const [dragSelectedStart, setDragSelectedStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragSelectedNodePositions, setDragSelectedNodePositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+
   // Convert screen coordinates to canvas coordinates
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const canvasRect = canvasRef.current?.getBoundingClientRect();
@@ -108,9 +116,43 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
-    // Right-click or middle-click on a node = start panning (bubble to canvas handler)
-    if (e.button === 2 || e.button === 1) {
-      // Don't stop propagation - let it bubble to handleCanvasMouseDown
+    // Middle-click on a node = start panning (bubble to canvas handler)
+    if (e.button === 1) {
+      return;
+    }
+
+    // Right-click on a node = select it or start dragging selected nodes
+    if (e.button === 2) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (selectedNodeIds.has(nodeId)) {
+        // Node is already selected - start dragging all selected nodes
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
+        setIsDraggingSelected(true);
+        setDragSelectedStart(canvasPos);
+        // Store current positions of all selected nodes
+        const positions = new Map<string, { x: number; y: number }>();
+        nodes.forEach((n) => {
+          if (selectedNodeIds.has(n.id)) {
+            positions.set(n.id, { ...n.position });
+          }
+        });
+        setDragSelectedNodePositions(positions);
+      } else {
+        // Node is not selected - select just this node (and start dragging it)
+        const newSelection = new Set<string>([nodeId]);
+        setSelectedNodeIds(newSelection);
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
+        setIsDraggingSelected(true);
+        setDragSelectedStart(canvasPos);
+        const node = nodes.find((n) => n.id === nodeId);
+        if (node) {
+          const positions = new Map<string, { x: number; y: number }>();
+          positions.set(nodeId, { ...node.position });
+          setDragSelectedNodePositions(positions);
+        }
+      }
       return;
     }
 
@@ -133,6 +175,9 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
     e.preventDefault();
     e.stopPropagation();
+
+    // Left-click on a node clears selection
+    setSelectedNodeIds(new Set());
 
     const canvasPos = screenToCanvas(e.clientX, e.clientY);
 
@@ -178,9 +223,59 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
           y: panOffset.y + dy / scale,
         });
       }
+
+      // Drawing selection rectangle
+      if (isSelecting && selectionRect) {
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
+        setSelectionRect({
+          ...selectionRect,
+          endX: canvasPos.x,
+          endY: canvasPos.y,
+        });
+      }
+
+      // Dragging selected nodes
+      if (isDraggingSelected) {
+        const canvasPos = screenToCanvas(e.clientX, e.clientY);
+        const dx = canvasPos.x - dragSelectedStart.x;
+        const dy = canvasPos.y - dragSelectedStart.y;
+
+        onNodesChange(
+          nodes.map((node) => {
+            const origPos = dragSelectedNodePositions.get(node.id);
+            if (origPos) {
+              return { ...node, position: { x: origPos.x + dx, y: origPos.y + dy } };
+            }
+            return node;
+          })
+        );
+      }
     },
-    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, panStart, panOffset, scale, screenToCanvas]
+    [draggedNode, dragOffset, nodes, onNodesChange, connecting, isPanning, panStart, panOffset, scale, screenToCanvas, isSelecting, selectionRect, isDraggingSelected, dragSelectedStart, dragSelectedNodePositions]
   );
+
+  // Compute which nodes fall inside the selection rectangle
+  const getNodesInRect = useCallback((rect: { startX: number; startY: number; endX: number; endY: number }) => {
+    const minX = Math.min(rect.startX, rect.endX);
+    const maxX = Math.max(rect.startX, rect.endX);
+    const minY = Math.min(rect.startY, rect.endY);
+    const maxY = Math.max(rect.startY, rect.endY);
+
+    const selected = new Set<string>();
+    nodes.forEach((node) => {
+      const dims = nodeDimensions.get(node.id) || getFallbackNodeDimensions(node.type);
+      const nodeLeft = node.position.x;
+      const nodeTop = node.position.y;
+      const nodeRight = node.position.x + dims.width;
+      const nodeBottom = node.position.y + dims.height;
+
+      // Select if rectangle overlaps the node (intersection, not full containment)
+      if (nodeRight >= minX && nodeLeft <= maxX && nodeBottom >= minY && nodeTop <= maxY) {
+        selected.add(node.id);
+      }
+    });
+    return selected;
+  }, [nodes, nodeDimensions]);
 
   // Handle mouse up
   const handleMouseUp = useCallback(
@@ -199,10 +294,24 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         }
         setConnecting(null);
       }
+
+      // Finalize selection rectangle
+      if (isSelecting && selectionRect) {
+        const selected = getNodesInRect(selectionRect);
+        setSelectedNodeIds(selected);
+        setIsSelecting(false);
+        setSelectionRect(null);
+      }
+
+      // Stop dragging selected nodes
+      if (isDraggingSelected) {
+        setIsDraggingSelected(false);
+      }
+
       setDraggedNode(null);
       setIsPanning(false);
     },
-    [connecting, onConnect]
+    [connecting, onConnect, isSelecting, selectionRect, getNodesInRect, isDraggingSelected]
   );
 
   useEffect(() => {
@@ -276,10 +385,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     });
   };
 
-  // Handle canvas panning - left-click on background or right-click anywhere
+  // Handle canvas mouse down
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Right-click (button 2) or middle-click (button 1) = pan from anywhere
-    if (e.button === 2 || e.button === 1) {
+    // Middle-click (button 1) = pan from anywhere
+    if (e.button === 1) {
       e.preventDefault();
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
@@ -287,7 +396,23 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       return;
     }
 
-    // Left-click on canvas background = pan
+    // Right-click (button 2) on canvas background = start selection rectangle
+    if (e.button === 2) {
+      e.preventDefault();
+      const canvasPos = screenToCanvas(e.clientX, e.clientY);
+      setIsSelecting(true);
+      setSelectionRect({
+        startX: canvasPos.x,
+        startY: canvasPos.y,
+        endX: canvasPos.x,
+        endY: canvasPos.y,
+      });
+      // Clear previous selection when starting a new rectangle
+      setSelectedNodeIds(new Set());
+      return;
+    }
+
+    // Left-click on canvas background = pan + clear selection
     const target = e.target as HTMLElement;
     if (
       target === canvasRef.current ||
@@ -296,13 +421,15 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       target.tagName === "svg"
     ) {
       e.preventDefault();
+      // Clear selection on left-click on canvas background
+      setSelectedNodeIds(new Set());
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
       setPanOffset({ x: pan.x, y: pan.y });
     }
   };
 
-  // Prevent context menu on canvas so right-click can be used for panning
+  // Prevent context menu on canvas so right-click can be used for selection
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
@@ -508,6 +635,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         {/* Nodes */}
         {nodes.map((node) => {
           const NodeComponent = nodeComponents[node.type] || nodeComponents.default;
+          const isSelected = selectedNodeIds.has(node.id);
           return (
             <div
               key={node.id}
@@ -518,14 +646,14 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
                   nodeRefs.current.delete(node.id);
                 }
               }}
-              className="flow-node"
+              className={`flow-node${isSelected ? " flow-node-selected" : ""}`}
               data-node-id={node.id}
               style={{
                 position: "absolute",
                 left: node.position.x,
                 top: node.position.y,
-                cursor: isPanLocked ? "default" : (draggedNode === node.id ? "grabbing" : "grab"),
-                zIndex: draggedNode === node.id ? 1000 : 1,
+                cursor: isPanLocked ? "default" : (draggedNode === node.id || isDraggingSelected && isSelected ? "grabbing" : "grab"),
+                zIndex: draggedNode === node.id || (isDraggingSelected && isSelected) ? 1000 : isSelected ? 2 : 1,
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             >
@@ -550,6 +678,20 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
             </div>
           );
         })}
+
+        {/* Selection rectangle */}
+        {isSelecting && selectionRect && (
+          <div
+            className="flow-selection-rect"
+            style={{
+              position: "absolute",
+              left: Math.min(selectionRect.startX, selectionRect.endX),
+              top: Math.min(selectionRect.startY, selectionRect.endY),
+              width: Math.abs(selectionRect.endX - selectionRect.startX),
+              height: Math.abs(selectionRect.endY - selectionRect.startY),
+            }}
+          />
+        )}
       </div>
 
       {/* Controls */}
@@ -585,12 +727,12 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       <div className="flow-action-hints">
         <div className="flow-action-hint">
           <span className="flow-action-hint-icon"><MouseLeftIcon /></span>
-          <span className="flow-action-hint-label">Select</span>
+          <span className="flow-action-hint-label">Pan</span>
         </div>
         <div className="flow-action-hint-divider" />
         <div className="flow-action-hint">
           <span className="flow-action-hint-icon"><MouseRightIcon /></span>
-          <span className="flow-action-hint-label">Pan</span>
+          <span className="flow-action-hint-label">Select</span>
         </div>
         <div className="flow-action-hint-divider" />
         <div className="flow-action-hint">
