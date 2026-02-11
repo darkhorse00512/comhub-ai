@@ -176,7 +176,22 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     e.preventDefault();
     e.stopPropagation();
 
-    // Left-click on a node clears selection
+    // Left-click on a selected node = drag all selected nodes together
+    if (selectedNodeIds.has(nodeId) && selectedNodeIds.size > 0) {
+      const canvasPos = screenToCanvas(e.clientX, e.clientY);
+      setIsDraggingSelected(true);
+      setDragSelectedStart(canvasPos);
+      const positions = new Map<string, { x: number; y: number }>();
+      nodes.forEach((n) => {
+        if (selectedNodeIds.has(n.id)) {
+          positions.set(n.id, { ...n.position });
+        }
+      });
+      setDragSelectedNodePositions(positions);
+      return;
+    }
+
+    // Left-click on an unselected node = clear selection, drag single node
     setSelectedNodeIds(new Set());
 
     const canvasPos = screenToCanvas(e.clientX, e.clientY);
