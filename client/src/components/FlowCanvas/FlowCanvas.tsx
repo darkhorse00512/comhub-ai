@@ -48,7 +48,8 @@ function getNodeOutputHandles(node: Node): OutputHandle[] {
   if (nodeType === "switch") {
     const cases = node.data?.cases || [];
     if (cases.length > 0) {
-      return cases.slice(0, 5).map((c: any, i: number) => ({
+      // Only show handles for the 3 visible buttons (node renders max 3)
+      return cases.slice(0, 3).map((c: any, i: number) => ({
         id: `case-${i}`,
         label: c.label || c.value || `Case ${i + 1}`,
         color: "#ec4899",
@@ -71,10 +72,40 @@ function getNodeOutputHandles(node: Node): OutputHandle[] {
   return [{ id: "default", label: "Next" }];
 }
 
-// Constants for handle position calculation
-const BUTTON_HEIGHT = 36; // px-3 py-2 = ~36px per transition button
-const BUTTON_GAP = 8;     // space-y-2 = 8px
-const BOTTOM_PAD = 12;    // pb-3 = 12px
+// Per-node-type button layout constants for precise handle positioning
+function getButtonLayoutForNode(node: Node): {
+  buttonHeight: number;
+  buttonGap: number;
+  bottomPad: number;
+  hasBottomButtons: boolean;
+  moreTextOffset: number;
+} {
+  const nodeType = node.data?.type || node.type;
+
+  // AgentSetup and CallDirection have no bottom transition buttons
+  if (nodeType === "agentSetup" || nodeType === "callDirection") {
+    return { buttonHeight: 0, buttonGap: 0, bottomPad: 0, hasBottomButtons: false, moreTextOffset: 0 };
+  }
+
+  // DialogueNode with multiple transitions: py-1.5 (34px height), space-y-1.5 (6px gap)
+  if (nodeType === "dialogue") {
+    const transitions = node.data?.transitions || [];
+    if (transitions.length > 0) {
+      return { buttonHeight: 34, buttonGap: 6, bottomPad: 12, hasBottomButtons: true, moreTextOffset: 0 };
+    }
+  }
+
+  // SwitchNode: may have "+N more cases" text below the 3 visible buttons
+  if (nodeType === "switch") {
+    const totalCases = (node.data?.cases || []).length;
+    // "+N more" text: text-xs (~16px) + space-y-2 gap (8px) = 24px extra
+    const moreOffset = totalCases > 3 ? 24 : 0;
+    return { buttonHeight: 38, buttonGap: 8, bottomPad: 12, hasBottomButtons: true, moreTextOffset: moreOffset };
+  }
+
+  // All others: standard py-2 buttons (38px), space-y-2 gap (8px), pb-3 (12px)
+  return { buttonHeight: 38, buttonGap: 8, bottomPad: 12, hasBottomButtons: true, moreTextOffset: 0 };
+}
 
 export interface FlowCanvasRef {
   screenToCanvas: (screenX: number, screenY: number) => { x: number; y: number };
@@ -466,28 +497,30 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
     const measured = nodeDimensions.get(nodeId);
     const dimensions = measured || getFallbackNodeDimensions(node.type);
-    const handles = getNodeOutputHandles(node);
-    const handleIndex = handles.findIndex((h) => h.id === handleId);
-    const idx = handleIndex >= 0 ? handleIndex : 0;
-    const N = handles.length;
+    const layout = getButtonLayoutForNode(node);
 
-    // For single output, center vertically (legacy behavior)
-    if (N <= 1) {
+    // For nodes without bottom buttons (agentSetup, callDirection), center vertically
+    if (!layout.hasBottomButtons) {
       return {
         x: node.position.x + dimensions.width,
         y: node.position.y + dimensions.height / 2,
       };
     }
 
-    // For multi-output, position handles to align with transition buttons at bottom
-    // Each button: ~36px tall, gap: ~8px, bottom padding: ~12px
-    // Handle Y for output i (0=top, N-1=bottom):
-    //   = nodeHeight - bottomPad - (N-1-i) * (buttonHeight + gap) - buttonHeight/2
-    const handleY = dimensions.height - BOTTOM_PAD - (N - 1 - idx) * (BUTTON_HEIGHT + BUTTON_GAP) - BUTTON_HEIGHT / 2;
+    const handles = getNodeOutputHandles(node);
+    const handleIndex = handles.findIndex((h) => h.id === handleId);
+    const idx = handleIndex >= 0 ? handleIndex : 0;
+    const N = handles.length;
+
+    // Position handle to align with the corresponding transition button
+    // From bottom: bottomPad + moreTextOffset + (N-1-idx)*(btnH+gap) + btnH/2
+    const yFromBottom = layout.bottomPad + layout.moreTextOffset +
+      (N - 1 - idx) * (layout.buttonHeight + layout.buttonGap) +
+      layout.buttonHeight / 2;
 
     return {
       x: node.position.x + dimensions.width,
-      y: node.position.y + handleY,
+      y: node.position.y + dimensions.height - yFromBottom,
     };
   };
 
@@ -611,9 +644,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   // Render output handles for a node
   const renderOutputHandles = (node: Node, dimensions: { width: number; height: number }) => {
     const handles = getNodeOutputHandles(node);
+    const layout = getButtonLayoutForNode(node);
 
-    if (handles.length <= 1) {
-      // Single output: centered handle (classic behavior)
+    // For nodes without bottom buttons (agentSetup, callDirection), centered handle
+    if (!layout.hasBottomButtons) {
       return (
         <div
           className="node-handle node-handle-right"
@@ -623,11 +657,14 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       );
     }
 
-    // Multiple outputs: position each handle to align with transition buttons
+    // Position each handle to align with its corresponding transition button
+    const N = handles.length;
+
     return handles.map((handle, idx) => {
-      const N = handles.length;
-      // Y offset from top of node = nodeHeight - bottomPad - (N-1-idx)*(btnH+gap) - btnH/2
-      const yOffset = dimensions.height - BOTTOM_PAD - (N - 1 - idx) * (BUTTON_HEIGHT + BUTTON_GAP) - BUTTON_HEIGHT / 2;
+      const yFromBottom = layout.bottomPad + layout.moreTextOffset +
+        (N - 1 - idx) * (layout.buttonHeight + layout.buttonGap) +
+        layout.buttonHeight / 2;
+      const yOffset = dimensions.height - yFromBottom;
 
       return (
         <div
