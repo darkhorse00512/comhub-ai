@@ -28,6 +28,54 @@ const MouseScrollIcon = () => (
   </svg>
 );
 
+interface OutputHandle {
+  id: string;
+  label: string;
+  color?: string; // CSS color for the handle dot
+}
+
+// Determine output handles for a node based on its type and data
+function getNodeOutputHandles(node: Node): OutputHandle[] {
+  const nodeType = node.data?.type || node.type;
+
+  if (nodeType === "junction") {
+    return [
+      { id: "true", label: "True", color: "#22c55e" },
+      { id: "false", label: "False", color: "#ef4444" },
+    ];
+  }
+
+  if (nodeType === "switch") {
+    const cases = node.data?.cases || [];
+    if (cases.length > 0) {
+      return cases.slice(0, 5).map((c: any, i: number) => ({
+        id: `case-${i}`,
+        label: c.label || c.value || `Case ${i + 1}`,
+        color: "#ec4899",
+      }));
+    }
+  }
+
+  if (nodeType === "dialogue") {
+    const transitions = node.data?.transitions || [];
+    if (transitions.length > 0) {
+      return transitions.map((t: any) => ({
+        id: t.id || `t-${t.name}`,
+        label: t.name,
+        color: "#22c55e",
+      }));
+    }
+  }
+
+  // Default: single output
+  return [{ id: "default", label: "Next" }];
+}
+
+// Constants for handle position calculation
+const BUTTON_HEIGHT = 36; // px-3 py-2 = ~36px per transition button
+const BUTTON_GAP = 8;     // space-y-2 = 8px
+const BOTTOM_PAD = 12;    // pb-3 = 12px
+
 export interface FlowCanvasRef {
   screenToCanvas: (screenX: number, screenY: number) => { x: number; y: number };
   getScale: () => number;
@@ -39,7 +87,7 @@ interface FlowCanvasProps {
   edges: Edge[];
   onNodesChange: (nodes: Node[]) => void;
   onEdgesChange: (edges: Edge[]) => void;
-  onConnect: (sourceId: string, targetId: string) => void;
+  onConnect: (sourceId: string, targetId: string, sourceHandle?: string) => void;
   nodeComponents: Record<string, React.ComponentType<any>>;
 }
 
@@ -58,7 +106,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [connecting, setConnecting] = useState<{
     sourceId: string;
-    sourceHandle: "left" | "right";
+    sourceHandleId: string;
     position: { x: number; y: number };
   } | null>(null);
   const [scale, setScale] = useState(1);
@@ -82,9 +130,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     const canvasRect = canvasRef.current?.getBoundingClientRect();
     if (!canvasRect) return { x: 0, y: 0 };
 
-    // Transform is: scale(scale) translate(pan.x, pan.y)
-    // So: screenPos = (canvasPos + pan) * scale
-    // Therefore: canvasPos = screenPos / scale - pan
     const x = (screenX - canvasRect.left) / scale - pan.x;
     const y = (screenY - canvasRect.top) / scale - pan.y;
     return { x, y };
@@ -116,22 +161,16 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
-    // Middle-click on a node = start panning (bubble to canvas handler)
-    if (e.button === 1) {
-      return;
-    }
+    if (e.button === 1) return;
 
-    // Right-click on a node = select it or start dragging selected nodes
     if (e.button === 2) {
       e.preventDefault();
       e.stopPropagation();
 
       if (selectedNodeIds.has(nodeId)) {
-        // Node is already selected - start dragging all selected nodes
         const canvasPos = screenToCanvas(e.clientX, e.clientY);
         setIsDraggingSelected(true);
         setDragSelectedStart(canvasPos);
-        // Store current positions of all selected nodes
         const positions = new Map<string, { x: number; y: number }>();
         nodes.forEach((n) => {
           if (selectedNodeIds.has(n.id)) {
@@ -140,7 +179,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         });
         setDragSelectedNodePositions(positions);
       } else {
-        // Node is not selected - select just this node (and start dragging it)
         const newSelection = new Set<string>([nodeId]);
         setSelectedNodeIds(newSelection);
         const canvasPos = screenToCanvas(e.clientX, e.clientY);
@@ -156,12 +194,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       return;
     }
 
-    // Don't allow node dragging when pan is locked
     if (isPanLocked) return;
 
     const target = e.target as HTMLElement;
 
-    // Don't start drag if clicking on interactive elements
     if (target.closest(".node-handle")) return;
     if (target.closest("button")) return;
     if (target.closest("input")) return;
@@ -176,7 +212,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     e.preventDefault();
     e.stopPropagation();
 
-    // Left-click on a selected node = drag all selected nodes together
     if (selectedNodeIds.has(nodeId) && selectedNodeIds.size > 0) {
       const canvasPos = screenToCanvas(e.clientX, e.clientY);
       setIsDraggingSelected(true);
@@ -191,11 +226,9 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       return;
     }
 
-    // Left-click on an unselected node = clear selection, drag single node
     setSelectedNodeIds(new Set());
 
     const canvasPos = screenToCanvas(e.clientX, e.clientY);
-
     setDraggedNode(nodeId);
     setDragOffset({
       x: canvasPos.x - node.position.x,
@@ -203,7 +236,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     });
   };
 
-  // Handle node drag
+  // Handle mouse move
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       if (draggedNode) {
@@ -231,15 +264,12 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       if (isPanning) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
-
-        // Pan is in canvas coordinates (before scale is applied)
         setPan({
           x: panOffset.x + dx / scale,
           y: panOffset.y + dy / scale,
         });
       }
 
-      // Drawing selection rectangle
       if (isSelecting && selectionRect) {
         const canvasPos = screenToCanvas(e.clientX, e.clientY);
         setSelectionRect({
@@ -249,12 +279,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         });
       }
 
-      // Dragging selected nodes
       if (isDraggingSelected) {
         const canvasPos = screenToCanvas(e.clientX, e.clientY);
         const dx = canvasPos.x - dragSelectedStart.x;
         const dy = canvasPos.y - dragSelectedStart.y;
-
         onNodesChange(
           nodes.map((node) => {
             const origPos = dragSelectedNodePositions.get(node.id);
@@ -279,13 +307,9 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     const selected = new Set<string>();
     nodes.forEach((node) => {
       const dims = nodeDimensions.get(node.id) || getFallbackNodeDimensions(node.type);
-      const nodeLeft = node.position.x;
-      const nodeTop = node.position.y;
       const nodeRight = node.position.x + dims.width;
       const nodeBottom = node.position.y + dims.height;
-
-      // Select if rectangle overlaps the node (intersection, not full containment)
-      if (nodeRight >= minX && nodeLeft <= maxX && nodeBottom >= minY && nodeTop <= maxY) {
+      if (nodeRight >= minX && node.position.x <= maxX && nodeBottom >= minY && node.position.y <= maxY) {
         selected.add(node.id);
       }
     });
@@ -303,14 +327,13 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
           if (nodeEl) {
             const targetNodeId = nodeEl.getAttribute("data-node-id");
             if (targetNodeId && targetNodeId !== connecting.sourceId) {
-              onConnect(connecting.sourceId, targetNodeId);
+              onConnect(connecting.sourceId, targetNodeId, connecting.sourceHandleId);
             }
           }
         }
         setConnecting(null);
       }
 
-      // Finalize selection rectangle
       if (isSelecting && selectionRect) {
         const selected = getNodesInRect(selectionRect);
         setSelectedNodeIds(selected);
@@ -318,7 +341,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         setSelectionRect(null);
       }
 
-      // Stop dragging selected nodes
       if (isDraggingSelected) {
         setIsDraggingSelected(false);
       }
@@ -338,13 +360,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     };
   }, [handleMouseMove, handleMouseUp]);
 
-  // Handle zoom with mouse wheel - use passive: false to prevent browser zoom
+  // Handle zoom with mouse wheel
   const handleWheelEvent = useCallback((e: WheelEvent) => {
-    // Don't zoom if a dialog/modal is open over the canvas
     const target = e.target as HTMLElement;
-    if (target.closest('[role="dialog"]') || target.closest('[data-radix-portal]')) {
-      return;
-    }
+    if (target.closest('[role="dialog"]') || target.closest('[data-radix-portal]')) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -355,15 +374,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.min(Math.max(scale * delta, 0.1), 3);
 
-    // Mouse position relative to canvas container
     const mouseX = e.clientX - canvasRect.left;
     const mouseY = e.clientY - canvasRect.top;
-
-    // Current canvas position under mouse (before zoom)
     const canvasX = mouseX / scale - pan.x;
     const canvasY = mouseY / scale - pan.y;
-
-    // New pan to keep the same canvas point under mouse
     const newPanX = mouseX / newScale - canvasX;
     const newPanY = mouseY / newScale - canvasY;
 
@@ -371,22 +385,18 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     setPan({ x: newPanX, y: newPanY });
   }, [scale, pan]);
 
-  // Attach wheel event listener with passive: false for proper preventDefault
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     canvas.addEventListener('wheel', handleWheelEvent, { passive: false });
-    return () => {
-      canvas.removeEventListener('wheel', handleWheelEvent);
-    };
+    return () => { canvas.removeEventListener('wheel', handleWheelEvent); };
   }, [handleWheelEvent]);
 
-  // Handle connection start
+  // Handle connection start from a specific output handle
   const handleConnectionStart = (
     e: React.MouseEvent,
     nodeId: string,
-    handle: "left" | "right"
+    handleId: string
   ) => {
     e.stopPropagation();
     e.preventDefault();
@@ -395,14 +405,13 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
     setConnecting({
       sourceId: nodeId,
-      sourceHandle: handle,
+      sourceHandleId: handleId,
       position: canvasPos,
     });
   };
 
   // Handle canvas mouse down
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Middle-click (button 1) = pan from anywhere
     if (e.button === 1) {
       e.preventDefault();
       setIsPanning(true);
@@ -411,23 +420,18 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       return;
     }
 
-    // Right-click (button 2) on canvas background = start selection rectangle
     if (e.button === 2) {
       e.preventDefault();
       const canvasPos = screenToCanvas(e.clientX, e.clientY);
       setIsSelecting(true);
       setSelectionRect({
-        startX: canvasPos.x,
-        startY: canvasPos.y,
-        endX: canvasPos.x,
-        endY: canvasPos.y,
+        startX: canvasPos.x, startY: canvasPos.y,
+        endX: canvasPos.x, endY: canvasPos.y,
       });
-      // Clear previous selection when starting a new rectangle
       setSelectedNodeIds(new Set());
       return;
     }
 
-    // Left-click on canvas background = pan + clear selection
     const target = e.target as HTMLElement;
     if (
       target === canvasRef.current ||
@@ -436,7 +440,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
       target.tagName === "svg"
     ) {
       e.preventDefault();
-      // Clear selection on left-click on canvas background
       setSelectedNodeIds(new Set());
       setIsPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
@@ -444,38 +447,60 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     }
   };
 
-  // Prevent context menu on canvas so right-click can be used for selection
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
 
-
   // Get fallback node dimensions based on node type
   const getFallbackNodeDimensions = (nodeType: string) => {
-    if (nodeType === "agentSetup") {
-      return { width: 300, height: 140 };
-    }
-    if (nodeType === "callDirection") {
-      return { width: 200, height: 100 };
-    }
-    // Standard nodes have a larger size with the new design
-    if (nodeType === "standard") {
-      return { width: 300, height: 180 };
-    }
-    return { width: 280, height: 160 };
+    if (nodeType === "agentSetup") return { width: 300, height: 140 };
+    if (nodeType === "callDirection") return { width: 200, height: 100 };
+    if (nodeType === "standard") return { width: 300, height: 180 };
+    return { width: 280, height: 200 };
   };
 
-  // Get node position with handles
-  const getNodeHandlePosition = (nodeId: string, handle: "left" | "right") => {
+  // Get the canvas position of a specific output handle on a node
+  const getOutputHandlePosition = (nodeId: string, handleId: string) => {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return { x: 0, y: 0 };
 
     const measured = nodeDimensions.get(nodeId);
     const dimensions = measured || getFallbackNodeDimensions(node.type);
-    const handleOffsetX = handle === "left" ? 0 : dimensions.width;
+    const handles = getNodeOutputHandles(node);
+    const handleIndex = handles.findIndex((h) => h.id === handleId);
+    const idx = handleIndex >= 0 ? handleIndex : 0;
+    const N = handles.length;
+
+    // For single output, center vertically (legacy behavior)
+    if (N <= 1) {
+      return {
+        x: node.position.x + dimensions.width,
+        y: node.position.y + dimensions.height / 2,
+      };
+    }
+
+    // For multi-output, position handles to align with transition buttons at bottom
+    // Each button: ~36px tall, gap: ~8px, bottom padding: ~12px
+    // Handle Y for output i (0=top, N-1=bottom):
+    //   = nodeHeight - bottomPad - (N-1-i) * (buttonHeight + gap) - buttonHeight/2
+    const handleY = dimensions.height - BOTTOM_PAD - (N - 1 - idx) * (BUTTON_HEIGHT + BUTTON_GAP) - BUTTON_HEIGHT / 2;
 
     return {
-      x: node.position.x + handleOffsetX,
+      x: node.position.x + dimensions.width,
+      y: node.position.y + handleY,
+    };
+  };
+
+  // Get input handle position (always left center)
+  const getInputHandlePosition = (nodeId: string) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return { x: 0, y: 0 };
+
+    const measured = nodeDimensions.get(nodeId);
+    const dimensions = measured || getFallbackNodeDimensions(node.type);
+
+    return {
+      x: node.position.x,
       y: node.position.y + dimensions.height / 2,
     };
   };
@@ -493,14 +518,10 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     const t = 0.5;
     const mt = 1 - t;
 
-    const x1 = source.x;
-    const y1 = source.y;
-    const x2 = source.x + controlPointOffset;
-    const y2 = source.y;
-    const x3 = target.x - controlPointOffset;
-    const y3 = target.y;
-    const x4 = target.x;
-    const y4 = target.y;
+    const x1 = source.x, y1 = source.y;
+    const x2 = source.x + controlPointOffset, y2 = source.y;
+    const x3 = target.x - controlPointOffset, y3 = target.y;
+    const x4 = target.x, y4 = target.y;
 
     const x = mt * mt * mt * x1 + 3 * mt * mt * t * x2 + 3 * mt * t * t * x3 + t * t * t * x4;
     const y = mt * mt * mt * y1 + 3 * mt * mt * t * y2 + 3 * mt * t * t * y3 + t * t * t * y4;
@@ -508,10 +529,21 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     return { x, y };
   };
 
-  // Render edge path with hover detection and delete button
+  // Render edge path
   const renderEdge = (edge: Edge) => {
-    const source = getNodeHandlePosition(edge.source, "right");
-    const target = getNodeHandlePosition(edge.target, "left");
+    // Source: use sourceHandle if specified, otherwise default output
+    const sourceNode = nodes.find((n) => n.id === edge.source);
+    let sourceHandleId = edge.sourceHandle || "default";
+    if (sourceNode) {
+      const handles = getNodeOutputHandles(sourceNode);
+      // If the edge's sourceHandle doesn't match any handle, use the first one
+      if (!handles.find((h) => h.id === sourceHandleId)) {
+        sourceHandleId = handles[0]?.id || "default";
+      }
+    }
+
+    const source = getOutputHandlePosition(edge.source, sourceHandleId);
+    const target = getInputHandlePosition(edge.target);
 
     const dx = target.x - source.x;
     const controlPointOffset = Math.abs(dx) / 2;
@@ -523,7 +555,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
     return (
       <g key={edge.id}>
-        {/* Invisible wider path for easier hover detection */}
         <path
           d={path}
           fill="none"
@@ -533,7 +564,6 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
           onMouseEnter={() => setHoveredEdge(edge.id)}
           onMouseLeave={() => setHoveredEdge(null)}
         />
-        {/* Visible edge path */}
         <path
           d={path}
           fill="none"
@@ -543,41 +573,16 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
           className={edge.animated ? "edge-animated" : ""}
           style={{ pointerEvents: "none", transition: "stroke 0.15s, stroke-width 0.15s" }}
         />
-        {/* Delete button at midpoint */}
         {isHovered && (
           <g
             transform={`translate(${midpoint.x}, ${midpoint.y})`}
             style={{ cursor: "pointer", pointerEvents: "all" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDeleteEdge(edge.id);
-            }}
+            onClick={(e) => { e.stopPropagation(); handleDeleteEdge(edge.id); }}
             onMouseEnter={() => setHoveredEdge(edge.id)}
           >
-            <circle
-              r="12"
-              fill="#ef4444"
-              stroke="white"
-              strokeWidth="2"
-            />
-            <line
-              x1="-5"
-              y1="-5"
-              x2="5"
-              y2="5"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-            <line
-              x1="5"
-              y1="-5"
-              x2="-5"
-              y2="5"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
+            <circle r="12" fill="#ef4444" stroke="white" strokeWidth="2" />
+            <line x1="-5" y1="-5" x2="5" y2="5" stroke="white" strokeWidth="2" strokeLinecap="round" />
+            <line x1="5" y1="-5" x2="-5" y2="5" stroke="white" strokeWidth="2" strokeLinecap="round" />
           </g>
         )}
       </g>
@@ -588,7 +593,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   const renderConnectingLine = () => {
     if (!connecting) return null;
 
-    const source = getNodeHandlePosition(connecting.sourceId, connecting.sourceHandle);
+    const source = getOutputHandlePosition(connecting.sourceId, connecting.sourceHandleId);
     const path = `M ${source.x},${source.y} L ${connecting.position.x},${connecting.position.y}`;
 
     return (
@@ -601,6 +606,43 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         style={{ pointerEvents: "none" }}
       />
     );
+  };
+
+  // Render output handles for a node
+  const renderOutputHandles = (node: Node, dimensions: { width: number; height: number }) => {
+    const handles = getNodeOutputHandles(node);
+
+    if (handles.length <= 1) {
+      // Single output: centered handle (classic behavior)
+      return (
+        <div
+          className="node-handle node-handle-right"
+          style={{ top: "50%", transform: "translateY(-50%)" }}
+          onMouseDown={(e) => handleConnectionStart(e, node.id, handles[0]?.id || "default")}
+        />
+      );
+    }
+
+    // Multiple outputs: position each handle to align with transition buttons
+    return handles.map((handle, idx) => {
+      const N = handles.length;
+      // Y offset from top of node = nodeHeight - bottomPad - (N-1-idx)*(btnH+gap) - btnH/2
+      const yOffset = dimensions.height - BOTTOM_PAD - (N - 1 - idx) * (BUTTON_HEIGHT + BUTTON_GAP) - BUTTON_HEIGHT / 2;
+
+      return (
+        <div
+          key={handle.id}
+          className="node-handle node-handle-right"
+          data-handle-id={handle.id}
+          style={{
+            top: yOffset,
+            transform: "translateY(-50%)",
+            background: handle.color || "#7c3aed",
+          }}
+          onMouseDown={(e) => handleConnectionStart(e, node.id, handle.id)}
+        />
+      );
+    });
   };
 
   return (
@@ -617,27 +659,13 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
           transformOrigin: "0 0",
         }}
       >
-        {/* SVG for edges - rendered first so nodes appear on top */}
+        {/* SVG for edges */}
         <svg className="flow-edges" style={{ overflow: "visible", pointerEvents: "none" }}>
           <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="10"
-              markerHeight="10"
-              refX="9"
-              refY="3"
-              orient="auto"
-            >
+            <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
               <polygon points="0 0, 10 3, 0 6" fill="#b1b1b7" />
             </marker>
-            <marker
-              id="arrowhead-hover"
-              markerWidth="10"
-              markerHeight="10"
-              refX="9"
-              refY="3"
-              orient="auto"
-            >
+            <marker id="arrowhead-hover" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
               <polygon points="0 0, 10 3, 0 6" fill="#ef4444" />
             </marker>
           </defs>
@@ -651,15 +679,15 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         {nodes.map((node) => {
           const NodeComponent = nodeComponents[node.type] || nodeComponents.default;
           const isSelected = selectedNodeIds.has(node.id);
+          const measured = nodeDimensions.get(node.id);
+          const dimensions = measured || getFallbackNodeDimensions(node.type);
+
           return (
             <div
               key={node.id}
               ref={(el) => {
-                if (el) {
-                  nodeRefs.current.set(node.id, el);
-                } else {
-                  nodeRefs.current.delete(node.id);
-                }
+                if (el) { nodeRefs.current.set(node.id, el); }
+                else { nodeRefs.current.delete(node.id); }
               }}
               className={`flow-node${isSelected ? " flow-node-selected" : ""}`}
               data-node-id={node.id}
@@ -667,7 +695,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
                 position: "absolute",
                 left: node.position.x,
                 top: node.position.y,
-                cursor: isPanLocked ? "default" : (draggedNode === node.id || isDraggingSelected && isSelected ? "grabbing" : "grab"),
+                cursor: isPanLocked ? "default" : (draggedNode === node.id || (isDraggingSelected && isSelected) ? "grabbing" : "grab"),
                 zIndex: draggedNode === node.id || (isDraggingSelected && isSelected) ? 1000 : isSelected ? 2 : 1,
               }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
@@ -676,20 +704,15 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
               {node.type !== "agentSetup" && (
                 <div
                   className="node-handle node-handle-left"
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                  }}
+                  onMouseDown={(e) => { e.stopPropagation(); }}
                 />
               )}
 
               {/* Node content */}
               <NodeComponent {...node} data={node.data} isConnectable={true} />
 
-              {/* Right handle (output) */}
-              <div
-                className="node-handle node-handle-right"
-                onMouseDown={(e) => handleConnectionStart(e, node.id, "right")}
-              />
+              {/* Right handles (output) - multiple for junction/switch/dialogue */}
+              {renderOutputHandles(node, dimensions)}
             </div>
           );
         })}
@@ -711,29 +734,16 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
 
       {/* Controls */}
       <div className="flow-controls">
-        <button
-          onClick={() => setScale((s) => Math.min(s * 1.2, 3))}
-          title="Zoom In"
-        >
+        <button onClick={() => setScale((s) => Math.min(s * 1.2, 3))} title="Zoom In">
           <Plus className="w-4 h-4" />
         </button>
-        <button
-          onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))}
-          title="Zoom Out"
-        >
+        <button onClick={() => setScale((s) => Math.max(s * 0.8, 0.1))} title="Zoom Out">
           <Minus className="w-4 h-4" />
         </button>
-        <button
-          onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }}
-          title="Reset View"
-        >
+        <button onClick={() => { setScale(1); setPan({ x: 0, y: 0 }); }} title="Reset View">
           <RotateCcw className="w-4 h-4" />
         </button>
-        <button
-          onClick={() => setIsPanLocked(!isPanLocked)}
-          title={isPanLocked ? "Unlock Panning" : "Lock Panning"}
-          className={isPanLocked ? "active" : ""}
-        >
+        <button onClick={() => setIsPanLocked(!isPanLocked)} title={isPanLocked ? "Unlock Panning" : "Lock Panning"} className={isPanLocked ? "active" : ""}>
           {isPanLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
         </button>
       </div>

@@ -389,11 +389,12 @@ const AgentStudioPage = () => {
     savedStateRef.current = { nodes: defaultNodes, edges: defaultEdges };
   };
 
-  const handleConnect = (sourceId: string, targetId: string) => {
+  const handleConnect = (sourceId: string, targetId: string, sourceHandle?: string) => {
     const newEdge: Edge = {
       id: `e-${sourceId}-${targetId}-${Date.now()}`,
       source: sourceId,
       target: targetId,
+      sourceHandle: sourceHandle || undefined,
       animated: true,
     };
     setEdges([...edges, newEdge]);

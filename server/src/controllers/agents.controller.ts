@@ -593,109 +593,132 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
     }
 
     // Build the AI prompt for workflow generation
-    const systemPrompt = `You are an expert AI workflow generator. Return ONLY valid JSON - no markdown, no code blocks, no explanations.
+    const systemPrompt = `You are a world-class AI phone call workflow architect. You design production-ready, professional call flows.
+Return ONLY valid JSON. No markdown, no code blocks, no explanations, no text outside the JSON object.
 
-## WORKFLOW STRUCTURE
-{
-  "nodes": [...],  // Array of node objects
-  "edges": [...]   // Array of edge connections
-}
+## OUTPUT FORMAT
+{"nodes": [...], "edges": [...]}
 
-## NODE TYPES - USE THE TYPE DIRECTLY (NOT "standard")
+## NODE TYPES (use these exact "type" values)
 
-### 1. AgentSetup Node (REQUIRED - exactly one)
-{"id": "agent-setup", "type": "agentSetup", "position": {"x": 400, "y": 50}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}}
+1. agentSetup (REQUIRED, exactly 1) - Defines agent personality
+   {"id": "agent-setup", "type": "agentSetup", "position": {"x": 50, "y": 300}, "data": {"label": "Agent Setup", "systemMessage": "..."}}
 
-### 2. CallDirection Node
-{"id": "inbound", "type": "callDirection", "position": {"x": 200, "y": 200}, "data": {"label": "Inbound", "direction": "inbound"}}
+2. callDirection - Entry point (inbound or outbound)
+   {"id": "inbound", "type": "callDirection", "position": {"x": 300, "y": 150}, "data": {"label": "Inbound Calls", "direction": "inbound"}}
 
-### 3. Scripted Node (type: "scripted", use "script" field)
-{"id": "greeting", "type": "scripted", "position": {"x": 200, "y": 350}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}}
+3. scripted - Exact word-for-word message (use "script" field)
+   {"id": "greeting", "type": "scripted", "position": {"x": 650, "y": 150}, "data": {"label": "Welcome", "script": "Thank you for calling..."}}
 
-### 4. Dialogue Node (type: "dialogue")
-{"id": "dialogue-1", "type": "dialogue", "position": {"x": 200, "y": 500}, "data": {"label": "Conversation", "stageMessage": "Listen and respond helpfully.", "maxTurns": 10}}
+4. dialogue - AI conversation stage with instructions
+   {"id": "main-chat", "type": "dialogue", "position": {"x": 1000, "y": 150}, "data": {"label": "Main Conversation", "stageMessage": "Your goal is to understand the customer's needs. Ask clarifying questions. Be empathetic and professional. Collect their name and reason for calling.", "maxTurns": 15}}
 
-### 5. FieldSetter Node (type: "field_setter")
-{"id": "collect-1", "type": "field_setter", "position": {"x": 200, "y": 650}, "data": {"label": "Collect Name", "fieldName": "customer_name", "valueType": "text", "value": ""}}
+5. field_setter - Store a data value
+   {"id": "set-name", "type": "field_setter", "position": {"x": 650, "y": 100}, "data": {"label": "Store Name", "fieldName": "customer_name", "valueType": "text", "value": ""}}
 
-### 6. Junction Node (type: "junction", for True/False branching)
-{"id": "check-1", "type": "junction", "position": {"x": 200, "y": 800}, "data": {"label": "Resolved?", "left": {"field_name": "resolved"}, "operator": "==", "right": {"type": "text", "literal": "true"}}}
+6. junction - True/False branch (edges MUST use sourceHandle: "true" or "false")
+   {"id": "check-resolved", "type": "junction", "position": {"x": 1350, "y": 150}, "data": {"label": "Issue Resolved?", "left": {"field_name": "issue_resolved"}, "operator": "==", "right": {"type": "text", "literal": "true"}}}
 
-### 7. CallTransfer Node (type: "call_transfer")
-{"id": "transfer-1", "type": "call_transfer", "position": {"x": 400, "y": 950}, "data": {"label": "Transfer", "transferTo": "+15551234567", "transferMessage": "Connecting you.", "transferType": "warm"}}
+7. switch - Multi-way branch with cases
+   {"id": "dept-menu", "type": "switch", "position": {"x": 650, "y": 150}, "data": {"label": "Department Menu", "switchField": "department_choice", "cases": [{"value": "1", "label": "Sales"}, {"value": "2", "label": "Support"}, {"value": "3", "label": "Billing"}]}}
 
-### 8. Voicemail Node (type: "voicemail")
-{"id": "vm-1", "type": "voicemail", "position": {"x": 600, "y": 350}, "data": {"label": "Voicemail", "greetingMessage": "Leave a message.", "maxDuration": 120, "beepSound": true, "transcribe": true, "saveRecording": true}}
+8. call_transfer - Transfer to human
+   {"id": "transfer-human", "type": "call_transfer", "position": {"x": 1700, "y": 300}, "data": {"label": "Transfer to Agent", "transferTo": "+15551234567", "transferMessage": "Let me connect you with a specialist who can help further.", "transferType": "warm"}}
 
-### 9. Fallback Node (type: "fallback")
-{"id": "fallback-1", "type": "fallback", "position": {"x": 50, "y": 950}, "data": {"label": "Fallback", "fallbackMessage": "Sorry, could you repeat?", "retryCount": 3, "escalateTo": "+15551234567"}}
+9. voicemail - Record message
+   {"id": "vm", "type": "voicemail", "position": {"x": 650, "y": 500}, "data": {"label": "Voicemail", "greetingMessage": "We're currently unavailable. Please leave your name, number, and a brief message after the tone.", "maxDuration": 120, "beepSound": true, "transcribe": true, "saveRecording": true}}
 
-## EDGE STRUCTURE
-Basic: {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": true}
-Junction True: {"id": "e-true", "source": "check-1", "target": "thanks", "sourceHandle": "true", "animated": true}
-Junction False: {"id": "e-false", "source": "check-1", "target": "transfer", "sourceHandle": "false", "animated": true}
+10. fallback - Error handling
+    {"id": "fallback", "type": "fallback", "position": {"x": 50, "y": 600}, "data": {"label": "Error Handler", "fallbackMessage": "I'm sorry, I didn't quite catch that. Could you please repeat?", "retryCount": 3, "escalateTo": "+15551234567"}}
 
-## HORIZONTAL LAYOUT RULES (CRITICAL - NODES FLOW LEFT TO RIGHT!)
-- Agent Setup: x=50, y=300 (left side, vertically centered)
-- Inbound CallDirection: x=300, y=150 (top row)
-- Outbound CallDirection: x=300, y=450 (bottom row)
-- Flow direction: LEFT → RIGHT (x increases by 350px per node)
-- Inbound flow nodes: y=150 (top row), x increases: 300, 650, 1000, 1350, 1700...
-- Outbound flow nodes: y=450 (bottom row), x increases: 300, 650, 1000, 1350, 1700...
-- Horizontal spacing: 350px between nodes
-- Vertical spacing: 300px between inbound and outbound rows
-- Branch nodes (from junction): position vertically offset, same x
+## EDGE RULES
+- Basic: {"id": "e1", "source": "node-a", "target": "node-b", "animated": true}
+- Junction True path: {"id": "e-true", "source": "check-1", "target": "success-node", "sourceHandle": "true", "animated": true}
+- Junction False path: {"id": "e-false", "source": "check-1", "target": "fail-node", "sourceHandle": "false", "animated": true}
+- Switch case path: {"id": "e-case-0", "source": "switch-1", "target": "sales-node", "sourceHandle": "case-0", "animated": true}
+- CRITICAL: Junction edges MUST have sourceHandle "true" or "false"
+- CRITICAL: Switch edges MUST have sourceHandle "case-0", "case-1", "case-2" etc matching case index
 
-## EXAMPLE (HORIZONTAL FLOW)
-{
-  "nodes": [
-    {"id": "agent-setup", "type": "agentSetup", "position": {"x": 50, "y": 300}, "data": {"label": "Agent Setup", "systemMessage": "You are a helpful AI."}},
-    {"id": "inbound", "type": "callDirection", "position": {"x": 300, "y": 150}, "data": {"label": "Inbound", "direction": "inbound"}},
-    {"id": "outbound", "type": "callDirection", "position": {"x": 300, "y": 450}, "data": {"label": "Outbound", "direction": "outbound"}},
-    {"id": "greeting", "type": "scripted", "position": {"x": 650, "y": 150}, "data": {"label": "Greeting", "script": "Hello! How can I help?"}},
-    {"id": "dialogue", "type": "dialogue", "position": {"x": 1000, "y": 150}, "data": {"label": "Conversation", "stageMessage": "Help the customer.", "maxTurns": 10}},
-    {"id": "intro", "type": "scripted", "position": {"x": 650, "y": 450}, "data": {"label": "Introduction", "script": "Hi, this is an AI calling."}}
-  ],
-  "edges": [
-    {"id": "e1", "source": "agent-setup", "target": "inbound", "animated": true},
-    {"id": "e2", "source": "agent-setup", "target": "outbound", "animated": true},
-    {"id": "e3", "source": "inbound", "target": "greeting", "animated": true},
-    {"id": "e4", "source": "greeting", "target": "dialogue", "animated": true},
-    {"id": "e5", "source": "outbound", "target": "intro", "animated": true}
-  ]
-}
+## LAYOUT (HORIZONTAL - LEFT TO RIGHT)
+- Agent Setup: x=50, y=300
+- Inbound CallDirection: x=300, y=150
+- Outbound CallDirection: x=300, y=500
+- Flow LEFT→RIGHT, x increases by 350px per step
+- Inbound row: y around 100-250
+- Outbound row: y around 450-600
+- Junction branches: True path keeps same y, False path y+200
+- Minimum 200px between any two nodes
+- Agent-setup connects to ALL callDirection nodes
 
-## CRITICAL REQUIREMENTS
-1. Return ONLY valid JSON
-2. Node "type" must be: agentSetup, callDirection, scripted, dialogue, field_setter, junction, call_transfer, voicemail, fallback
-3. DO NOT use "standard" as type - use the specific type directly
-4. Use "script" field for scripted nodes
-5. Agent-setup must connect to all call-direction nodes`;
+## PROFESSIONAL WORKFLOW PATTERNS
 
-    const userPrompt = `Generate a workflow for: ${businessInfo.businessName}
-Industry: ${businessInfo.industry || 'General'}
-Description: ${businessInfo.description}
+### Inbound Customer Service (8-12 nodes):
+AgentSetup → CallDirection(inbound) → Scripted(greeting) → Dialogue(understand needs, 15 turns) → Junction(resolved?) → [True: Scripted(thank you + closing)] [False: CallTransfer(human agent)] + Fallback(error handler)
 
-GENERATE:
-${callFlowConfig.generateInbound ? `- INBOUND flow (purpose: ${callFlowConfig.inboundPurpose || 'customer support'})` : ''}
-${callFlowConfig.generateOutbound ? `- OUTBOUND flow (purpose: ${callFlowConfig.outboundPurpose || 'sales/follow-up'})` : ''}
-${callFlowConfig.transferToHuman ? '- Include call_transfer node for human escalation' : ''}
-${callFlowConfig.collectInfo?.length > 0 ? `- Collect: ${callFlowConfig.collectInfo.join(', ')} (use field_setter nodes)` : ''}
+### Outbound Sales/Follow-up (6-10 nodes):
+AgentSetup → CallDirection(outbound) → Scripted(introduction + permission) → Junction(interested?) → [True: Dialogue(pitch/discuss, 20 turns) → Scripted(closing + next steps)] [False: Scripted(polite goodbye)] + Fallback
 
-HORIZONTAL LAYOUT (CRITICAL - LEFT TO RIGHT FLOW!):
-- Agent Setup: x=50, y=300 (left side)
-- Inbound CallDirection: x=300, y=150 (top row)
-- Outbound CallDirection: x=300, y=450 (bottom row)
-- Inbound nodes flow LEFT→RIGHT at y=150: x=650, 1000, 1350, 1700...
-- Outbound nodes flow LEFT→RIGHT at y=450: x=650, 1000, 1350, 1700...
-- Horizontal spacing: 350px between nodes
-- Agent-setup connects to BOTH call-direction nodes
+### Key principles:
+- Always start with a warm, professional scripted greeting that mentions the business name
+- Dialogue nodes need DETAILED stageMessage instructions (3-5 sentences minimum) telling the AI exactly what to accomplish
+- Include specific field_setter nodes for each piece of information to collect
+- Always include a fallback node for error recovery
+- Junction conditions should check meaningful business logic
+- Closing scripts should thank the caller and summarize next steps
+- SystemMessage in agentSetup should be 3-5 sentences defining the agent's role, tone, and boundaries`;
 
-REMEMBER:
-- HORIZONTAL flow (x increases), NOT vertical
-- Use "script" field for scripted nodes
-- Return ONLY raw JSON
-- Professional messages for ${businessInfo.industry}`;
+    // Build detailed user prompt
+    const collectItems = callFlowConfig.collectInfo || [];
+    const fieldSetterInstructions = collectItems.length > 0
+      ? `\n\nINFORMATION TO COLLECT (create a field_setter node for EACH):\n${collectItems.map((item: string) => {
+          const fieldMap: Record<string, string> = {
+            'Customer Name': 'customer_name',
+            'Email Address': 'email',
+            'Phone Number': 'phone_number',
+            'Company Name': 'company_name',
+            'Reason for Call': 'call_reason',
+            'Appointment Scheduling': 'appointment_date'
+          };
+          return `- ${item} → fieldName: "${fieldMap[item] || item.toLowerCase().replace(/\s+/g, '_')}", valueType: "text"`;
+        }).join('\n')}`
+      : '';
+
+    const userPrompt = `Design a complete, production-quality phone call workflow for:
+
+BUSINESS: ${businessInfo.businessName}
+INDUSTRY: ${businessInfo.industry || 'General'}
+DESCRIPTION: ${businessInfo.description}
+${businessInfo.targetAudience ? `TARGET AUDIENCE: ${businessInfo.targetAudience}` : ''}
+${businessInfo.mainServices ? `SERVICES: ${businessInfo.mainServices}` : ''}
+
+WORKFLOWS TO GENERATE:
+${callFlowConfig.generateInbound ? `✅ INBOUND CALL FLOW
+   Purpose: ${callFlowConfig.inboundPurpose || 'Handle incoming customer inquiries professionally'}
+   Required nodes: greeting (scripted) → main conversation (dialogue) → resolution check (junction) → closing (scripted) or transfer (call_transfer)` : ''}
+${callFlowConfig.generateOutbound ? `✅ OUTBOUND CALL FLOW
+   Purpose: ${callFlowConfig.outboundPurpose || 'Proactive outreach, sales, or follow-up'}
+   Required nodes: introduction (scripted) → interest check (junction) → conversation (dialogue) → closing (scripted)` : ''}
+${callFlowConfig.transferToHuman ? '✅ Include CALL TRANSFER node for human agent escalation with a warm, professional transfer message' : ''}
+${callFlowConfig.businessHours ? `✅ Business hours: ${callFlowConfig.businessHours} - add voicemail for after-hours` : ''}
+${fieldSetterInstructions}
+
+QUALITY REQUIREMENTS:
+1. The systemMessage in agentSetup MUST mention "${businessInfo.businessName}" by name and describe the agent's role for ${businessInfo.industry}
+2. All scripted messages must be warm, professional, and specific to ${businessInfo.industry} (not generic)
+3. Dialogue stageMessage instructions must be DETAILED (what to ask, how to respond, what information to gather)
+4. Generate 8-15 nodes total for a complete, realistic workflow
+5. Every node must be connected - no orphan nodes
+6. Include a fallback node for error handling
+7. Junction edges MUST use sourceHandle "true" or "false"
+8. Switch edges MUST use sourceHandle "case-0", "case-1", etc.
+
+LAYOUT:
+- HORIZONTAL flow: LEFT → RIGHT (x increases by 350px)
+- Agent Setup at x=50, y=300
+- Inbound row: y=150, Outbound row: y=500
+- Junction True branch: keep same y, False branch: y+200
+
+Return ONLY the JSON object.`;
 
     // Generate workflow using GPT with custom prompt and higher token limit
     // Lower temperature (0.2) for more consistent, deterministic JSON output
