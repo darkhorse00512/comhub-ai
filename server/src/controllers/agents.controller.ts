@@ -668,18 +668,29 @@ AgentSetup → CallDirection(outbound) → Scripted(introduction + permission) �
 - SystemMessage in agentSetup should be 3-5 sentences defining the agent's role, tone, and boundaries`;
 
     // Build detailed user prompt
+    // Map collectInfo IDs to labels and field names (client sends IDs like "name", "email")
+    const collectIdMap: Record<string, { label: string; fieldName: string }> = {
+      'name': { label: 'Customer Name', fieldName: 'customer_name' },
+      'email': { label: 'Email Address', fieldName: 'email' },
+      'phone': { label: 'Phone Number', fieldName: 'phone_number' },
+      'company': { label: 'Company Name', fieldName: 'company_name' },
+      'reason': { label: 'Reason for Call', fieldName: 'call_reason' },
+      'appointment': { label: 'Appointment Scheduling', fieldName: 'appointment_date' },
+      // Fallback for label-style values (backward compatibility)
+      'Customer Name': { label: 'Customer Name', fieldName: 'customer_name' },
+      'Email Address': { label: 'Email Address', fieldName: 'email' },
+      'Phone Number': { label: 'Phone Number', fieldName: 'phone_number' },
+      'Company Name': { label: 'Company Name', fieldName: 'company_name' },
+      'Reason for Call': { label: 'Reason for Call', fieldName: 'call_reason' },
+      'Appointment Scheduling': { label: 'Appointment Scheduling', fieldName: 'appointment_date' },
+    };
     const collectItems = callFlowConfig.collectInfo || [];
     const fieldSetterInstructions = collectItems.length > 0
       ? `\n\nINFORMATION TO COLLECT (create a field_setter node for EACH):\n${collectItems.map((item: string) => {
-          const fieldMap: Record<string, string> = {
-            'Customer Name': 'customer_name',
-            'Email Address': 'email',
-            'Phone Number': 'phone_number',
-            'Company Name': 'company_name',
-            'Reason for Call': 'call_reason',
-            'Appointment Scheduling': 'appointment_date'
-          };
-          return `- ${item} → fieldName: "${fieldMap[item] || item.toLowerCase().replace(/\s+/g, '_')}", valueType: "text"`;
+          const mapped = collectIdMap[item];
+          const label = mapped?.label || item;
+          const fieldName = mapped?.fieldName || item.toLowerCase().replace(/\s+/g, '_');
+          return `- ${label} → fieldName: "${fieldName}", valueType: "text"`;
         }).join('\n')}`
       : '';
 
@@ -721,159 +732,165 @@ LAYOUT:
 Return ONLY the JSON object.`;
 
     // Generate workflow using GPT with custom prompt and higher token limit
-    // Lower temperature (0.2) for more consistent, deterministic JSON output
+    // maxTokens 8000 to accommodate 8-15 nodes with detailed content
+    // Low temperature (0.2) for consistent, deterministic JSON output
     const aiResponse = await gptService.generateWithCustomPrompt(
       userPrompt,
       systemPrompt,
-      { maxTokens: 4000, temperature: 0.2 }
+      { maxTokens: 8000, temperature: 0.2 }
     );
 
     // Parse the AI response to extract JSON with multiple extraction strategies
     let workflow;
+    const parseErrors: string[] = [];
+
+    // Strategy 1: Direct parse (if AI returned clean JSON)
     try {
-      // Strategy 1: Direct parse (if AI returned clean JSON)
+      workflow = JSON.parse(aiResponse.text);
+      logger.info('Workflow parsed with direct parse strategy');
+    } catch (e) {
+      parseErrors.push(`Direct parse: ${e instanceof Error ? e.message : 'failed'}`);
+    }
+
+    // Strategy 2: Extract from markdown code block (use GREEDY match for nested JSON)
+    if (!workflow) {
       try {
-        workflow = JSON.parse(aiResponse.text);
-        logger.info('Workflow parsed with direct parse strategy');
-      } catch (directError) {
-        // Strategy 2: Extract from markdown code block
-        const codeBlockMatch = aiResponse.text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        const codeBlockMatch = aiResponse.text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
         if (codeBlockMatch) {
           workflow = JSON.parse(codeBlockMatch[1]);
           logger.info('Workflow parsed from markdown code block');
-        } else {
-          // Strategy 3: Find any JSON object in the response
-          const jsonMatch = aiResponse.text.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            throw new Error('No JSON found in AI response');
-          }
+        }
+      } catch (e) {
+        parseErrors.push(`Code block parse: ${e instanceof Error ? e.message : 'failed'}`);
+      }
+    }
+
+    // Strategy 3: Find any JSON object in the response (greedy)
+    if (!workflow) {
+      try {
+        const jsonMatch = aiResponse.text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
           workflow = JSON.parse(jsonMatch[0]);
           logger.info('Workflow parsed from general JSON match');
+        } else {
+          parseErrors.push('No JSON object found in response');
         }
+      } catch (e) {
+        parseErrors.push(`General JSON parse: ${e instanceof Error ? e.message : 'failed'}`);
       }
-    } catch (parseError) {
-      logger.error('Error parsing AI workflow response', {
-        error: parseError,
+    }
+
+    if (!workflow) {
+      logger.error('All JSON parsing strategies failed', {
+        errors: parseErrors,
         responsePreview: aiResponse.text.substring(0, 500)
       });
       res.status(500).json({
         success: false,
         error: 'Failed to parse generated workflow. AI did not return valid JSON.',
-        details: parseError instanceof Error ? parseError.message : 'Unknown parsing error'
+        details: parseErrors.join('; ')
       });
       return;
     }
 
-    // Comprehensive workflow validation
-    const validateWorkflow = (wf: any): { valid: boolean; errors: string[] } => {
-      const errors: string[] = [];
+    // Validate and sanitize the workflow (fix issues instead of rejecting)
+    const sanitizeWorkflow = (wf: any): { workflow: any; warnings: string[] } => {
+      const warnings: string[] = [];
 
-      // Basic structure validation
+      // Critical: must have nodes array
       if (!wf.nodes || !Array.isArray(wf.nodes)) {
-        errors.push('Missing or invalid nodes array');
-        return { valid: false, errors };
+        throw new Error('AI response missing nodes array');
       }
+      // Ensure edges is an array (default to empty if missing)
       if (!wf.edges || !Array.isArray(wf.edges)) {
-        errors.push('Missing or invalid edges array');
+        wf.edges = [];
+        warnings.push('No edges in response, defaulting to empty');
       }
 
       if (wf.nodes.length === 0) {
-        errors.push('No nodes generated');
+        throw new Error('AI generated zero nodes');
       }
 
       const nodeIds = new Set<string>();
-      const positions = new Map<string, { x: number; y: number }>();
-      let hasAgentSetup = false;
-      let hasCallDirection = false;
+      const validTypes = ['agentSetup', 'callDirection', 'scripted', 'dialogue', 'field_setter', 'junction', 'switch', 'call_transfer', 'voicemail', 'fallback', 'time_limit', 'reconfigure', 'function', 'play_audio'];
 
-      // Validate each node
-      wf.nodes.forEach((node: any, idx: number) => {
-        if (!node.id) errors.push(`Node ${idx}: Missing id`);
-        if (!node.type) errors.push(`Node ${idx}: Missing type`);
-        if (!node.position) {
-          errors.push(`Node ${idx}: Missing position`);
-        } else if (typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
-          errors.push(`Node ${idx}: Invalid position coordinates`);
+      // Sanitize nodes: fix IDs, ensure position/data exist, remove invalid types
+      wf.nodes = wf.nodes.filter((node: any, idx: number) => {
+        // Must have an id
+        if (!node.id) {
+          node.id = `node-${idx}-${Date.now()}`;
+          warnings.push(`Node ${idx}: auto-assigned id ${node.id}`);
         }
-        if (!node.data) errors.push(`Node ${idx}: Missing data`);
 
-        // Check for duplicate IDs
-        if (node.id) {
-          if (nodeIds.has(node.id)) {
-            errors.push(`Duplicate node id: ${node.id}`);
+        // Ensure unique IDs
+        if (nodeIds.has(node.id)) {
+          node.id = `${node.id}-${idx}`;
+          warnings.push(`Duplicate node id resolved: ${node.id}`);
+        }
+        nodeIds.add(node.id);
+
+        // Must have a valid type
+        if (!node.type || !validTypes.includes(node.type)) {
+          // Try to infer from data.type
+          if (node.data?.type && validTypes.includes(node.data.type)) {
+            node.type = node.data.type;
+            warnings.push(`Node ${node.id}: type inferred from data.type`);
+          } else {
+            warnings.push(`Node ${node.id}: removed - invalid type '${node.type}'`);
+            return false; // remove this node
           }
-          nodeIds.add(node.id);
         }
 
-        // Check position collisions (nodes too close together)
-        if (node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number') {
-          positions.forEach((pos, id) => {
-            const distance = Math.sqrt(
-              Math.pow(pos.x - node.position.x, 2) +
-              Math.pow(pos.y - node.position.y, 2)
-            );
-            if (distance < 150 && id !== node.id) {
-              errors.push(
-                `Nodes '${id}' and '${node.id}' are too close (${Math.round(distance)}px). Minimum 150px spacing required.`
-              );
-            }
-          });
-          positions.set(node.id, node.position);
+        // Ensure position exists
+        if (!node.position || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
+          node.position = { x: 100 + idx * 350, y: 300 };
+          warnings.push(`Node ${node.id}: auto-positioned`);
         }
 
-        // Check for required node types
-        if (node.type === 'agentSetup') hasAgentSetup = true;
-        if (node.type === 'callDirection') hasCallDirection = true;
-
-        // Validate node type is one of the allowed types
-        const validTypes = ['agentSetup', 'callDirection', 'scripted', 'dialogue', 'field_setter', 'junction', 'switch', 'call_transfer', 'voicemail', 'fallback', 'time_limit', 'reconfigure', 'function'];
-        if (node.type && !validTypes.includes(node.type)) {
-          errors.push(`Node ${node.id}: Invalid type '${node.type}'`);
+        // Ensure data exists
+        if (!node.data) {
+          node.data = { label: node.id };
+          warnings.push(`Node ${node.id}: auto-assigned empty data`);
         }
+
+        return true;
       });
 
-      if (!hasAgentSetup) {
-        errors.push("Missing required 'agentSetup' node");
-      }
-      if (!hasCallDirection) {
-        errors.push("Missing required 'callDirection' node");
-      }
-
-      // Validate edges
-      if (Array.isArray(wf.edges)) {
-        wf.edges.forEach((edge: any, idx: number) => {
-          if (!edge.source) {
-            errors.push(`Edge ${idx}: Missing source`);
-          } else if (!nodeIds.has(edge.source)) {
-            errors.push(`Edge ${idx}: Invalid source node '${edge.source}'`);
-          }
-
-          if (!edge.target) {
-            errors.push(`Edge ${idx}: Missing target`);
-          } else if (!nodeIds.has(edge.target)) {
-            errors.push(`Edge ${idx}: Invalid target node '${edge.target}'`);
-          }
-        });
-
-        // Note: Reachability validation disabled - AI-generated workflows may have
-        // intentionally disconnected nodes (fallback handlers, alternate paths, etc.)
-        // The frontend can handle disconnected nodes gracefully
+      // Filter out edges referencing non-existent nodes
+      const validNodeIds = new Set(wf.nodes.map((n: any) => n.id));
+      const originalEdgeCount = wf.edges.length;
+      wf.edges = wf.edges.filter((edge: any) => {
+        if (!edge.source || !edge.target) return false;
+        if (!validNodeIds.has(edge.source) || !validNodeIds.has(edge.target)) return false;
+        // Ensure edge has an id
+        if (!edge.id) {
+          edge.id = `e-${edge.source}-${edge.target}-${Date.now()}`;
+        }
+        // Ensure animated flag
+        if (edge.animated === undefined) {
+          edge.animated = true;
+        }
+        return true;
+      });
+      if (wf.edges.length < originalEdgeCount) {
+        warnings.push(`Removed ${originalEdgeCount - wf.edges.length} invalid edges`);
       }
 
-      return { valid: errors.length === 0, errors };
+      return { workflow: wf, warnings };
     };
 
-    const validation = validateWorkflow(workflow);
-    if (!validation.valid) {
-      logger.error('Workflow validation failed', {
-        errors: validation.errors,
-        nodeCount: workflow.nodes?.length,
-        edgeCount: workflow.edges?.length
-      });
+    let sanitizedWorkflow;
+    try {
+      const result = sanitizeWorkflow(workflow);
+      sanitizedWorkflow = result.workflow;
+      if (result.warnings.length > 0) {
+        logger.warn('Workflow sanitization warnings', { warnings: result.warnings });
+      }
+    } catch (sanitizeError) {
+      logger.error('Workflow sanitization failed', { error: sanitizeError });
       res.status(500).json({
         success: false,
-        error: 'Generated workflow failed validation',
-        validationErrors: validation.errors
+        error: sanitizeError instanceof Error ? sanitizeError.message : 'Invalid workflow structure'
       });
       return;
     }
@@ -881,13 +898,13 @@ Return ONLY the JSON object.`;
     logger.info('Workflow generated successfully', {
       userId,
       agentId: id,
-      nodeCount: workflow.nodes.length,
-      edgeCount: workflow.edges.length
+      nodeCount: sanitizedWorkflow.nodes.length,
+      edgeCount: sanitizedWorkflow.edges.length
     });
 
     res.status(200).json({
       success: true,
-      workflow
+      workflow: sanitizedWorkflow
     });
   } catch (error) {
     logger.error('Unexpected error generating workflow', { error });
