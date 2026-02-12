@@ -537,10 +537,14 @@ For example: [TRANSITION:${transitions[0].name}]
       const result = evaluateCondition(fieldValue, operator, compareValue);
       const outEdges = edges.filter((e) => e.source === node.id);
 
+      // Use sourceHandle to find the correct edge for True/False
+      const trueEdge = outEdges.find((e) => e.sourceHandle === "true");
+      const falseEdge = outEdges.find((e) => e.sourceHandle === "false");
+
       if (result) {
-        return outEdges[0]?.target || null;
+        return trueEdge?.target || outEdges[0]?.target || null;
       } else {
-        return (outEdges[1] || outEdges[0])?.target || null;
+        return falseEdge?.target || outEdges[1]?.target || outEdges[0]?.target || null;
       }
     },
     [edges]
@@ -557,8 +561,10 @@ For example: [TRANSITION:${transitions[0].name}]
         (c: any) => String(c.value) === String(fieldValue)
       );
 
-      if (matchIndex >= 0 && outEdges[matchIndex]) {
-        return outEdges[matchIndex].target;
+      if (matchIndex >= 0) {
+        // Use sourceHandle to find the correct edge for this case
+        const caseEdge = outEdges.find((e) => e.sourceHandle === `case-${matchIndex}`);
+        return caseEdge?.target || outEdges[matchIndex]?.target || outEdges[0]?.target || null;
       }
 
       // Default: first edge
@@ -746,16 +752,19 @@ For example: [TRANSITION:${transitions[0].name}]
             // Small pause before next node
             await new Promise((r) => setTimeout(r, 300));
 
-            // Use transition name to pick the correct outgoing edge
+            // Use transition name to pick the correct outgoing edge via sourceHandle
             const nodeTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
             const outEdges = edges.filter((e) => e.source === node.id);
 
             if (transitionName && nodeTransitions.length > 0) {
-              const transitionIndex = nodeTransitions.findIndex(
+              const matchedTransition = nodeTransitions.find(
                 (t) => t.name.toLowerCase() === transitionName.toLowerCase()
               );
-              if (transitionIndex >= 0 && outEdges[transitionIndex]) {
-                currentId = outEdges[transitionIndex].target;
+              if (matchedTransition) {
+                // Build the sourceHandle ID matching getNodeOutputHandles logic
+                const handleId = matchedTransition.id || `t-${matchedTransition.name}`;
+                const matchEdge = outEdges.find((e) => e.sourceHandle === handleId);
+                currentId = matchEdge?.target || outEdges[0]?.target || null;
               } else {
                 // Transition name didn't match - fall back to first edge
                 currentId = outEdges[0]?.target || null;
