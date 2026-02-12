@@ -215,6 +215,46 @@ const AgentStudioPage = () => {
     });
   }, [toast]);
 
+  const handleAddFieldNode = useCallback((fieldName: string, valueType: string, defaultValue: string) => {
+    // Find a good position: below existing field_setter nodes, or default position
+    setNodes((currentNodes) => {
+      const fieldSetterNodes = currentNodes.filter((n) => n.type === "field_setter");
+      let posX = 400;
+      let posY = 200;
+
+      if (fieldSetterNodes.length > 0) {
+        // Place below the last field_setter node
+        const lastFS = fieldSetterNodes.reduce((a, b) => (a.position.y > b.position.y ? a : b));
+        posX = lastFS.position.x;
+        posY = lastFS.position.y + 200;
+      } else if (currentNodes.length > 0) {
+        // Place to the right of existing nodes
+        const maxX = Math.max(...currentNodes.map((n) => n.position.x));
+        posX = maxX + 400;
+        posY = 200;
+      }
+
+      const newNode: Node = {
+        id: `field_setter-${Date.now()}`,
+        type: "field_setter",
+        position: { x: posX, y: posY },
+        data: {
+          label: fieldName.charAt(0).toUpperCase() + fieldName.slice(1).replace(/_/g, " "),
+          fieldName,
+          valueType,
+          value: defaultValue,
+        },
+      };
+
+      toast({
+        title: "Field added",
+        description: `Field "${fieldName}" has been added to the workflow`,
+      });
+
+      return [...currentNodes, newNode];
+    });
+  }, [toast]);
+
   // Node components with handlers - defined inside component to access callbacks
   const nodeComponents = {
     agentSetup: AgentSetupNode,
@@ -853,6 +893,9 @@ const AgentStudioPage = () => {
         isOpen={showFieldsPanel}
         onClose={() => setShowFieldsPanel(false)}
         nodes={nodes}
+        onUpdateNode={handleUpdateNode}
+        onDeleteNode={handleDeleteNode}
+        onAddFieldNode={handleAddFieldNode}
       />
     </div>
   );
