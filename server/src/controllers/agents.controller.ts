@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
 import { gptService, ChatMessage } from '../services/ai/gpt.service';
+import { WorkflowEngine, WorkflowEngineState } from '../services/workflow-engine.service';
 
 const supabase = getSupabaseClient();
 
@@ -521,20 +522,38 @@ export const testChat = async (req: AuthRequest, res: Response): Promise<void> =
       content: msg.content,
     }));
 
-    // Generate AI response using the messages (which include the system prompt from the frontend)
-    const lastUserMessage = chatMessages.filter(m => m.role === 'user').pop();
+    // Separate the system prompt (from the frontend's dialogue stage builder) from conversation messages
+    const systemMessage = chatMessages.find(m => m.role === 'system');
+    const conversationOnly = chatMessages.filter(m => m.role !== 'system');
+
+    const lastUserMessage = conversationOnly.filter(m => m.role === 'user').pop();
     if (!lastUserMessage) {
       res.status(400).json({ success: false, error: 'No user message found' });
       return;
     }
 
-    // Get conversation history (excluding the last user message which will be passed separately)
-    const conversationHistory = chatMessages.slice(0, -1);
+    // Use generateWithCustomPrompt to avoid injecting the default system prompt
+    // The client sends the stage-specific system prompt which includes transition signals
+    const customSystemPrompt = systemMessage?.content || 'You are a helpful AI phone assistant.';
+    const historyForContext = conversationOnly.slice(0, -1);
 
-    // Generate response
-    const aiResponse = await gptService.generateResponse(
-      lastUserMessage.content,
-      conversationHistory
+    // Build a single user prompt that includes conversation history context
+    let userPrompt = '';
+    if (historyForContext.length > 0) {
+      userPrompt += 'Conversation so far:\n';
+      historyForContext.forEach(msg => {
+        userPrompt += `${msg.role === 'assistant' ? 'You' : 'User'}: ${msg.content}\n`;
+      });
+      userPrompt += `\nUser: ${lastUserMessage.content}\n\nRespond as the AI assistant:`;
+    } else {
+      userPrompt = lastUserMessage.content;
+    }
+
+    // Generate response using the stage-specific system prompt (not the default one)
+    const aiResponse = await gptService.generateWithCustomPrompt(
+      userPrompt,
+      customSystemPrompt,
+      { maxTokens: 500, temperature: 0.7 }
     );
 
     logger.info('Test chat response generated', {
@@ -915,6 +934,195 @@ Return ONLY the JSON object.`;
   }
 };
 
+// --- Workflow-based test call sessions ---
+
+// In-memory session store for active workflow test calls
+const workflowSessions = new Map<string, {
+  engine: WorkflowEngine;
+  agentId: string;
+  userId: string;
+  direction: 'inbound' | 'outbound';
+  createdAt: Date;
+}>();
+
+// Cleanup stale sessions older than 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of workflowSessions) {
+    if (now - session.createdAt.getTime() > 30 * 60 * 1000) {
+      workflowSessions.delete(sessionId);
+    }
+  }
+}, 5 * 60 * 1000);
+
+/**
+ * Start a workflow-based test call.
+ * Creates a WorkflowEngine session and returns the initial messages.
+ */
+export const startWorkflowCall = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { direction } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!direction || !['inbound', 'outbound'].includes(direction)) {
+      res.status(400).json({ success: false, error: 'Direction must be "inbound" or "outbound"' });
+      return;
+    }
+
+    // Fetch the agent with its workflow config
+    const { data: agent, error: fetchError } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !agent) {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
+    const nodes = agent.config?.flow?.nodes || [];
+    const edges = agent.config?.flow?.edges || [];
+
+    if (nodes.length === 0) {
+      res.status(400).json({ success: false, error: 'Agent has no workflow configured' });
+      return;
+    }
+
+    // Create workflow engine
+    const engine = new WorkflowEngine(nodes, edges);
+
+    // Start the workflow
+    const result = await engine.start(direction);
+
+    // Generate session ID and store
+    const sessionId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    workflowSessions.set(sessionId, {
+      engine,
+      agentId: id,
+      userId,
+      direction,
+      createdAt: new Date(),
+    });
+
+    logger.info('Workflow call started', {
+      sessionId,
+      agentId: id,
+      direction,
+      messageCount: result.messages.length,
+      waitingForInput: result.waitingForInput,
+      isComplete: result.isComplete,
+    });
+
+    res.status(200).json({
+      success: true,
+      sessionId,
+      ...result,
+    });
+  } catch (error) {
+    logger.error('Failed to start workflow call', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Send a message to an active workflow test call session.
+ * Processes the message through the workflow engine and returns the response.
+ */
+export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id, sessionId } = req.params;
+    const { message } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!message || typeof message !== 'string') {
+      res.status(400).json({ success: false, error: 'Message is required' });
+      return;
+    }
+
+    const session = workflowSessions.get(sessionId);
+    if (!session) {
+      res.status(404).json({ success: false, error: 'Workflow session not found or expired' });
+      return;
+    }
+
+    if (session.userId !== userId || session.agentId !== id) {
+      res.status(403).json({ success: false, error: 'Session does not belong to this agent/user' });
+      return;
+    }
+
+    // Process the message through the workflow engine
+    const result = await session.engine.processMessage(message);
+
+    // Clean up if workflow is complete
+    if (result.isComplete) {
+      workflowSessions.delete(sessionId);
+    }
+
+    logger.info('Workflow message processed', {
+      sessionId,
+      messageCount: result.messages.length,
+      waitingForInput: result.waitingForInput,
+      isComplete: result.isComplete,
+    });
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    logger.error('Failed to process workflow message', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * End a workflow test call session.
+ */
+export const endWorkflowCall = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id, sessionId } = req.params;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const session = workflowSessions.get(sessionId);
+    if (session) {
+      workflowSessions.delete(sessionId);
+      logger.info('Workflow call ended', { sessionId, agentId: id });
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    logger.error('Failed to end workflow call', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -925,5 +1133,8 @@ export default {
   testChat,
   generateWorkflow,
   getAgentVersions,
-  restoreAgentVersion
+  restoreAgentVersion,
+  startWorkflowCall,
+  sendWorkflowMessage,
+  endWorkflowCall,
 };

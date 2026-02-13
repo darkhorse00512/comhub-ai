@@ -52,6 +52,24 @@ interface Message {
   nodeLabel?: string;
 }
 
+interface WorkflowMessage {
+  type: "scripted" | "ai" | "system";
+  text: string;
+  nodeLabel?: string;
+}
+
+interface WorkflowCallResult {
+  success: boolean;
+  sessionId?: string;
+  messages: WorkflowMessage[];
+  waitingForInput: boolean;
+  isComplete: boolean;
+  currentStage: string | null;
+  transferTo?: string;
+  transferType?: string;
+  error?: string;
+}
+
 interface TestAgentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -63,54 +81,6 @@ interface TestAgentModalProps {
 }
 
 type CallMode = "text" | "audio";
-
-// Evaluate a condition for junction nodes
-const evaluateCondition = (
-  fieldValue: any,
-  operator: string,
-  compareValue: string
-): boolean => {
-  switch (operator) {
-    case "==":
-      return String(fieldValue ?? "") === String(compareValue);
-    case "!=":
-      return String(fieldValue ?? "") !== String(compareValue);
-    case ">":
-      return Number(fieldValue) > Number(compareValue);
-    case "<":
-      return Number(fieldValue) < Number(compareValue);
-    case ">=":
-      return Number(fieldValue) >= Number(compareValue);
-    case "<=":
-      return Number(fieldValue) <= Number(compareValue);
-    case "is_null":
-      return fieldValue === null || fieldValue === undefined || fieldValue === "";
-    case "is_not_null":
-      return fieldValue !== null && fieldValue !== undefined && fieldValue !== "";
-    default:
-      return false;
-  }
-};
-
-// Parse AI response to detect stage completion signal
-const parseAIResponse = (
-  response: string
-): { text: string; isComplete: boolean; transition?: string } => {
-  // Check for [TRANSITION:name] first
-  const transitionMatch = response.match(/\[TRANSITION:([^\]]+)\]/);
-  const transition = transitionMatch ? transitionMatch[1].trim() : undefined;
-
-  const isComplete =
-    !!transition ||
-    response.includes("[NEXT]") ||
-    response.includes("[STAGE_COMPLETE]");
-  const text = response
-    .replace(/\[TRANSITION:[^\]]+\]/g, "")
-    .replace(/\[NEXT\]/g, "")
-    .replace(/\[STAGE_COMPLETE\]/g, "")
-    .trim();
-  return { text, isComplete, transition };
-};
 
 const TestAgentModal = ({
   isOpen,
@@ -133,6 +103,7 @@ const TestAgentModal = ({
   const [callDuration, setCallDuration] = useState(0);
   const [callSessionId, setCallSessionId] = useState<string | null>(null);
   const [currentWorkflowStep, setCurrentWorkflowStep] = useState<string | null>(null);
+  const [waitingForInput, setWaitingForInput] = useState(false);
 
   // History state
   const [showHistory, setShowHistory] = useState(false);
@@ -147,16 +118,12 @@ const TestAgentModal = ({
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Workflow execution refs
+  // Workflow state refs
   const isCallActiveRef = useRef(false);
   const callModeRef = useRef<CallMode>("text");
   const isSpeakingRef = useRef(false);
-  const agentSystemMessageRef = useRef("");
-  const workflowFieldsRef = useRef<Record<string, any>>({});
-  const dialogueResolveRef = useRef<((transition?: string) => void) | null>(null);
-  const activeDialogueNodeRef = useRef<Node | null>(null);
-  const dialogueTurnCountRef = useRef(0);
-  const dialogueMessagesRef = useRef<Array<{ role: string; content: string }>>([]);
+  const workflowSessionIdRef = useRef<string | null>(null);
+  const waitingForInputRef = useRef(false);
   const callSessionIdRef = useRef<string | null>(null);
 
   // Set mode when modal opens with initialMode
@@ -306,6 +273,7 @@ const TestAgentModal = ({
   const startAutoRecording = useCallback(() => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (isSpeakingRef.current) return;
+    if (!waitingForInputRef.current) return;
 
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition ||
@@ -314,6 +282,7 @@ const TestAgentModal = ({
 
     setTimeout(() => {
       if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
+      if (!waitingForInputRef.current) return;
 
       try {
         const recognition = new SpeechRecognitionAPI();
@@ -363,7 +332,8 @@ const TestAgentModal = ({
           } else if (
             !hasReceivedSpeech &&
             isCallActiveRef.current &&
-            callModeRef.current === "audio"
+            callModeRef.current === "audio" &&
+            waitingForInputRef.current
           ) {
             startAutoRecording();
           }
@@ -374,7 +344,8 @@ const TestAgentModal = ({
             setIsRecording(false);
             if (
               isCallActiveRef.current &&
-              callModeRef.current === "audio"
+              callModeRef.current === "audio" &&
+              waitingForInputRef.current
             ) {
               startAutoRecording();
             }
@@ -392,532 +363,162 @@ const TestAgentModal = ({
     }, 500);
   }, []);
 
-  // --- AI call for dialogue nodes only ---
-  const generateDialogueResponse = useCallback(
-    async (userMessage: string): Promise<string | null> => {
+  // --- Server-side workflow API calls ---
+  const getAuthHeaders = useCallback((): HeadersInit => {
+    const headers: HeadersInit = { "Content-Type": "application/json" };
+    const token = localStorage.getItem("backend_token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  }, []);
+
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
+
+  const startWorkflowCallAPI = useCallback(
+    async (direction: "inbound" | "outbound"): Promise<WorkflowCallResult | null> => {
       try {
-        const msgs = [
-          ...dialogueMessagesRef.current,
-          { role: "user", content: userMessage },
-        ];
-
-        const headers: HeadersInit = {
-          "Content-Type": "application/json",
-        };
-
-        const token = localStorage.getItem("backend_token");
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
         const response = await fetch(
-          `${import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api"}/agents/${agentId}/test-chat`,
+          `${apiBaseUrl}/agents/${agentId}/workflow-call/start`,
           {
             method: "POST",
-            headers,
-            body: JSON.stringify({
-              messages: msgs,
-              direction: activeTab,
-            }),
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ direction }),
           }
         );
 
         if (!response.ok) {
-          throw new Error("Failed to generate AI response");
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to start workflow call");
         }
 
-        const data = await response.json();
-        return data.response || data.message || null;
+        return await response.json();
       } catch (error) {
-        console.error("Error generating AI response:", error);
+        console.error("Error starting workflow call:", error);
         return null;
       }
     },
-    [agentId, activeTab]
+    [agentId, getAuthHeaders, apiBaseUrl]
   );
 
-  // Build the system prompt for a dialogue stage
-  const buildDialogueSystemPrompt = useCallback((node: Node): string => {
-    let prompt =
-      agentSystemMessageRef.current ||
-      "You are a helpful AI phone assistant.";
+  const sendWorkflowMessageAPI = useCallback(
+    async (message: string): Promise<WorkflowCallResult | null> => {
+      const sessionId = workflowSessionIdRef.current;
+      if (!sessionId) return null;
 
-    prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || "Dialogue"}"`;
-    prompt += `\n\n### Stage Instructions:\n${node.data?.stageMessage || "Engage in natural conversation with the caller."}`;
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/agents/${agentId}/workflow-call/${sessionId}/message`,
+          {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ message }),
+          }
+        );
 
-    // Extra instructions
-    const extraInstructions: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
-    if (extraInstructions.length > 0) {
-      prompt += `\n\n### Additional Instructions:`;
-      extraInstructions.forEach((inst: string, idx: number) => {
-        prompt += `\n${idx + 1}. ${inst}`;
-      });
-    }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to send workflow message");
+        }
 
-    // Stage overrides
-    const overrides: Array<{ key: string; value: string }> = (node.data?.stageOverrides || []).filter((o: any) => o.key.trim());
-    if (overrides.length > 0) {
-      prompt += `\n\n### Stage Settings Overrides:`;
-      overrides.forEach((o: any) => {
-        prompt += `\n- ${o.key}: ${o.value}`;
-      });
-    }
-
-    // Enabled functions
-    const enabledFunctions: Array<{ name: string; enabled: boolean }> = (node.data?.functions || []).filter((f: any) => f.enabled);
-    if (enabledFunctions.length > 0) {
-      prompt += `\n\n### Available Functions:`;
-      prompt += `\nYou have access to the following functions in this stage: ${enabledFunctions.map((f: any) => f.name).join(", ")}`;
-      prompt += `\nYou can reference these functions when appropriate in the conversation.`;
-    }
-
-    // Enabled knowledge bases
-    const enabledKBs: Array<{ name: string; enabled: boolean }> = (node.data?.knowledgeBases || []).filter((kb: any) => kb.enabled);
-    if (enabledKBs.length > 0) {
-      prompt += `\n\n### Knowledge Bases:`;
-      prompt += `\nYou have access to the following knowledge bases: ${enabledKBs.map((kb: any) => kb.name).join(", ")}`;
-      prompt += `\nUse information from these knowledge bases to provide accurate, informed responses.`;
-    }
-
-    const maxTurns = parseInt(node.data?.maxTurns);
-    if (maxTurns > 0) {
-      prompt += `\n\nYou have a maximum of ${maxTurns} conversation turns in this stage.`;
-    }
-
-    // Transitions
-    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
-
-    if (transitions.length > 0) {
-      prompt += `\n\n### Transitions:
-This stage has the following named transitions:
-${transitions.map((t: any) => `- "${t.name}"`).join("\n")}
-
-When the conversation reaches a point where it should move to a specific transition, append [TRANSITION:transition_name] at the very end of your response.
-For example: [TRANSITION:${transitions[0].name}]
-
-### Important Rules:
-- Follow the stage instructions precisely
-- Keep responses concise and natural for voice conversation
-- Be friendly and professional
-- Choose the most appropriate transition based on the conversation outcome
-- Only include [TRANSITION:name] when the stage objectives are fulfilled and you are ready to move on
-- Do NOT say the transition signal aloud - it is an invisible system signal
-- If the conversation needs to continue, do NOT include any transition signal`;
-    } else {
-      prompt += `\n\n### Important Rules:
-- Follow the stage instructions precisely
-- Keep responses concise and natural for voice conversation
-- Be friendly and professional
-- When you have completed the objectives of this conversation stage, append [NEXT] at the very end of your response
-- Only include [NEXT] when the stage objectives are truly fulfilled
-- Do NOT say "[NEXT]" aloud - it is an invisible system signal
-- If the conversation needs to continue, do NOT include [NEXT]`;
-    }
-
-    return prompt;
-  }, []);
-
-  // --- Workflow edge traversal ---
-  const getNextNodeId = useCallback(
-    (currentNodeId: string): string | null => {
-      const outEdges = edges.filter((e) => e.source === currentNodeId);
-      if (outEdges.length === 0) return null;
-      return outEdges[0].target;
-    },
-    [edges]
-  );
-
-  const evaluateJunction = useCallback(
-    (node: Node): string | null => {
-      const fieldName = node.data?.left?.field_name;
-      const operator = node.data?.operator || "==";
-      const compareValue = node.data?.right?.literal || "";
-      const fieldValue = workflowFieldsRef.current[fieldName];
-
-      const result = evaluateCondition(fieldValue, operator, compareValue);
-      const outEdges = edges.filter((e) => e.source === node.id);
-
-      // Use sourceHandle to find the correct edge for True/False
-      const trueEdge = outEdges.find((e) => e.sourceHandle === "true");
-      const falseEdge = outEdges.find((e) => e.sourceHandle === "false");
-
-      if (result) {
-        return trueEdge?.target || outEdges[0]?.target || null;
-      } else {
-        return falseEdge?.target || outEdges[1]?.target || outEdges[0]?.target || null;
+        return await response.json();
+      } catch (error) {
+        console.error("Error sending workflow message:", error);
+        return null;
       }
     },
-    [edges]
+    [agentId, getAuthHeaders, apiBaseUrl]
   );
 
-  const evaluateSwitch = useCallback(
-    (node: Node): string | null => {
-      const switchField = node.data?.switchField;
-      const fieldValue = workflowFieldsRef.current[switchField];
-      const cases = node.data?.cases || [];
-      const outEdges = edges.filter((e) => e.source === node.id);
+  const endWorkflowCallAPI = useCallback(async () => {
+    const sessionId = workflowSessionIdRef.current;
+    if (!sessionId) return;
 
-      const matchIndex = cases.findIndex(
-        (c: any) => String(c.value) === String(fieldValue)
+    try {
+      await fetch(
+        `${apiBaseUrl}/agents/${agentId}/workflow-call/${sessionId}/end`,
+        {
+          method: "POST",
+          headers: getAuthHeaders(),
+        }
+      );
+    } catch (error) {
+      console.error("Error ending workflow call:", error);
+    }
+  }, [agentId, getAuthHeaders, apiBaseUrl]);
+
+  // Process workflow result messages - display them and update state
+  const processWorkflowResult = useCallback(
+    async (result: WorkflowCallResult) => {
+      for (const msg of result.messages) {
+        if (!isCallActiveRef.current) break;
+
+        if (msg.type === "scripted" || msg.type === "ai") {
+          await outputAndSpeak(msg.text, msg.nodeLabel);
+          // Small pause between messages for natural feel
+          await new Promise((r) => setTimeout(r, 300));
+        } else if (msg.type === "system") {
+          addMessage("system", msg.text);
+        }
+      }
+
+      setWaitingForInput(result.waitingForInput);
+      waitingForInputRef.current = result.waitingForInput;
+      setCurrentWorkflowStep(
+        result.currentStage || (result.isComplete ? "Workflow completed" : null)
       );
 
-      if (matchIndex >= 0) {
-        // Use sourceHandle to find the correct edge for this case
-        const caseEdge = outEdges.find((e) => e.sourceHandle === `case-${matchIndex}`);
-        return caseEdge?.target || outEdges[matchIndex]?.target || outEdges[0]?.target || null;
+      if (result.isComplete && isCallActiveRef.current) {
+        if (result.transferTo) {
+          addMessage(
+            "system",
+            `Call would be transferred to ${result.transferTo} (${result.transferType || "cold"} transfer)`
+          );
+        }
       }
 
-      // Default: first edge
-      return outEdges[0]?.target || null;
+      return result;
     },
-    [edges]
+    [outputAndSpeak, addMessage]
   );
 
-  // --- Dialogue stage execution (blocks until complete, returns transition name if any) ---
-  const runDialogueStage = useCallback(
-    async (node: Node): Promise<string | undefined> => {
-      return new Promise<string | undefined>((resolve) => {
-        dialogueResolveRef.current = resolve;
-        activeDialogueNodeRef.current = node;
-        dialogueTurnCountRef.current = 0;
-
-        const stagePrompt = buildDialogueSystemPrompt(node);
-        dialogueMessagesRef.current = [
-          { role: "system", content: stagePrompt },
-        ];
-
-        setCurrentWorkflowStep(node.data?.label || "AI Dialogue");
-
-        // Generate first AI message for this stage
-        generateDialogueResponse(
-          "Begin the conversation for this stage. Greet or address the caller following your stage instructions."
-        ).then(async (response) => {
-          if (!isCallActiveRef.current) {
-            resolve(undefined);
-            return;
-          }
-
-          if (response) {
-            const { text, isComplete, transition } = parseAIResponse(response);
-            await outputAndSpeak(text, node.data?.label);
-            dialogueMessagesRef.current.push({
-              role: "assistant",
-              content: text,
-            });
-
-            if (isComplete) {
-              activeDialogueNodeRef.current = null;
-              dialogueResolveRef.current = null;
-              resolve(transition);
-              return;
-            }
-
-            // Wait for user input
-            if (callModeRef.current === "audio" && isCallActiveRef.current) {
-              startAutoRecording();
-            }
-          } else {
-            // AI failed - try to continue anyway
-            addMessage(
-              "system",
-              "AI response unavailable. Advancing workflow."
-            );
-            activeDialogueNodeRef.current = null;
-            dialogueResolveRef.current = null;
-            resolve(undefined);
-          }
-        });
-      });
-    },
-    [
-      buildDialogueSystemPrompt,
-      generateDialogueResponse,
-      outputAndSpeak,
-      startAutoRecording,
-      addMessage,
-    ]
-  );
-
-  // --- Handle user message (only active during dialogue nodes) ---
+  // --- Handle user message (sent to server-side workflow engine) ---
   const handleUserMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || !isCallActiveRef.current) return;
 
-      addMessage("user", text);
-      setInputMessage("");
-
-      const dialogueNode = activeDialogueNodeRef.current;
-      if (!dialogueNode) {
-        // Not in a dialogue stage - ignore user input
-        addMessage(
-          "system",
-          "Waiting for the next conversation stage..."
-        );
+      if (!waitingForInputRef.current) {
+        addMessage("system", "Waiting for the next conversation stage...");
         return;
       }
 
+      addMessage("user", text);
+      setInputMessage("");
       setIsLoading(true);
-      dialogueMessagesRef.current.push({ role: "user", content: text });
-      dialogueTurnCountRef.current++;
 
-      const aiResponse = await generateDialogueResponse(text);
+      const result = await sendWorkflowMessageAPI(text);
 
       if (!isCallActiveRef.current) {
         setIsLoading(false);
         return;
       }
 
-      if (aiResponse) {
-        const { text: responseText, isComplete, transition } = parseAIResponse(aiResponse);
-        await outputAndSpeak(responseText, dialogueNode.data?.label);
-        dialogueMessagesRef.current.push({
-          role: "assistant",
-          content: responseText,
-        });
-
-        const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
-        const shouldAdvance =
-          isComplete ||
-          (maxTurns > 0 && dialogueTurnCountRef.current >= maxTurns);
-
+      if (result) {
+        await processWorkflowResult(result);
         setIsLoading(false);
 
-        if (shouldAdvance) {
-          if (maxTurns > 0 && dialogueTurnCountRef.current >= maxTurns && !isComplete) {
-            addMessage("system", `Max turns (${maxTurns}) reached. Moving to next stage.`);
-          }
-          if (transition) {
-            addMessage("system", `Transition: ${transition}`);
-          }
-          const resolve = dialogueResolveRef.current;
-          activeDialogueNodeRef.current = null;
-          dialogueResolveRef.current = null;
-          resolve?.(transition);
-        } else {
-          // Continue listening in audio mode
-          if (callModeRef.current === "audio" && isCallActiveRef.current) {
-            startAutoRecording();
-          }
+        if (!result.isComplete && result.waitingForInput && callModeRef.current === "audio" && isCallActiveRef.current) {
+          startAutoRecording();
         }
       } else {
         setIsLoading(false);
-        addMessage("system", "Failed to get AI response. Try again.");
+        addMessage("system", "Failed to get workflow response. Try again.");
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
         }
       }
     },
-    [generateDialogueResponse, outputAndSpeak, startAutoRecording, addMessage]
-  );
-
-  // --- Main workflow execution engine ---
-  const executeWorkflow = useCallback(
-    async (startNodeId: string) => {
-      let currentId: string | null = startNodeId;
-
-      while (currentId && isCallActiveRef.current) {
-        const node = nodes.find((n) => n.id === currentId);
-        if (!node) break;
-
-        const nodeType = node.data?.type || node.type;
-
-        switch (nodeType) {
-          case "agentSetup": {
-            agentSystemMessageRef.current =
-              node.data?.systemMessage || "";
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "callDirection": {
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "scripted": {
-            setCurrentWorkflowStep(node.data?.label || "Scripted Message");
-            const script = node.data?.script || "No script configured.";
-            await outputAndSpeak(script, node.data?.label);
-            // Small pause between scripted messages
-            await new Promise((r) => setTimeout(r, 300));
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "dialogue": {
-            // AI handles this stage - blocks until dialogue completes
-            setIsLoading(false);
-            const transitionName = await runDialogueStage(node);
-            if (!isCallActiveRef.current) return;
-            // Small pause before next node
-            await new Promise((r) => setTimeout(r, 300));
-
-            // Use transition name to pick the correct outgoing edge via sourceHandle
-            const nodeTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
-            const outEdges = edges.filter((e) => e.source === node.id);
-
-            if (transitionName && nodeTransitions.length > 0) {
-              const matchedTransition = nodeTransitions.find(
-                (t) => t.name.toLowerCase() === transitionName.toLowerCase()
-              );
-              if (matchedTransition) {
-                // Build the sourceHandle ID matching getNodeOutputHandles logic
-                const handleId = matchedTransition.id || `t-${matchedTransition.name}`;
-                const matchEdge = outEdges.find((e) => e.sourceHandle === handleId);
-                currentId = matchEdge?.target || outEdges[0]?.target || null;
-              } else {
-                // Transition name didn't match - fall back to first edge
-                currentId = outEdges[0]?.target || null;
-              }
-            } else {
-              currentId = getNextNodeId(currentId);
-            }
-            break;
-          }
-
-          case "field_setter": {
-            setCurrentWorkflowStep(node.data?.label || "Setting Field");
-            const fieldName = node.data?.fieldName;
-            const value = node.data?.value;
-            const valueType = node.data?.valueType || "text";
-
-            if (fieldName) {
-              let parsedValue = value;
-              if (valueType === "number") parsedValue = Number(value);
-              if (valueType === "boolean")
-                parsedValue = value === "true" || value === true;
-
-              workflowFieldsRef.current[fieldName] = parsedValue;
-              addMessage(
-                "system",
-                `Field "${fieldName}" set to ${JSON.stringify(parsedValue)}`
-              );
-            }
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "junction": {
-            setCurrentWorkflowStep(node.data?.label || "Evaluating Condition");
-            const fieldName = node.data?.left?.field_name || "";
-            const operator = node.data?.operator || "==";
-            const compareVal = node.data?.right?.literal || "";
-            const fieldVal = workflowFieldsRef.current[fieldName];
-            const result = evaluateCondition(fieldVal, operator, compareVal);
-
-            addMessage(
-              "system",
-              `Condition: ${fieldName} ${operator} "${compareVal}" → ${result ? "True" : "False"}`
-            );
-
-            currentId = evaluateJunction(node);
-            break;
-          }
-
-          case "switch": {
-            setCurrentWorkflowStep(node.data?.label || "Switch");
-            const switchField = node.data?.switchField || "";
-            const switchVal = workflowFieldsRef.current[switchField];
-            addMessage(
-              "system",
-              `Switch: ${switchField} = "${switchVal ?? "undefined"}"`
-            );
-            currentId = evaluateSwitch(node);
-            break;
-          }
-
-          case "call_transfer": {
-            setCurrentWorkflowStep(node.data?.label || "Call Transfer");
-            const transferMsg =
-              node.data?.transferMessage ||
-              `Transferring your call to ${node.data?.transferTo || "an agent"}.`;
-            await outputAndSpeak(transferMsg, node.data?.label);
-            addMessage(
-              "system",
-              `Call transferred to ${node.data?.transferTo || "agent"} (${node.data?.transferType || "cold"} transfer)`
-            );
-            currentId = null; // End workflow
-            break;
-          }
-
-          case "voicemail": {
-            setCurrentWorkflowStep(node.data?.label || "Voicemail");
-            const greeting =
-              node.data?.greetingMessage ||
-              "Please leave a message after the beep.";
-            await outputAndSpeak(greeting, node.data?.label);
-            addMessage("system", "Voicemail recording started.");
-            currentId = null; // End workflow
-            break;
-          }
-
-          case "time_limit": {
-            setCurrentWorkflowStep(node.data?.label || "Time Limit");
-            const maxDuration = node.data?.maxDuration;
-            if (maxDuration) {
-              addMessage(
-                "system",
-                `Time limit set: ${maxDuration}s`
-              );
-            }
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "reconfigure": {
-            setCurrentWorkflowStep(node.data?.label || "Reconfigure");
-            addMessage(
-              "system",
-              `Agent reconfigured: ${node.data?.setting || "setting"} → ${node.data?.newValue || "value"}`
-            );
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "fallback": {
-            setCurrentWorkflowStep(node.data?.label || "Fallback");
-            const fallbackMsg =
-              node.data?.fallbackMessage ||
-              "I'm sorry, I didn't understand that.";
-            await outputAndSpeak(fallbackMsg, node.data?.label);
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          case "function": {
-            setCurrentWorkflowStep(node.data?.label || "Function Call");
-            addMessage(
-              "system",
-              `Function "${node.data?.functionName || "unknown"}" executed (simulated)`
-            );
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-
-          default: {
-            // Unknown node type - just advance
-            currentId = getNextNodeId(currentId);
-            break;
-          }
-        }
-      }
-
-      // Workflow completed
-      if (isCallActiveRef.current) {
-        setCurrentWorkflowStep("Workflow completed");
-        addMessage("system", "Call workflow completed.");
-      }
-    },
-    [
-      nodes,
-      edges,
-      getNextNodeId,
-      evaluateJunction,
-      evaluateSwitch,
-      outputAndSpeak,
-      runDialogueStage,
-      addMessage,
-    ]
+    [sendWorkflowMessageAPI, processWorkflowResult, addMessage, startAutoRecording]
   );
 
   // --- Start call ---
@@ -927,11 +528,9 @@ For example: [TRANSITION:${transitions[0].name}]
       setIsCallActive(true);
       isCallActiveRef.current = true;
       setMessages([]);
-      workflowFieldsRef.current = {};
-      dialogueResolveRef.current = null;
-      activeDialogueNodeRef.current = null;
-      dialogueTurnCountRef.current = 0;
-      dialogueMessagesRef.current = [];
+      setWaitingForInput(false);
+      waitingForInputRef.current = false;
+      workflowSessionIdRef.current = null;
       setCallDuration(0);
       setCurrentWorkflowStep("Initializing call...");
 
@@ -955,7 +554,7 @@ For example: [TRANSITION:${transitions[0].name}]
         }
       }
 
-      // Create test call session
+      // Create test call session for history tracking
       let sessionId: string | null = null;
       try {
         const sessionResult = await api.createTestCallSession(
@@ -976,28 +575,29 @@ For example: [TRANSITION:${transitions[0].name}]
         setCallDuration((prev) => prev + 1);
       }, 1000);
 
-      // Find agent setup node and extract system message
-      const agentSetupNode = nodes.find((n) => n.type === "agentSetup");
-      agentSystemMessageRef.current =
-        agentSetupNode?.data?.systemMessage || "";
+      // Start workflow via server-side engine
+      const result = await startWorkflowCallAPI(activeTab);
 
-      // Find start node for selected direction
-      const startNode = nodes.find(
-        (n) =>
-          n.type === "callDirection" && n.data?.direction === activeTab
-      );
-
-      if (!startNode) {
+      if (!result || !result.success) {
         toast({
-          title: "No Start Node",
-          description: `No ${activeTab} call direction node found in the workflow.`,
+          title: "Workflow Error",
+          description:
+            result?.error ||
+            `Failed to start workflow. Check if the workflow has a valid ${activeTab} call direction node.`,
           variant: "destructive",
         });
         setIsCallActive(false);
         isCallActiveRef.current = false;
         setIsLoading(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
         return;
       }
+
+      // Store workflow session ID
+      workflowSessionIdRef.current = result.sessionId || null;
 
       setIsLoading(false);
 
@@ -1009,8 +609,17 @@ For example: [TRANSITION:${transitions[0].name}]
             : "Text mode active. The workflow will execute step by step.",
       });
 
-      // Execute the workflow starting from callDirection
-      await executeWorkflow(startNode.id);
+      // Process initial workflow messages (greetings, scripted messages, etc.)
+      await processWorkflowResult(result);
+
+      // If waiting for input in audio mode, start recording
+      if (
+        result.waitingForInput &&
+        callModeRef.current === "audio" &&
+        isCallActiveRef.current
+      ) {
+        startAutoRecording();
+      }
     } catch (error) {
       console.error("Error starting call:", error);
       toast({
@@ -1020,18 +629,24 @@ For example: [TRANSITION:${transitions[0].name}]
       });
       endCall();
     }
-  }, [activeTab, callMode, nodes, toast, agentId, executeWorkflow]);
+  }, [
+    activeTab,
+    callMode,
+    toast,
+    agentId,
+    startWorkflowCallAPI,
+    processWorkflowResult,
+    startAutoRecording,
+  ]);
 
   // --- End call ---
   const endCall = useCallback(async () => {
     isCallActiveRef.current = false;
+    waitingForInputRef.current = false;
 
-    // Resolve any pending dialogue stage
-    if (dialogueResolveRef.current) {
-      dialogueResolveRef.current(undefined);
-      dialogueResolveRef.current = null;
-    }
-    activeDialogueNodeRef.current = null;
+    // End workflow session on server
+    await endWorkflowCallAPI();
+    workflowSessionIdRef.current = null;
 
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -1072,12 +687,13 @@ For example: [TRANSITION:${transitions[0].name}]
     setIsSpeaking(false);
     isSpeakingRef.current = false;
     setIsLoading(false);
+    setWaitingForInput(false);
 
     toast({
       title: "Call Ended",
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast, callSessionId]);
+  }, [callDuration, toast, callSessionId, endWorkflowCallAPI]);
 
   // Manual mic for text mode
   const startRecording = async () => {
@@ -1309,7 +925,7 @@ For example: [TRANSITION:${transitions[0].name}]
                   messagesEndRef={messagesEndRef}
                   scrollAreaRef={scrollAreaRef}
                   currentWorkflowStep={currentWorkflowStep}
-                  hasActiveDialogue={!!activeDialogueNodeRef.current}
+                  waitingForInput={waitingForInput}
                   onStartCall={startCall}
                   onEndCall={endCall}
                   onStartRecording={startRecording}
@@ -1317,7 +933,6 @@ For example: [TRANSITION:${transitions[0].name}]
                   onInputChange={setInputMessage}
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
-
                   formatDuration={formatDuration}
                 />
               )}
@@ -1344,7 +959,7 @@ For example: [TRANSITION:${transitions[0].name}]
                   messagesEndRef={messagesEndRef}
                   scrollAreaRef={scrollAreaRef}
                   currentWorkflowStep={currentWorkflowStep}
-                  hasActiveDialogue={!!activeDialogueNodeRef.current}
+                  waitingForInput={waitingForInput}
                   onStartCall={startCall}
                   onEndCall={endCall}
                   onStartRecording={startRecording}
@@ -1352,7 +967,6 @@ For example: [TRANSITION:${transitions[0].name}]
                   onInputChange={setInputMessage}
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
-
                   formatDuration={formatDuration}
                 />
               )}
@@ -1523,7 +1137,7 @@ interface CallInterfaceProps {
   messagesEndRef: React.RefObject<HTMLDivElement>;
   scrollAreaRef: React.RefObject<HTMLDivElement>;
   currentWorkflowStep: string | null;
-  hasActiveDialogue: boolean;
+  waitingForInput: boolean;
   onStartCall: () => void;
   onEndCall: () => void;
   onStartRecording: () => void;
@@ -1546,7 +1160,7 @@ const CallInterface = ({
   messagesEndRef,
   scrollAreaRef,
   currentWorkflowStep,
-  hasActiveDialogue,
+  waitingForInput,
   onStartCall,
   onEndCall,
   onStartRecording,
@@ -1685,8 +1299,8 @@ const CallInterface = ({
 
       {/* Controls */}
       <div className="space-y-3 shrink-0">
-        {/* Text Input - only in text mode when call is active and dialogue is active */}
-        {isCallActive && callMode === "text" && hasActiveDialogue && (
+        {/* Text Input - only in text mode when call is active and waiting for input */}
+        {isCallActive && callMode === "text" && waitingForInput && (
           <div className="flex gap-2">
             <Input
               value={inputMessage}
@@ -1728,7 +1342,7 @@ const CallInterface = ({
           ) : (
             <>
               {/* Manual mic button - only in text mode during dialogue */}
-              {callMode === "text" && hasActiveDialogue && (
+              {callMode === "text" && waitingForInput && (
                 <Button
                   variant={isRecording ? "destructive" : "outline"}
                   size="icon"
@@ -1787,12 +1401,12 @@ const CallInterface = ({
               : "Audio mode: AI speaks, then auto-listens for your response"}
           </p>
         )}
-        {isCallActive && callMode === "text" && !hasActiveDialogue && (
+        {isCallActive && callMode === "text" && !waitingForInput && (
           <p className="text-xs text-center text-muted-foreground">
             Executing workflow... waiting for dialogue stage
           </p>
         )}
-        {isCallActive && callMode === "text" && hasActiveDialogue && (
+        {isCallActive && callMode === "text" && waitingForInput && (
           <p className="text-xs text-center text-muted-foreground">
             AI dialogue active - type a message or hold mic to speak
           </p>
@@ -1805,7 +1419,7 @@ const CallInterface = ({
                 ? "AI is speaking..."
                 : isLoading
                   ? "Processing..."
-                  : hasActiveDialogue
+                  : waitingForInput
                     ? "Waiting for your response..."
                     : "Executing workflow..."}
           </p>

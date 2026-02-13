@@ -37,4 +37,9 @@ router.get('/:id/versions', agentsController.getAgentVersions);
 // Restore agent to a specific version
 router.post('/:id/versions/:versionId/restore', agentsController.restoreAgentVersion);
 
+// Workflow-based test calls
+router.post('/:id/workflow-call/start', agentsController.startWorkflowCall);
+router.post('/:id/workflow-call/:sessionId/message', agentsController.sendWorkflowMessage);
+router.post('/:id/workflow-call/:sessionId/end', agentsController.endWorkflowCall);
+
 export default router;

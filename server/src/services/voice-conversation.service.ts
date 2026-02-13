@@ -6,6 +6,7 @@ import sttService from './ai/stt.service';
 import gptService, { ChatMessage } from './ai/gpt.service';
 import getSupabaseClient from '../config/supabase';
 import storageService from './storage.service';
+import { WorkflowEngine, WorkflowStepResult, WorkflowMessage } from './workflow-engine.service';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
@@ -22,20 +23,64 @@ interface ActiveConversation {
   callerNumber: string;
   calleeNumber: string;
   startedAt: Date;
+  workflowEngine?: WorkflowEngine;
+  agentId?: string;
 }
 
 class VoiceConversationService {
   private activeConversations: Map<string, ActiveConversation> = new Map();
   private supabase = getSupabaseClient();
 
-  private readonly GREETING_MESSAGE = "Hey there! Here is ComHub AI. What can I help you with today?";
+  private readonly DEFAULT_GREETING = "Hey there! Here is ComHub AI. What can I help you with today?";
   private readonly SILENCE_TIMEOUT = 2; // seconds
   private readonly MAX_RECORDING_LENGTH = 30; // seconds
+
+  /**
+   * Load an agent's workflow from the database and create a WorkflowEngine.
+   */
+  private async loadAgentWorkflow(agentId: string, direction: 'inbound' | 'outbound'): Promise<{
+    engine: WorkflowEngine;
+    initialResult: import('./workflow-engine.service').WorkflowStepResult;
+  } | null> {
+    try {
+      const { data: agent, error } = await this.supabase
+        .from('agents')
+        .select('config')
+        .eq('id', agentId)
+        .single();
+
+      if (error || !agent?.config?.flow?.nodes?.length) {
+        logger.warn('Could not load agent workflow', { agentId, error: error?.message });
+        return null;
+      }
+
+      const nodes = agent.config.flow.nodes;
+      const edges = agent.config.flow.edges || [];
+      const engine = new WorkflowEngine(nodes, edges);
+      const initialResult = await engine.start(direction);
+
+      return { engine, initialResult };
+    } catch (err) {
+      logger.error('Failed to load agent workflow', { agentId, error: err });
+      return null;
+    }
+  }
+
+  /**
+   * Combine all scripted/ai messages from a workflow step result into a single speak string.
+   */
+  private combineMessages(messages: WorkflowMessage[]): string {
+    return messages
+      .filter(m => m.type === 'scripted' || m.type === 'ai')
+      .map(m => m.text)
+      .join(' ');
+  }
 
   async startInboundConversation(
     callSid: string,
     callerNumber: string,
-    calleeNumber: string
+    calleeNumber: string,
+    agentId?: string
   ): Promise<string> {
     try {
       logger.info('=== STARTING INBOUND CONVERSATION ===', { callSid, callerNumber, calleeNumber });
@@ -82,25 +127,45 @@ class VoiceConversationService {
         callerNumber,
         calleeNumber,
         startedAt: new Date(),
+        agentId,
       };
 
       this.activeConversations.set(callSid, conversation);
 
+      // Determine greeting: use workflow engine if agent is provided, else default
+      let greetingText = this.DEFAULT_GREETING;
+
+      if (agentId) {
+        const workflow = await this.loadAgentWorkflow(agentId, 'inbound');
+        if (workflow) {
+          conversation.workflowEngine = workflow.engine;
+          const spokenText = this.combineMessages(workflow.initialResult.messages);
+          if (spokenText) {
+            greetingText = spokenText;
+          }
+          logger.info('Workflow engine loaded for inbound call', {
+            callSid,
+            agentId,
+            waitingForInput: workflow.initialResult.waitingForInput,
+            isComplete: workflow.initialResult.isComplete,
+          });
+        }
+      }
+
       // Generate greeting audio
-      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
+      logger.info('Generating greeting audio...', { greeting: greetingText.substring(0, 100) });
       let greetingAudioUrl: string;
       try {
         greetingAudioUrl = await this.generateAndSaveAudio(
-          this.GREETING_MESSAGE,
+          greetingText,
           callSession.id,
           'greeting'
         );
         logger.info('Greeting audio generated', { url: greetingAudioUrl });
       } catch (audioError) {
         logger.error('Failed to generate greeting audio:', audioError);
-        // Return TwiML with say fallback if audio generation fails
         const response = new VoiceResponse();
-        response.say({ voice: 'alice' }, this.GREETING_MESSAGE);
+        response.say({ voice: 'alice' }, greetingText);
         response.record({
           action: `${config.server.apiBaseUrl}/api/twilio/handle-recording`,
           method: 'POST',
@@ -115,8 +180,8 @@ class VoiceConversationService {
       }
 
       // Save greeting message to database
-      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
-      conversation.history.push({ role: 'assistant', content: this.GREETING_MESSAGE });
+      await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
+      conversation.history.push({ role: 'assistant', content: greetingText });
 
       // Generate TwiML for greeting + recording
       const twiml = this.generateGreetingTwiML(greetingAudioUrl);
@@ -139,10 +204,11 @@ class VoiceConversationService {
     callSid: string,
     calleeNumber: string,
     userId: string,
-    existingSessionId?: string
+    existingSessionId?: string,
+    agentId?: string
   ): Promise<string> {
     try {
-      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId, existingSessionId });
+      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId, existingSessionId, agentId });
 
       let callSession: any;
 
@@ -207,22 +273,43 @@ class VoiceConversationService {
         callerNumber: config.twilio.phoneNumber,
         calleeNumber,
         startedAt: new Date(),
+        agentId,
       };
 
       this.activeConversations.set(callSid, conversation);
 
+      // Determine greeting: use workflow engine if agent is provided, else default
+      let greetingText = this.DEFAULT_GREETING;
+
+      if (agentId) {
+        const workflow = await this.loadAgentWorkflow(agentId, 'outbound');
+        if (workflow) {
+          conversation.workflowEngine = workflow.engine;
+          const spokenText = this.combineMessages(workflow.initialResult.messages);
+          if (spokenText) {
+            greetingText = spokenText;
+          }
+          logger.info('Workflow engine loaded for outbound call', {
+            callSid,
+            agentId,
+            waitingForInput: workflow.initialResult.waitingForInput,
+            isComplete: workflow.initialResult.isComplete,
+          });
+        }
+      }
+
       // Generate greeting audio and upload to Supabase
-      logger.info('Generating greeting audio...', { greeting: this.GREETING_MESSAGE });
+      logger.info('Generating greeting audio...', { greeting: greetingText.substring(0, 100) });
       const greetingAudioUrl = await this.generateAndSaveAudio(
-        this.GREETING_MESSAGE,
+        greetingText,
         callSession.id,
         'greeting'
       );
       logger.info('Greeting audio generated', { url: greetingAudioUrl });
 
       // Save greeting message to database
-      await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
-      conversation.history.push({ role: 'assistant', content: this.GREETING_MESSAGE });
+      await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
+      conversation.history.push({ role: 'assistant', content: greetingText });
 
       // Generate TwiML for greeting + recording
       const twiml = this.generateGreetingTwiML(greetingAudioUrl);
@@ -278,21 +365,65 @@ class VoiceConversationService {
 
       logger.info('User said', { callSid, text: transcribedText });
 
-      // Generate AI response
-      const aiResponse = await gptService.generateResponse(transcribedText, conversation.history);
+      let responseText: string;
 
-      // Generate audio for AI response
+      // Use workflow engine if available, otherwise fall back to simple AI chat
+      if (conversation.workflowEngine && conversation.workflowEngine.isWaitingForInput()) {
+        const result = await conversation.workflowEngine.processMessage(transcribedText);
+        responseText = this.combineMessages(result.messages);
+
+        if (!responseText) {
+          responseText = 'Thank you for calling. Goodbye!';
+        }
+
+        logger.info('Workflow engine processed message', {
+          callSid,
+          waitingForInput: result.waitingForInput,
+          isComplete: result.isComplete,
+          currentStage: result.currentStage,
+        });
+
+        // If workflow is complete or call needs to transfer, handle terminal states
+        if (result.isComplete) {
+          const aiAudioPath = await this.generateAndSaveAudio(
+            responseText,
+            conversation.callSessionId,
+            'response'
+          );
+          await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioPath);
+          conversation.history.push({ role: 'assistant', content: responseText });
+
+          if (result.transferTo) {
+            // Handle call transfer
+            logger.info('Call transfer requested', { callSid, transferTo: result.transferTo });
+            const response = new VoiceResponse();
+            response.play(aiAudioPath);
+            const dial = response.dial();
+            dial.number(result.transferTo);
+            return response.toString();
+          }
+
+          // Workflow done - end call gracefully
+          return this.generateEndCallTwiML(responseText);
+        }
+      } else {
+        // Fall back to simple AI chat (no workflow)
+        const aiResponse = await gptService.generateResponse(transcribedText, conversation.history);
+        responseText = aiResponse.text;
+      }
+
+      // Generate audio for response
       const aiAudioPath = await this.generateAndSaveAudio(
-        aiResponse.text,
+        responseText,
         conversation.callSessionId,
         'response'
       );
 
       // Save AI response
-      await this.saveMessage(conversation.callSessionId, 'ai', aiResponse.text, aiAudioPath);
-      conversation.history.push({ role: 'assistant', content: aiResponse.text });
+      await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioPath);
+      conversation.history.push({ role: 'assistant', content: responseText });
 
-      logger.info('AI responded', { callSid, text: aiResponse.text.substring(0, 100) });
+      logger.info('AI responded', { callSid, text: responseText.substring(0, 100) });
 
       // Continue conversation
       return this.generatePlayAndRecordTwiML(aiAudioPath);
@@ -567,13 +698,13 @@ class VoiceConversationService {
 
         // Generate greeting audio
         const greetingAudioUrl = await this.generateAndSaveAudio(
-          this.GREETING_MESSAGE,
+          this.DEFAULT_GREETING,
           callSession.id,
           'greeting'
         );
 
         // Save greeting message
-        await this.saveMessage(callSession.id, 'ai', this.GREETING_MESSAGE, greetingAudioUrl);
+        await this.saveMessage(callSession.id, 'ai', this.DEFAULT_GREETING, greetingAudioUrl);
 
         // Generate a sample user response for testing
         const testUserMessage = "Hello, I'm testing the AI assistant.";
@@ -581,7 +712,7 @@ class VoiceConversationService {
 
         // Generate AI response
         const aiResponse = await gptService.generateResponse(testUserMessage, [
-          { role: 'assistant', content: this.GREETING_MESSAGE },
+          { role: 'assistant', content: this.DEFAULT_GREETING },
           { role: 'user', content: testUserMessage },
         ]);
 
