@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { FlowCanvas, FlowCanvasRef, Node, Edge } from "@/components/FlowCanvas";
 import {
   Save,
-  Upload,
+  Bug,
   Rocket,
   History,
   Database,
@@ -49,6 +49,8 @@ import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 import HistoryPanel from "@/components/HistoryPanel";
 import FieldsPanel from "@/components/FieldsPanel";
+import DebugPanel from "@/components/DebugPanel";
+import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
 
 interface Agent {
   id: string;
@@ -97,6 +99,11 @@ const AgentStudioPage = () => {
   const [showNodePalette, setShowNodePalette] = useState(true);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [showFieldsPanel, setShowFieldsPanel] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [debugErrors, setDebugErrors] = useState<ValidationItem[]>([]);
+  const [debugWarnings, setDebugWarnings] = useState<ValidationItem[]>([]);
+  const [debugPassed, setDebugPassed] = useState(false);
+  const [errorNodeIds, setErrorNodeIds] = useState<Set<string>>(new Set());
 
   // Unsaved changes tracking
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
@@ -126,6 +133,15 @@ const AgentStudioPage = () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  // Clear debug error highlights when workflow changes
+  useEffect(() => {
+    if (errorNodeIds.size > 0) {
+      setErrorNodeIds(new Set());
+      setDebugPassed(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges]);
 
   // Node action handlers - use functional updates to avoid stale closures
   const handleCloneNode = useCallback((nodeId: string) => {
@@ -521,15 +537,31 @@ const AgentStudioPage = () => {
     }
   };
 
-  const handlePublish = () => {
-    toast({
-      title: "Publish Agent",
-      description: "Publishing agent to production...",
-    });
-  };
+  const handleDebug = useCallback(() => {
+    const result = validateWorkflow(nodes, edges);
+    setDebugErrors(result.errors);
+    setDebugWarnings(result.warnings);
+    setDebugPassed(result.errors.length === 0);
+    setErrorNodeIds(new Set(result.errors.map(e => e.nodeId).filter(Boolean)));
+    setShowDebugPanel(true);
+    setShowHistoryPanel(false);
+    setShowFieldsPanel(false);
+  }, [nodes, edges]);
+
+  const handleNavigateToNode = useCallback((nodeId: string) => {
+    flowCanvasRef.current?.panToNode(nodeId);
+  }, []);
 
   const handleDeploy = async () => {
-    // Deploy means save and activate the agent
+    if (!debugPassed) {
+      toast({
+        title: "Debug Required",
+        description: "Please debug your workflow and fix all errors before deploying.",
+        variant: "destructive",
+      });
+      handleDebug();
+      return;
+    }
     const saved = await handleSave(false);
     if (saved) {
       toast({
@@ -675,11 +707,11 @@ const AgentStudioPage = () => {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowHistoryPanel(true)}>
+            <Button variant="outline" size="sm" onClick={() => { setShowHistoryPanel(true); setShowDebugPanel(false); setShowFieldsPanel(false); }}>
               <History className="w-4 h-4 mr-2" />
               History
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowFieldsPanel(true)}>
+            <Button variant="outline" size="sm" onClick={() => { setShowFieldsPanel(true); setShowDebugPanel(false); setShowHistoryPanel(false); }}>
               <Database className="w-4 h-4 mr-2" />
               Fields
             </Button>
@@ -690,11 +722,11 @@ const AgentStudioPage = () => {
             <Button
               variant="outline"
               size="sm"
-              className="text-purple-600"
-              onClick={handlePublish}
+              className={debugPassed ? "text-green-600 border-green-300" : "text-orange-600 border-orange-300"}
+              onClick={handleDebug}
             >
-              <Upload className="w-4 h-4 mr-2" />
-              Publish
+              <Bug className="w-4 h-4 mr-2" />
+              Debug
             </Button>
             <Button
               size="sm"
@@ -810,6 +842,7 @@ const AgentStudioPage = () => {
               onEdgesChange={setEdges}
               onConnect={handleConnect}
               nodeComponents={nodeComponents}
+              errorNodeIds={errorNodeIds}
             />
           </div>
 
@@ -896,6 +929,15 @@ const AgentStudioPage = () => {
         onUpdateNode={handleUpdateNode}
         onDeleteNode={handleDeleteNode}
         onAddFieldNode={handleAddFieldNode}
+      />
+
+      {/* Debug Panel */}
+      <DebugPanel
+        isOpen={showDebugPanel}
+        onClose={() => { setShowDebugPanel(false); setErrorNodeIds(new Set()); }}
+        errors={debugErrors}
+        warnings={debugWarnings}
+        onNavigateToNode={handleNavigateToNode}
       />
     </div>
   );

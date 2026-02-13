@@ -111,6 +111,7 @@ export interface FlowCanvasRef {
   screenToCanvas: (screenX: number, screenY: number) => { x: number; y: number };
   getScale: () => number;
   getPan: () => { x: number; y: number };
+  panToNode: (nodeId: string) => void;
 }
 
 interface FlowCanvasProps {
@@ -120,6 +121,7 @@ interface FlowCanvasProps {
   onEdgesChange: (edges: Edge[]) => void;
   onConnect: (sourceId: string, targetId: string, sourceHandle?: string) => void;
   nodeComponents: Record<string, React.ComponentType<any>>;
+  errorNodeIds?: Set<string>;
 }
 
 export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
@@ -129,6 +131,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
   onEdgesChange,
   onConnect,
   nodeComponents,
+  errorNodeIds,
 }, ref) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -171,7 +174,20 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
     screenToCanvas,
     getScale: () => scale,
     getPan: () => pan,
-  }), [screenToCanvas, scale, pan]);
+    panToNode: (nodeId: string) => {
+      const node = nodes.find(n => n.id === nodeId);
+      if (!node || !canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const measured = nodeDimensions.get(nodeId);
+      const nw = measured?.width ?? 250;
+      const nh = measured?.height ?? 100;
+      const targetX = centerX - (node.position.x + nw / 2) * scale;
+      const targetY = centerY - (node.position.y + nh / 2) * scale;
+      setPan({ x: targetX, y: targetY });
+    },
+  }), [screenToCanvas, scale, pan, nodes, nodeDimensions]);
 
   // Measure node dimensions after render
   useEffect(() => {
@@ -716,6 +732,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
         {nodes.map((node) => {
           const NodeComponent = nodeComponents[node.type] || nodeComponents.default;
           const isSelected = selectedNodeIds.has(node.id);
+          const isError = errorNodeIds?.has(node.id) ?? false;
           const measured = nodeDimensions.get(node.id);
           const dimensions = measured || getFallbackNodeDimensions(node.type);
 
@@ -726,7 +743,7 @@ export const FlowCanvas = forwardRef<FlowCanvasRef, FlowCanvasProps>(({
                 if (el) { nodeRefs.current.set(node.id, el); }
                 else { nodeRefs.current.delete(node.id); }
               }}
-              className={`flow-node${isSelected ? " flow-node-selected" : ""}`}
+              className={`flow-node${isSelected ? " flow-node-selected" : ""}${isError ? " flow-node-error" : ""}`}
               data-node-id={node.id}
               style={{
                 position: "absolute",
