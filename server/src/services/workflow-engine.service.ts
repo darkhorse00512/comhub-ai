@@ -120,6 +120,7 @@ export class WorkflowEngine {
   private nodes: WorkflowNode[];
   private edges: WorkflowEdge[];
   private state: WorkflowEngineState;
+  private _processing = false;
 
   constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string) {
     this.nodes = nodes;
@@ -351,6 +352,12 @@ For example: [TRANSITION:${transitions[0].name}]
   async start(direction: 'inbound' | 'outbound'): Promise<WorkflowStepResult> {
     const messages: WorkflowMessage[] = [];
 
+    logger.info('WorkflowEngine: Starting workflow', {
+      direction,
+      nodeCount: this.nodes.length,
+      edgeCount: this.edges.length,
+    });
+
     // Find and process the agentSetup node to extract system message
     const agentSetupNode = this.nodes.find(
       (n) => n.type === 'agentSetup' || n.data?.type === 'agentSetup'
@@ -386,6 +393,49 @@ For example: [TRANSITION:${transitions[0].name}]
    * If the dialogue completes, continues executing subsequent non-interactive nodes.
    */
   async processMessage(userMessage: string): Promise<WorkflowStepResult> {
+    // Prevent concurrent calls — if a previous processMessage is still running,
+    // return a busy result instead of corrupting state.
+    if (this._processing) {
+      logger.warn('WorkflowEngine: processMessage called while already processing — rejecting');
+      return {
+        messages: [{ type: 'system', text: 'Still processing previous message. Please wait.' }],
+        waitingForInput: true,
+        isComplete: false,
+        currentStage: 'Processing...',
+      };
+    }
+
+    this._processing = true;
+
+    try {
+      return await this._processMessageInternal(userMessage);
+    } catch (error) {
+      logger.error('WorkflowEngine: Unhandled error in processMessage', {
+        error,
+        userMessage: userMessage?.substring(0, 100),
+        state: {
+          isInDialogue: this.state.isInDialogue,
+          isWaitingAfterSpoken: this.state.isWaitingAfterSpoken,
+          currentNodeId: this.state.currentNodeId,
+          currentDialogueNodeId: this.state.currentDialogueNodeId,
+          dialogueTurnCount: this.state.dialogueTurnCount,
+          dialogueHistoryLength: this.state.dialogueHistory.length,
+        },
+      });
+
+      // Return a graceful error instead of letting the exception propagate as a 500
+      return {
+        messages: [{ type: 'system', text: 'An error occurred processing your message. Please try again.' }],
+        waitingForInput: this.state.isInDialogue || this.state.isWaitingAfterSpoken,
+        isComplete: false,
+        currentStage: 'Error',
+      };
+    } finally {
+      this._processing = false;
+    }
+  }
+
+  private async _processMessageInternal(userMessage: string): Promise<WorkflowStepResult> {
     const messages: WorkflowMessage[] = [];
 
     if (this.state.isComplete) {
@@ -401,6 +451,10 @@ For example: [TRANSITION:${transitions[0].name}]
     // The agent spoke something and is waiting for the caller to respond.
     // Capture the response, then continue executing the workflow from the next node.
     if (this.state.isWaitingAfterSpoken) {
+      logger.info('WorkflowEngine: Processing user response after spoken node', {
+        userMessage: userMessage.substring(0, 100),
+        nextNodeId: this.state.currentNodeId,
+      });
       this.state.isWaitingAfterSpoken = false;
       this.state.conversationContext.push({ role: 'user', text: userMessage });
       return this.executeFromCurrent(messages);
@@ -408,6 +462,10 @@ For example: [TRANSITION:${transitions[0].name}]
 
     // --- Case 2: In dialogue ---
     if (!this.state.isInDialogue || !this.state.currentDialogueNodeId) {
+      logger.warn('WorkflowEngine: processMessage called but not in dialogue and not waiting', {
+        isInDialogue: this.state.isInDialogue,
+        currentDialogueNodeId: this.state.currentDialogueNodeId,
+      });
       return {
         messages: [{ type: 'system', text: 'Not waiting for input.' }],
         waitingForInput: false,
@@ -428,6 +486,13 @@ For example: [TRANSITION:${transitions[0].name}]
       };
     }
 
+    logger.info('WorkflowEngine: Processing dialogue message', {
+      userMessage: userMessage.substring(0, 100),
+      nodeLabel: dialogueNode.data?.label,
+      turnCount: this.state.dialogueTurnCount,
+      historyLength: this.state.dialogueHistory.length,
+    });
+
     // Add user message to dialogue history and conversation context
     this.state.dialogueHistory.push({ role: 'user', content: userMessage });
     this.state.conversationContext.push({ role: 'user', text: userMessage });
@@ -444,6 +509,13 @@ For example: [TRANSITION:${transitions[0].name}]
     }
 
     const { text, isComplete, transition } = parseAIResponse(aiResponse);
+
+    logger.info('WorkflowEngine: Dialogue AI response', {
+      responsePreview: text.substring(0, 100),
+      isComplete,
+      transition,
+      turnCount: this.state.dialogueTurnCount,
+    });
 
     messages.push({
       type: 'ai',
@@ -489,6 +561,26 @@ For example: [TRANSITION:${transitions[0].name}]
    * until hitting a dialogue node, the end, or a terminal node (transfer, voicemail).
    */
   private async executeFromCurrent(messages: WorkflowMessage[]): Promise<WorkflowStepResult> {
+    try {
+      return await this._executeFromCurrentInternal(messages);
+    } catch (error) {
+      logger.error('WorkflowEngine: Unhandled error in executeFromCurrent', {
+        error,
+        currentNodeId: this.state.currentNodeId,
+      });
+      // Return a graceful error
+      this.state.isComplete = true;
+      messages.push({ type: 'system', text: 'An internal error occurred. Workflow stopped.' });
+      return {
+        messages,
+        waitingForInput: false,
+        isComplete: true,
+        currentStage: 'Error',
+      };
+    }
+  }
+
+  private async _executeFromCurrentInternal(messages: WorkflowMessage[]): Promise<WorkflowStepResult> {
     while (this.state.currentNodeId) {
       const node = this.nodes.find((n) => n.id === this.state.currentNodeId);
       if (!node) break;
@@ -542,6 +634,12 @@ For example: [TRANSITION:${transitions[0].name}]
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
 
+          logger.info('WorkflowEngine: Entering dialogue node', {
+            nodeId: node.id,
+            nodeLabel: node.data?.label,
+            contextLength: this.state.conversationContext.length,
+          });
+
           // Build system prompt (includes conversationContext for full awareness)
           const stagePrompt = this.buildDialogueSystemPrompt(node);
 
@@ -552,6 +650,10 @@ For example: [TRANSITION:${transitions[0].name}]
           if (callerAlreadyResponded) {
             // The caller has already responded (e.g., to a scripted question before this node).
             // Use their response as the first dialogue turn — no need to generate a separate opening.
+            logger.info('WorkflowEngine: Caller already responded, using as first turn', {
+              callerText: lastCtx.text.substring(0, 100),
+            });
+
             this.state.dialogueHistory = [
               { role: 'system', content: stagePrompt },
               { role: 'user', content: lastCtx.text },
@@ -563,11 +665,19 @@ For example: [TRANSITION:${transitions[0].name}]
 
             if (aiResponse) {
               const { text, isComplete, transition } = parseAIResponse(aiResponse);
+
+              logger.info('WorkflowEngine: Dialogue initial AI response', {
+                responsePreview: text.substring(0, 100),
+                isComplete,
+                transition,
+              });
+
               messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
               this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
 
               if (isComplete) {
+                logger.info('WorkflowEngine: Dialogue completed on first response', { transition });
                 this.state.isInDialogue = false;
                 this.state.currentDialogueNodeId = null;
                 if (transition) messages.push({ type: 'system', text: `Transition: ${transition}` });
@@ -575,6 +685,7 @@ For example: [TRANSITION:${transitions[0].name}]
                 break;
               }
             } else {
+              logger.warn('WorkflowEngine: AI response unavailable in callerAlreadyResponded path');
               messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
               this.state.isInDialogue = false;
               this.state.currentDialogueNodeId = null;

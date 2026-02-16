@@ -1067,6 +1067,16 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     }
 
     // Process the message through the workflow engine
+    logger.info('Processing workflow message', {
+      sessionId,
+      message: message.substring(0, 100),
+      engineState: {
+        isInDialogue: session.engine.getState().isInDialogue,
+        isWaitingAfterSpoken: session.engine.getState().isWaitingAfterSpoken,
+        currentNodeId: session.engine.getState().currentNodeId,
+      },
+    });
+
     const result = await session.engine.processMessage(message);
 
     // Clean up if workflow is complete
@@ -1079,6 +1089,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       messageCount: result.messages.length,
       waitingForInput: result.waitingForInput,
       isComplete: result.isComplete,
+      currentStage: result.currentStage,
     });
 
     res.status(200).json({

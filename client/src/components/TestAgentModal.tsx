@@ -404,7 +404,10 @@ const TestAgentModal = ({
   const sendWorkflowMessageAPI = useCallback(
     async (message: string): Promise<WorkflowCallResult | null> => {
       const sessionId = workflowSessionIdRef.current;
-      if (!sessionId) return null;
+      if (!sessionId) {
+        console.error("sendWorkflowMessageAPI: No session ID");
+        return null;
+      }
 
       try {
         const response = await fetch(
@@ -418,7 +421,12 @@ const TestAgentModal = ({
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to send workflow message");
+          console.error("Workflow message API error:", {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData,
+          });
+          throw new Error(errorData.error || `Server error (${response.status})`);
         }
 
         return await response.json();
@@ -483,6 +491,7 @@ const TestAgentModal = ({
   );
 
   // --- Handle user message (sent to server-side workflow engine) ---
+  const isLoadingRef = useRef(false);
   const handleUserMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || !isCallActiveRef.current) return;
@@ -492,26 +501,35 @@ const TestAgentModal = ({
         return;
       }
 
+      // Prevent concurrent sends — use a ref for instant check (state is async)
+      if (isLoadingRef.current) {
+        return;
+      }
+
       addMessage("user", text);
       setInputMessage("");
       setIsLoading(true);
+      isLoadingRef.current = true;
 
       const result = await sendWorkflowMessageAPI(text);
 
       if (!isCallActiveRef.current) {
         setIsLoading(false);
+        isLoadingRef.current = false;
         return;
       }
 
       if (result) {
         await processWorkflowResult(result);
         setIsLoading(false);
+        isLoadingRef.current = false;
 
         if (!result.isComplete && result.waitingForInput && callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
         }
       } else {
         setIsLoading(false);
+        isLoadingRef.current = false;
         addMessage("system", "Failed to get workflow response. Try again.");
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
@@ -525,6 +543,7 @@ const TestAgentModal = ({
   const startCall = useCallback(async () => {
     try {
       setIsLoading(true);
+      isLoadingRef.current = false;
       setIsCallActive(true);
       isCallActiveRef.current = true;
       setMessages([]);
