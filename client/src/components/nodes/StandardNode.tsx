@@ -178,7 +178,7 @@ const StandardNode = ({ id, data, onClone, onDelete, onUpdate }: StandardNodePro
 
   return (
     <>
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-auto">
         {/* Header */}
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
           {/* Type Badge */}
@@ -246,7 +246,7 @@ const StandardNode = ({ id, data, onClone, onDelete, onUpdate }: StandardNodePro
 
           {/* Modal */}
           <div
-            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}

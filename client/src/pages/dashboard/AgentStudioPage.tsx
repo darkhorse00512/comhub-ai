@@ -747,7 +747,7 @@ const AgentStudioPage = () => {
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden relative">
+        <div className="flex-1 flex overflow-auto relative">
           {/* Node Palette Sidebar - Sticky */}
           {selectedMenuItem === "studio" && showNodePalette && (
             <div className="absolute left-4 top-4 z-20 w-52 bg-background overflow-y-auto max-h-[calc(100%-2rem)] shadow-lg rounded-2xl border border-border">

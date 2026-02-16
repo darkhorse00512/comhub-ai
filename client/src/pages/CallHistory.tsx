@@ -116,7 +116,7 @@ const CallHistory = () => {
   return (
     <div className="min-h-screen gradient-hero">
       {/* Background decoration */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <div className="fixed inset-0 overflow-auto pointer-events-none">
         <div className="absolute top-0 right-1/3 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[150px]" />
         <div className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-accent/5 rounded-full blur-[150px]" />
       </div>
@@ -147,7 +147,7 @@ const CallHistory = () => {
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="lg:col-span-2 glass rounded-2xl overflow-hidden shadow-elevated"
+            className="lg:col-span-2 glass rounded-2xl overflow-auto shadow-elevated"
           >
             <div className="p-4 border-b border-border/50">
               <p className="text-sm text-muted-foreground">
@@ -213,7 +213,7 @@ const CallHistory = () => {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
-            className="lg:col-span-3 glass rounded-2xl overflow-hidden shadow-elevated"
+            className="lg:col-span-3 glass rounded-2xl overflow-auto shadow-elevated"
           >
             {selectedCall ? (
               <div className="p-6">

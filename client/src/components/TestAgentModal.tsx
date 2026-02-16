@@ -850,7 +850,7 @@ const TestAgentModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-auto">
         <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
           {showHistory ? (
             <DialogTitle className="flex items-center gap-2">

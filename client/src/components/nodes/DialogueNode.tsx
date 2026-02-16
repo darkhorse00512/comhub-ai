@@ -288,7 +288,7 @@ const DialogueNode = ({
   return (
     <>
       {/* Node Card on Canvas */}
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-auto">
         {/* Header */}
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-100">

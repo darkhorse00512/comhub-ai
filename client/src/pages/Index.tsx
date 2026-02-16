@@ -8,7 +8,7 @@ const Index = () => {
   const { user, loading } = useAuth();
 
   return (
-    <div className="min-h-screen gradient-hero overflow-hidden">
+    <div className="min-h-screen gradient-hero overflow-auto">
       {/* Background decoration */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-primary/10 rounded-full blur-[200px]" />
@@ -113,7 +113,7 @@ const Index = () => {
                   <Button
                     variant="gradient"
                     size="xl"
-                    className="group relative overflow-hidden shadow-[0_0_40px_hsl(199,89%,48%,0.3)] hover:shadow-[0_0_60px_hsl(199,89%,48%,0.5)] transition-all duration-300"
+                    className="group relative overflow-auto shadow-[0_0_40px_hsl(199,89%,48%,0.3)] hover:shadow-[0_0_60px_hsl(199,89%,48%,0.5)] transition-all duration-300"
                     asChild
                   >
                     <Link to="/auth">
@@ -350,7 +350,7 @@ const Index = () => {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
-            className="glass rounded-3xl p-12 lg:p-16 text-center relative overflow-hidden"
+            className="glass rounded-3xl p-12 lg:p-16 text-center relative overflow-auto"
           >
             <div className="absolute inset-0 gradient-glow opacity-50" />
             <div className="relative z-10">

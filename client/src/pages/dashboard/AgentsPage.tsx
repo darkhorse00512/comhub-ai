@@ -597,7 +597,7 @@ const AgentsPage = () => {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -703,7 +703,7 @@ const AgentsPage = () => {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            className="relative bg-background rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}

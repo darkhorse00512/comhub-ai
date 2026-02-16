@@ -260,7 +260,7 @@ const UsagePage = () => {
 
                 {/* Progress Bar */}
                 <div className="pt-2">
-                  <div className="flex h-3 rounded-full overflow-hidden bg-secondary">
+                  <div className="flex h-3 rounded-full overflow-auto bg-secondary">
                     <div
                       className="bg-green-500 transition-all"
                       style={{
@@ -345,7 +345,7 @@ const UsagePage = () => {
 
                   {/* Progress Bar */}
                   <div className="pt-2">
-                    <div className="flex h-3 rounded-full overflow-hidden bg-secondary">
+                    <div className="flex h-3 rounded-full overflow-auto bg-secondary">
                       <div
                         className="bg-green-500 transition-all"
                         style={{

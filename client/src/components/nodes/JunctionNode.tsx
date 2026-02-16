@@ -120,7 +120,7 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
 
   return (
     <>
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-auto">
         {/* Header */}
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
           {/* Type Badge */}
