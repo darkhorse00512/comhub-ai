@@ -32,6 +32,13 @@ export interface WorkflowStepResult {
   transferType?: string;
 }
 
+/** A single entry in the running conversation log (persists across all nodes) */
+interface ConversationEntry {
+  role: 'agent' | 'user';
+  text: string;
+  nodeLabel?: string;
+}
+
 export interface WorkflowEngineState {
   currentNodeId: string | null;
   fields: Record<string, any>;
@@ -41,6 +48,8 @@ export interface WorkflowEngineState {
   isInDialogue: boolean;
   currentDialogueNodeId: string | null;
   dialogueTurnCount: number;
+  /** Full conversation log across ALL nodes — so dialogue AI knows what happened before */
+  conversationContext: ConversationEntry[];
 }
 
 // --- Condition evaluator ---
@@ -103,7 +112,7 @@ function parseAIResponse(response: string): {
  * Design: The engine is a state machine that processes nodes step by step.
  * - Non-interactive nodes (scripted, field_setter, junction, switch, etc.) execute immediately.
  * - Interactive nodes (dialogue) pause and wait for user input.
- * - The engine can be serialized/deserialized for persistence across HTTP requests.
+ * - conversationContext persists across ALL nodes so the AI always knows what happened before.
  */
 export class WorkflowEngine {
   private nodes: WorkflowNode[];
@@ -122,6 +131,7 @@ export class WorkflowEngine {
       isInDialogue: false,
       currentDialogueNodeId: null,
       dialogueTurnCount: 0,
+      conversationContext: [],
     };
   }
 
@@ -256,6 +266,20 @@ export class WorkflowEngine {
       });
     }
 
+    // --- CONVERSATION CONTEXT: what happened before this stage ---
+    if (this.state.conversationContext.length > 0) {
+      prompt += `\n\n### Previous Conversation in This Call:`;
+      prompt += `\nThe following has already been said in this call before reaching this stage:`;
+      for (const entry of this.state.conversationContext) {
+        if (entry.role === 'agent') {
+          prompt += `\n- Agent${entry.nodeLabel ? ` (${entry.nodeLabel})` : ''}: "${entry.text}"`;
+        } else {
+          prompt += `\n- Caller: "${entry.text}"`;
+        }
+      }
+      prompt += `\n\nIMPORTANT: Do NOT repeat greetings, introductions, or information that was already said above. Continue the conversation naturally from where it left off.`;
+    }
+
     const maxTurns = parseInt(node.data?.maxTurns);
     if (maxTurns > 0) {
       prompt += `\n\nYou have a maximum of ${maxTurns} conversation turns in this stage.`;
@@ -297,18 +321,11 @@ For example: [TRANSITION:${transitions[0].name}]
 
   /**
    * Generate AI response using the full dialogue history.
-   * If userMessage is provided, it's appended to history before sending.
-   * If null, the existing history is sent as-is (used for opening messages).
+   * History is sent as-is — caller is responsible for adding user messages to dialogueHistory first.
    */
-  private async generateAIResponse(userMessage: string | null): Promise<string | null> {
+  private async generateAIResponse(): Promise<string | null> {
     try {
-      // Build the full message array for the AI
       const messages: ChatMessage[] = [...this.state.dialogueHistory];
-
-      // Append the user message if provided
-      if (userMessage) {
-        messages.push({ role: 'user', content: userMessage });
-      }
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
@@ -398,16 +415,16 @@ For example: [TRANSITION:${transitions[0].name}]
       };
     }
 
-    // Add user message to dialogue history
+    // Add user message to dialogue history and conversation context
     this.state.dialogueHistory.push({ role: 'user', content: userMessage });
+    this.state.conversationContext.push({ role: 'user', text: userMessage });
     this.state.dialogueTurnCount++;
 
     // Generate AI response using full conversation history
-    const aiResponse = await this.generateAIResponse(null);
+    const aiResponse = await this.generateAIResponse();
 
     if (!aiResponse) {
       messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
-      // Exit dialogue and continue
       this.state.isInDialogue = false;
       this.state.currentNodeId = this.getDialogueNextNodeId(dialogueNode);
       return this.executeFromCurrent(messages);
@@ -421,7 +438,9 @@ For example: [TRANSITION:${transitions[0].name}]
       nodeLabel: dialogueNode.data?.label,
     });
 
+    // Track in both dialogue history and conversation context
     this.state.dialogueHistory.push({ role: 'assistant', content: text });
+    this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
 
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const shouldAdvance = isComplete || (maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns);
@@ -482,6 +501,12 @@ For example: [TRANSITION:${transitions[0].name}]
             text: script,
             nodeLabel: node.data?.label,
           });
+          // Track in conversation context so dialogue AI knows what was said
+          this.state.conversationContext.push({
+            role: 'agent',
+            text: script,
+            nodeLabel: node.data?.label,
+          });
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
         }
@@ -492,15 +517,23 @@ For example: [TRANSITION:${transitions[0].name}]
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
 
+          // Build system prompt (includes conversationContext for awareness)
           const stagePrompt = this.buildDialogueSystemPrompt(node);
-          // Initialize dialogue history with system prompt and a trigger instruction
+
+          // Choose trigger based on whether there's already conversation context
+          const hasContext = this.state.conversationContext.length > 0;
+          const trigger = hasContext
+            ? 'The caller is now on the line. Previous messages have already been delivered (see conversation context above). Continue the conversation naturally — do NOT repeat any greetings or introductions. Respond according to your stage instructions.'
+            : 'The caller just connected. Begin the conversation for this stage. Greet or address the caller following your stage instructions.';
+
+          // Initialize dialogue history with system prompt and trigger
           this.state.dialogueHistory = [
             { role: 'system', content: stagePrompt },
-            { role: 'user', content: 'Begin the conversation for this stage. Greet or address the caller following your stage instructions.' },
+            { role: 'user', content: trigger },
           ];
 
-          // Generate the opening AI message using the full history
-          const openingResponse = await this.generateAIResponse(null);
+          // Generate the opening AI message
+          const openingResponse = await this.generateAIResponse();
 
           if (openingResponse) {
             const { text, isComplete, transition } = parseAIResponse(openingResponse);
@@ -510,6 +543,11 @@ For example: [TRANSITION:${transitions[0].name}]
               nodeLabel: node.data?.label,
             });
             this.state.dialogueHistory.push({ role: 'assistant', content: text });
+            this.state.conversationContext.push({
+              role: 'agent',
+              text,
+              nodeLabel: node.data?.label,
+            });
 
             if (isComplete) {
               // AI completed the stage immediately (rare but possible)
@@ -594,6 +632,11 @@ For example: [TRANSITION:${transitions[0].name}]
             text: transferMsg,
             nodeLabel: node.data?.label,
           });
+          this.state.conversationContext.push({
+            role: 'agent',
+            text: transferMsg,
+            nodeLabel: node.data?.label,
+          });
           messages.push({
             type: 'system',
             text: `Call transferred to ${node.data?.transferTo || 'agent'} (${node.data?.transferType || 'cold'} transfer)`,
@@ -619,6 +662,11 @@ For example: [TRANSITION:${transitions[0].name}]
             text: greeting,
             nodeLabel: node.data?.label,
           });
+          this.state.conversationContext.push({
+            role: 'agent',
+            text: greeting,
+            nodeLabel: node.data?.label,
+          });
           messages.push({ type: 'system', text: 'Voicemail recording started.' });
 
           this.state.isComplete = true;
@@ -635,6 +683,11 @@ For example: [TRANSITION:${transitions[0].name}]
           const fallbackText = node.data?.fallbackText || 'Playing audio...';
           messages.push({
             type: 'scripted',
+            text: fallbackText,
+            nodeLabel: node.data?.label,
+          });
+          this.state.conversationContext.push({
+            role: 'agent',
             text: fallbackText,
             nodeLabel: node.data?.label,
           });
@@ -665,6 +718,11 @@ For example: [TRANSITION:${transitions[0].name}]
             node.data?.fallbackMessage || "I'm sorry, I didn't understand that.";
           messages.push({
             type: 'scripted',
+            text: fallbackMsg,
+            nodeLabel: node.data?.label,
+          });
+          this.state.conversationContext.push({
+            role: 'agent',
             text: fallbackMsg,
             nodeLabel: node.data?.label,
           });
