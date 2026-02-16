@@ -85,15 +85,37 @@ function evaluateCondition(
 
 // --- Parse AI response for transition signals ---
 
-function parseAIResponse(response: string): {
+interface ParsedAIResponse {
   text: string;
-  isComplete: boolean;
   transition?: string;
-} {
-  const transitionMatch = response.match(/\[TRANSITION:([^\]]+)\]/);
-  const transition = transitionMatch ? transitionMatch[1].trim() : undefined;
+  wantsToComplete: boolean;
+}
 
-  const isComplete =
+/**
+ * Parse the AI response, extracting any transition signal and cleaning the text.
+ * `validTransitionNames` — if provided, only transitions matching one of these names
+ * are accepted. Any unknown transition name is silently stripped (the AI hallucinated it).
+ */
+function parseAIResponse(response: string, validTransitionNames?: string[]): ParsedAIResponse {
+  // Extract transition signal (e.g. [TRANSITION:Interested])
+  const transitionMatch = response.match(/\[TRANSITION:([^\]]+)\]/);
+  let transition = transitionMatch ? transitionMatch[1].trim() : undefined;
+
+  // Validate transition name against available options
+  if (transition && validTransitionNames && validTransitionNames.length > 0) {
+    const isValid = validTransitionNames.some(
+      (name) => name.toLowerCase() === transition!.toLowerCase()
+    );
+    if (!isValid) {
+      logger.warn('WorkflowEngine: AI produced invalid transition name, ignoring', {
+        aiTransition: transition,
+        validOptions: validTransitionNames,
+      });
+      transition = undefined;
+    }
+  }
+
+  const wantsToComplete =
     !!transition ||
     response.includes('[NEXT]') ||
     response.includes('[STAGE_COMPLETE]');
@@ -104,7 +126,7 @@ function parseAIResponse(response: string): {
     .replace(/\[STAGE_COMPLETE\]/g, '')
     .trim();
 
-  return { text, isComplete, transition };
+  return { text, transition, wantsToComplete };
 }
 
 /**
@@ -293,29 +315,35 @@ export class WorkflowEngine {
 
     if (transitions.length > 0) {
       prompt += `\n\n### Transitions:
-This stage has the following named transitions:
+This stage can end by moving to one of these named transitions:
 ${transitions.map((t: any) => `- "${t.name}"`).join('\n')}
 
-When the conversation reaches a point where it should move to a specific transition, append [TRANSITION:transition_name] at the very end of your response.
-For example: [TRANSITION:${transitions[0].name}]
+### How Transitions Work:
+When — and ONLY when — you are confident that the conversation has reached a clear outcome that matches one of the transitions above, append the transition signal at the very end of your response using this exact format:
+[TRANSITION:transition_name]
 
-### Important Rules:
-- Follow the stage instructions precisely
-- Keep responses concise and natural for voice conversation
-- Be friendly and professional
-- Choose the most appropriate transition based on the conversation outcome
-- Only include [TRANSITION:name] when the stage objectives are fulfilled
-- Do NOT say the transition signal aloud - it is an invisible system signal
-- If the conversation needs to continue, do NOT include any transition signal`;
+Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${transitions[0].name}]"
+
+### CRITICAL RULES — read these carefully:
+1. Your PRIMARY job is to have a natural, helpful conversation. Keep talking to the caller, ask questions, provide information.
+2. Do NOT rush to transition. The caller called for a reason — help them thoroughly.
+3. NEVER include a transition signal in your very first response. You need at least a few exchanges to understand the caller's needs.
+4. Only include [TRANSITION:name] when you are CERTAIN the caller's intent clearly matches one of the named transitions.
+5. If you are unsure which transition applies, keep the conversation going — ask a clarifying question.
+6. The transition signal is invisible to the caller. Do NOT say it aloud, mention it, or reference it.
+7. The transition name must EXACTLY match one of the options listed above. Do not invent new names.
+8. Keep responses concise and natural for voice conversation (1-3 sentences).
+9. Be friendly and professional.`;
     } else {
-      prompt += `\n\n### Important Rules:
-- Follow the stage instructions precisely
-- Keep responses concise and natural for voice conversation
-- Be friendly and professional
-- When you have completed the objectives of this conversation stage, append [NEXT] at the very end of your response
-- Only include [NEXT] when the stage objectives are truly fulfilled
-- Do NOT say "[NEXT]" aloud - it is an invisible system signal
-- If the conversation needs to continue, do NOT include [NEXT]`;
+      prompt += `\n\n### CRITICAL RULES — read these carefully:
+1. Your PRIMARY job is to have a natural, helpful conversation. Keep talking to the caller, ask questions, provide information.
+2. Follow the stage instructions precisely.
+3. Keep responses concise and natural for voice conversation (1-3 sentences).
+4. Be friendly and professional.
+5. When — and ONLY when — you have fully completed ALL objectives of this conversation stage, append [NEXT] at the very end of your response.
+6. NEVER include [NEXT] in your first response. You must have a real conversation first.
+7. Do NOT say "[NEXT]" aloud — it is an invisible system signal.
+8. If there is more to discuss, do NOT include [NEXT]. Keep the conversation going.`;
     }
 
     return prompt;
@@ -486,11 +514,16 @@ For example: [TRANSITION:${transitions[0].name}]
       };
     }
 
+    // Collect the valid transition names for this dialogue node
+    const transitions: Array<{ id: string; name: string }> = dialogueNode.data?.transitions || [];
+    const validTransitionNames = transitions.map((t) => t.name);
+
     logger.info('WorkflowEngine: Processing dialogue message', {
       userMessage: userMessage.substring(0, 100),
       nodeLabel: dialogueNode.data?.label,
       turnCount: this.state.dialogueTurnCount,
       historyLength: this.state.dialogueHistory.length,
+      availableTransitions: validTransitionNames,
     });
 
     // Add user message to dialogue history and conversation context
@@ -502,17 +535,27 @@ For example: [TRANSITION:${transitions[0].name}]
     const aiResponse = await this.generateAIResponse();
 
     if (!aiResponse) {
-      messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
-      this.state.isInDialogue = false;
-      this.state.currentNodeId = this.getDialogueNextNodeId(dialogueNode);
-      return this.executeFromCurrent(messages);
+      // AI failed — keep dialogue open, ask user to repeat
+      const fallback = 'I apologize, I had trouble processing that. Could you say that again?';
+      messages.push({ type: 'ai', text: fallback, nodeLabel: dialogueNode.data?.label });
+      this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
+      this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: dialogueNode.data?.label });
+
+      // Stay in dialogue — don't exit just because of a temporary AI error
+      return {
+        messages,
+        waitingForInput: true,
+        isComplete: false,
+        currentStage: dialogueNode.data?.label || 'AI Dialogue',
+      };
     }
 
-    const { text, isComplete, transition } = parseAIResponse(aiResponse);
+    // Parse the AI response, validating transitions against the actual available names
+    const { text, transition, wantsToComplete } = parseAIResponse(aiResponse, validTransitionNames);
 
     logger.info('WorkflowEngine: Dialogue AI response', {
       responsePreview: text.substring(0, 100),
-      isComplete,
+      wantsToComplete,
       transition,
       turnCount: this.state.dialogueTurnCount,
     });
@@ -527,15 +570,33 @@ For example: [TRANSITION:${transitions[0].name}]
     this.state.dialogueHistory.push({ role: 'assistant', content: text });
     this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
 
+    // --- Decide whether to advance ---
+    // A dialogue advances when:
+    //   (a) AI included a VALID transition signal  OR
+    //   (b) AI included [NEXT] and there are NO named transitions  OR
+    //   (c) Max turns reached
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
-    const shouldAdvance = isComplete || (maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns);
+    const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
+
+    // If the node HAS named transitions, only advance on a valid transition match
+    // (ignore [NEXT] — the AI should use a named transition)
+    let shouldAdvance = false;
+    if (transition) {
+      // Valid named transition matched
+      shouldAdvance = true;
+    } else if (validTransitionNames.length === 0 && wantsToComplete) {
+      // No named transitions — [NEXT] is the only way to advance
+      shouldAdvance = true;
+    } else if (maxTurnsReached) {
+      shouldAdvance = true;
+    }
 
     if (shouldAdvance) {
-      if (maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns && !isComplete) {
+      if (maxTurnsReached && !transition && !(validTransitionNames.length === 0 && wantsToComplete)) {
         messages.push({ type: 'system', text: `Max turns (${maxTurns}) reached.` });
       }
       if (transition) {
-        messages.push({ type: 'system', text: `Transition: ${transition}` });
+        logger.info('WorkflowEngine: Dialogue transitioning', { transition });
       }
 
       // Exit dialogue and continue workflow
@@ -547,7 +608,7 @@ For example: [TRANSITION:${transitions[0].name}]
       return this.executeFromCurrent(messages);
     }
 
-    // Dialogue continues - wait for more input
+    // Dialogue continues — wait for the user's next message
     return {
       messages,
       waitingForInput: true,
@@ -629,7 +690,7 @@ For example: [TRANSITION:${transitions[0].name}]
         }
 
         case 'dialogue': {
-          // Enter dialogue mode
+          // Enter dialogue mode — user STAYS here until a valid transition is triggered
           this.state.isInDialogue = true;
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
@@ -637,6 +698,7 @@ For example: [TRANSITION:${transitions[0].name}]
           logger.info('WorkflowEngine: Entering dialogue node', {
             nodeId: node.id,
             nodeLabel: node.data?.label,
+            transitions: (node.data?.transitions || []).map((t: any) => t.name),
             contextLength: this.state.conversationContext.length,
           });
 
@@ -664,35 +726,28 @@ For example: [TRANSITION:${transitions[0].name}]
             const aiResponse = await this.generateAIResponse();
 
             if (aiResponse) {
-              const { text, isComplete, transition } = parseAIResponse(aiResponse);
+              // IMPORTANT: Opening response NEVER triggers transition.
+              // The user just said "Good" or "Ok" to a welcome — that's not a real dialogue answer.
+              // Strip any transition signals the AI may have hallucinated.
+              const { text } = parseAIResponse(aiResponse);
 
-              logger.info('WorkflowEngine: Dialogue initial AI response', {
+              logger.info('WorkflowEngine: Dialogue opening response (transition signals ignored)', {
                 responsePreview: text.substring(0, 100),
-                isComplete,
-                transition,
               });
 
               messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
               this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
-
-              if (isComplete) {
-                logger.info('WorkflowEngine: Dialogue completed on first response', { transition });
-                this.state.isInDialogue = false;
-                this.state.currentDialogueNodeId = null;
-                if (transition) messages.push({ type: 'system', text: `Transition: ${transition}` });
-                this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
-                break;
-              }
             } else {
+              // AI failed — send a fallback and keep dialogue open for retry
               logger.warn('WorkflowEngine: AI response unavailable in callerAlreadyResponded path');
-              messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
-              this.state.isInDialogue = false;
-              this.state.currentDialogueNodeId = null;
-              this.state.currentNodeId = this.getDialogueNextNodeId(node);
-              break;
+              const fallback = 'I apologize, could you please repeat that?';
+              messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
+              this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
+              this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
             }
 
+            // Always stay in dialogue — wait for user's next message
             return {
               messages,
               waitingForInput: true,
@@ -715,27 +770,20 @@ For example: [TRANSITION:${transitions[0].name}]
           const openingResponse = await this.generateAIResponse();
 
           if (openingResponse) {
-            const { text, isComplete, transition } = parseAIResponse(openingResponse);
+            // Opening response NEVER triggers transition — conversation hasn't started yet
+            const { text } = parseAIResponse(openingResponse);
             messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: text });
             this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
-
-            if (isComplete) {
-              this.state.isInDialogue = false;
-              this.state.currentDialogueNodeId = null;
-              if (transition) messages.push({ type: 'system', text: `Transition: ${transition}` });
-              this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
-              break;
-            }
           } else {
-            messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
-            this.state.isInDialogue = false;
-            this.state.currentDialogueNodeId = null;
-            this.state.currentNodeId = this.getDialogueNextNodeId(node);
-            break;
+            // AI failed — send a generic opening and keep dialogue open
+            const fallback = 'Hello! How can I help you today?';
+            messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
+            this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
+            this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
           }
 
-          // Dialogue is waiting for user input
+          // Always stay in dialogue — wait for user's first real message
           return {
             messages,
             waitingForInput: true,
