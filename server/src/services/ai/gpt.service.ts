@@ -138,6 +138,53 @@ Remember you are in a real-time voice conversation, so keep responses conversati
   }
 
   /**
+   * Generate a response using full conversation history with a custom system prompt.
+   * Used by WorkflowEngine for multi-turn dialogue stages.
+   */
+  async generateWithHistory(
+    conversationHistory: ChatMessage[],
+    options?: {
+      maxTokens?: number;
+      temperature?: number;
+    }
+  ): Promise<AIResponse> {
+    try {
+      logger.info('Generating AI response with history', {
+        messageCount: conversationHistory.length,
+        maxTokens: options?.maxTokens || 500,
+      });
+
+      const completion = await this.openai.chat.completions.create({
+        model: config.openai.model,
+        messages: conversationHistory,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens || 500,
+      });
+
+      const aiMessage = completion.choices[0]?.message?.content || '';
+
+      logger.info('AI response with history generated', {
+        response: aiMessage.substring(0, 200),
+        usage: completion.usage,
+      });
+
+      return {
+        text: aiMessage,
+        usage: completion.usage
+          ? {
+              promptTokens: completion.usage.prompt_tokens,
+              completionTokens: completion.usage.completion_tokens,
+              totalTokens: completion.usage.total_tokens,
+            }
+          : undefined,
+      };
+    } catch (error) {
+      logger.error('Failed to generate AI response with history:', error);
+      throw new Error(`GPT generation failed: ${error}`);
+    }
+  }
+
+  /**
    * Generate a response with a custom system prompt (doesn't use the default one)
    * Useful for specialized tasks like workflow generation
    */

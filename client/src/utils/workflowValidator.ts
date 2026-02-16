@@ -95,22 +95,25 @@ export function validateWorkflow(nodes: Node[], edges: Edge[]): ValidationResult
       }
     }
 
+    // Helper: get the effective node type (data.type takes priority, then node.type)
+    const nodeType = node.data?.type || node.type;
+
     // 4. Dialogue: must have stageMessage
-    if (node.type === "standard" && node.data?.type === "dialogue") {
+    if (nodeType === "dialogue") {
       if (!node.data?.stageMessage?.trim()) {
         errors.push(makeItem(node, "Dialogue node has no instructions. The AI won't know what to say.", "error"));
       }
     }
 
     // 5. Scripted: must have script
-    if (node.type === "standard" && node.data?.type === "scripted") {
+    if (nodeType === "scripted") {
       if (!node.data?.script?.trim()) {
         errors.push(makeItem(node, "Scripted node has no script text. Add the message the agent should speak.", "error"));
       }
     }
 
     // 6. Junction: must have condition
-    if (node.type === "standard" && node.data?.type === "junction") {
+    if (nodeType === "junction") {
       const left = node.data?.left;
       const operator = node.data?.operator;
       if (!left?.field_name?.trim()) {
@@ -122,7 +125,7 @@ export function validateWorkflow(nodes: Node[], edges: Edge[]): ValidationResult
     }
 
     // 7. Switch: must have at least 2 cases
-    if (node.type === "standard" && node.data?.type === "switch") {
+    if (nodeType === "switch") {
       const cases = node.data?.cases;
       if (!cases || !Array.isArray(cases) || cases.length < 2) {
         errors.push(makeItem(node, "Switch node needs at least 2 cases to be useful. Add more options.", "error"));
@@ -130,7 +133,7 @@ export function validateWorkflow(nodes: Node[], edges: Edge[]): ValidationResult
     }
 
     // 8. Call Transfer: must have transferTo
-    if (node.type === "standard" && node.data?.type === "call_transfer") {
+    if (nodeType === "call_transfer") {
       if (!node.data?.transferTo?.trim()) {
         errors.push(makeItem(node, "Call Transfer node has no destination number. Specify where to transfer the call.", "error"));
       }
@@ -144,14 +147,14 @@ export function validateWorkflow(nodes: Node[], edges: Edge[]): ValidationResult
     // --- Warnings ---
 
     // W1. Fallback with retryCount 0
-    if (node.type === "standard" && node.data?.type === "fallback") {
+    if (nodeType === "fallback") {
       if (node.data?.retryCount === 0 || node.data?.retryCount === "0") {
         warnings.push(makeItem(node, "Fallback has 0 retries — it will escalate immediately without retrying.", "warning"));
       }
     }
 
     // W2. Time Limit too short
-    if (node.type === "standard" && node.data?.type === "time_limit") {
+    if (nodeType === "time_limit") {
       const duration = Number(node.data?.maxDuration);
       if (duration > 0 && duration < 10) {
         warnings.push(makeItem(node, `Time limit is very short (${duration}s). Most conversations need at least 10 seconds.`, "warning"));

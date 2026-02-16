@@ -295,14 +295,23 @@ For example: [TRANSITION:${transitions[0].name}]
 
   // --- AI response generation ---
 
-  private async generateAIResponse(userMessage: string): Promise<string | null> {
+  /**
+   * Generate AI response using the full dialogue history.
+   * If userMessage is provided, it's appended to history before sending.
+   * If null, the existing history is sent as-is (used for opening messages).
+   */
+  private async generateAIResponse(userMessage: string | null): Promise<string | null> {
     try {
-      const systemPrompt = this.state.dialogueHistory.find(m => m.role === 'system')?.content || '';
-      const conversationOnly = this.state.dialogueHistory.filter(m => m.role !== 'system');
+      // Build the full message array for the AI
+      const messages: ChatMessage[] = [...this.state.dialogueHistory];
 
-      const aiResponse = await gptService.generateWithCustomPrompt(
-        userMessage,
-        systemPrompt,
+      // Append the user message if provided
+      if (userMessage) {
+        messages.push({ role: 'user', content: userMessage });
+      }
+
+      const aiResponse = await gptService.generateWithHistory(
+        messages,
         { maxTokens: 500, temperature: 0.7 }
       );
 
@@ -323,14 +332,16 @@ For example: [TRANSITION:${transitions[0].name}]
     const messages: WorkflowMessage[] = [];
 
     // Find and process the agentSetup node to extract system message
-    const agentSetupNode = this.nodes.find((n) => n.type === 'agentSetup');
+    const agentSetupNode = this.nodes.find(
+      (n) => n.type === 'agentSetup' || n.data?.type === 'agentSetup'
+    );
     if (agentSetupNode?.data?.systemMessage) {
       this.state.agentSystemMessage = agentSetupNode.data.systemMessage;
     }
 
     // Find the call direction start node
     const startNode = this.nodes.find(
-      (n) => n.type === 'callDirection' && n.data?.direction === direction
+      (n) => (n.type === 'callDirection' || n.data?.type === 'callDirection') && n.data?.direction === direction
     );
 
     if (!startNode) {
@@ -391,8 +402,8 @@ For example: [TRANSITION:${transitions[0].name}]
     this.state.dialogueHistory.push({ role: 'user', content: userMessage });
     this.state.dialogueTurnCount++;
 
-    // Generate AI response
-    const aiResponse = await this.generateAIResponse(userMessage);
+    // Generate AI response using full conversation history
+    const aiResponse = await this.generateAIResponse(null);
 
     if (!aiResponse) {
       messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
@@ -482,12 +493,14 @@ For example: [TRANSITION:${transitions[0].name}]
           this.state.dialogueTurnCount = 0;
 
           const stagePrompt = this.buildDialogueSystemPrompt(node);
-          this.state.dialogueHistory = [{ role: 'system', content: stagePrompt }];
+          // Initialize dialogue history with system prompt and a trigger instruction
+          this.state.dialogueHistory = [
+            { role: 'system', content: stagePrompt },
+            { role: 'user', content: 'Begin the conversation for this stage. Greet or address the caller following your stage instructions.' },
+          ];
 
-          // Generate the opening AI message for this dialogue stage
-          const openingResponse = await this.generateAIResponse(
-            'Begin the conversation for this stage. Greet or address the caller following your stage instructions.'
-          );
+          // Generate the opening AI message using the full history
+          const openingResponse = await this.generateAIResponse(null);
 
           if (openingResponse) {
             const { text, isComplete, transition } = parseAIResponse(openingResponse);
