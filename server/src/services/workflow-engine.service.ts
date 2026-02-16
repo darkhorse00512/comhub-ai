@@ -50,6 +50,8 @@ export interface WorkflowEngineState {
   dialogueTurnCount: number;
   /** Full conversation log across ALL nodes — so dialogue AI knows what happened before */
   conversationContext: ConversationEntry[];
+  /** True when the agent has spoken (scripted/play_audio/fallback) and is waiting for the caller to respond before advancing */
+  isWaitingAfterSpoken: boolean;
 }
 
 // --- Condition evaluator ---
@@ -132,6 +134,7 @@ export class WorkflowEngine {
       currentDialogueNodeId: null,
       dialogueTurnCount: 0,
       conversationContext: [],
+      isWaitingAfterSpoken: false,
     };
   }
 
@@ -146,7 +149,7 @@ export class WorkflowEngine {
   }
 
   isWaitingForInput(): boolean {
-    return this.state.isInDialogue && !this.state.isComplete;
+    return (this.state.isInDialogue || this.state.isWaitingAfterSpoken) && !this.state.isComplete;
   }
 
   isWorkflowComplete(): boolean {
@@ -394,6 +397,16 @@ For example: [TRANSITION:${transitions[0].name}]
       };
     }
 
+    // --- Case 1: Waiting after a spoken (scripted) node ---
+    // The agent spoke something and is waiting for the caller to respond.
+    // Capture the response, then continue executing the workflow from the next node.
+    if (this.state.isWaitingAfterSpoken) {
+      this.state.isWaitingAfterSpoken = false;
+      this.state.conversationContext.push({ role: 'user', text: userMessage });
+      return this.executeFromCurrent(messages);
+    }
+
+    // --- Case 2: In dialogue ---
     if (!this.state.isInDialogue || !this.state.currentDialogueNodeId) {
       return {
         messages: [{ type: 'system', text: 'Not waiting for input.' }],
@@ -508,56 +521,100 @@ For example: [TRANSITION:${transitions[0].name}]
             nodeLabel: node.data?.label,
           });
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
+
+          // After speaking, wait for caller response before advancing
+          // (like a real phone call — agent says something, caller responds)
+          if (this.state.currentNodeId) {
+            this.state.isWaitingAfterSpoken = true;
+            return {
+              messages,
+              waitingForInput: true,
+              isComplete: false,
+              currentStage: node.data?.label || 'Scripted',
+            };
+          }
           break;
         }
 
         case 'dialogue': {
-          // Enter dialogue mode - pause and wait for user input
+          // Enter dialogue mode
           this.state.isInDialogue = true;
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
 
-          // Build system prompt (includes conversationContext for awareness)
+          // Build system prompt (includes conversationContext for full awareness)
           const stagePrompt = this.buildDialogueSystemPrompt(node);
 
-          // Choose trigger based on whether there's already conversation context
+          // Check if the caller already said something (e.g., responded to a scripted message)
+          const lastCtx = this.state.conversationContext[this.state.conversationContext.length - 1];
+          const callerAlreadyResponded = lastCtx?.role === 'user';
+
+          if (callerAlreadyResponded) {
+            // The caller has already responded (e.g., to a scripted question before this node).
+            // Use their response as the first dialogue turn — no need to generate a separate opening.
+            this.state.dialogueHistory = [
+              { role: 'system', content: stagePrompt },
+              { role: 'user', content: lastCtx.text },
+            ];
+            this.state.dialogueTurnCount++;
+
+            // Generate AI response to the caller's actual message
+            const aiResponse = await this.generateAIResponse();
+
+            if (aiResponse) {
+              const { text, isComplete, transition } = parseAIResponse(aiResponse);
+              messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
+              this.state.dialogueHistory.push({ role: 'assistant', content: text });
+              this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
+
+              if (isComplete) {
+                this.state.isInDialogue = false;
+                this.state.currentDialogueNodeId = null;
+                if (transition) messages.push({ type: 'system', text: `Transition: ${transition}` });
+                this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
+                break;
+              }
+            } else {
+              messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
+              this.state.isInDialogue = false;
+              this.state.currentDialogueNodeId = null;
+              this.state.currentNodeId = this.getDialogueNextNodeId(node);
+              break;
+            }
+
+            return {
+              messages,
+              waitingForInput: true,
+              isComplete: false,
+              currentStage: node.data?.label || 'AI Dialogue',
+            };
+          }
+
+          // No prior caller response — generate an opening AI message
           const hasContext = this.state.conversationContext.length > 0;
           const trigger = hasContext
             ? 'The caller is now on the line. Previous messages have already been delivered (see conversation context above). Continue the conversation naturally — do NOT repeat any greetings or introductions. Respond according to your stage instructions.'
             : 'The caller just connected. Begin the conversation for this stage. Greet or address the caller following your stage instructions.';
 
-          // Initialize dialogue history with system prompt and trigger
           this.state.dialogueHistory = [
             { role: 'system', content: stagePrompt },
             { role: 'user', content: trigger },
           ];
 
-          // Generate the opening AI message
           const openingResponse = await this.generateAIResponse();
 
           if (openingResponse) {
             const { text, isComplete, transition } = parseAIResponse(openingResponse);
-            messages.push({
-              type: 'ai',
-              text,
-              nodeLabel: node.data?.label,
-            });
+            messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: text });
-            this.state.conversationContext.push({
-              role: 'agent',
-              text,
-              nodeLabel: node.data?.label,
-            });
+            this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
 
             if (isComplete) {
-              // AI completed the stage immediately (rare but possible)
               this.state.isInDialogue = false;
               this.state.currentDialogueNodeId = null;
-              if (transition) {
-                messages.push({ type: 'system', text: `Transition: ${transition}` });
-              }
+              if (transition) messages.push({ type: 'system', text: `Transition: ${transition}` });
               this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
-              break; // continue the while loop
+              break;
             }
           } else {
             messages.push({ type: 'system', text: 'AI response unavailable. Advancing workflow.' });
