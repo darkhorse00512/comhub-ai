@@ -402,11 +402,10 @@ const TestAgentModal = ({
   );
 
   const sendWorkflowMessageAPI = useCallback(
-    async (message: string): Promise<WorkflowCallResult | null> => {
+    async (message: string): Promise<{ result: WorkflowCallResult | null; error?: string }> => {
       const sessionId = workflowSessionIdRef.current;
       if (!sessionId) {
-        console.error("sendWorkflowMessageAPI: No session ID");
-        return null;
+        return { result: null, error: "No active session. Please start a new call." };
       }
 
       try {
@@ -423,16 +422,21 @@ const TestAgentModal = ({
           const errorData = await response.json().catch(() => ({}));
           console.error("Workflow message API error:", {
             status: response.status,
-            statusText: response.statusText,
             error: errorData,
           });
-          throw new Error(errorData.error || `Server error (${response.status})`);
+
+          // Build a user-friendly error message based on HTTP status
+          if (response.status === 404) {
+            return { result: null, error: "Session expired or lost. Please end the call and start a new one." };
+          }
+          return { result: null, error: errorData.error || `Server error (${response.status})` };
         }
 
-        return await response.json();
+        const data = await response.json();
+        return { result: data };
       } catch (error) {
         console.error("Error sending workflow message:", error);
-        return null;
+        return { result: null, error: error instanceof Error ? error.message : "Network error — could not reach server." };
       }
     },
     [agentId, getAuthHeaders, apiBaseUrl]
@@ -511,7 +515,7 @@ const TestAgentModal = ({
       setIsLoading(true);
       isLoadingRef.current = true;
 
-      const result = await sendWorkflowMessageAPI(text);
+      const { result, error } = await sendWorkflowMessageAPI(text);
 
       if (!isCallActiveRef.current) {
         setIsLoading(false);
@@ -530,7 +534,7 @@ const TestAgentModal = ({
       } else {
         setIsLoading(false);
         isLoadingRef.current = false;
-        addMessage("system", "Failed to get workflow response. Try again.");
+        addMessage("system", error || "Failed to get workflow response. Try again.");
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
         }
