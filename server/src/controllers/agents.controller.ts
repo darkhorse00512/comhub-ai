@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { AuthRequest } from '../middleware/auth.middleware';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
@@ -936,23 +938,114 @@ Return ONLY the JSON object.`;
 
 // --- Workflow-based test call sessions ---
 
-// In-memory session store for active workflow test calls
-const workflowSessions = new Map<string, {
+interface WorkflowSession {
   engine: WorkflowEngine;
+  nodes: any[];
+  edges: any[];
   agentId: string;
   userId: string;
   direction: 'inbound' | 'outbound';
   createdAt: Date;
-}>();
+}
 
-// Cleanup stale sessions older than 30 minutes
+// In-memory cache for active workflow test calls
+const workflowSessions = new Map<string, WorkflowSession>();
+
+// File-based persistence so sessions survive server restarts (ts-node-dev --respawn)
+const SESSION_DIR = path.join(__dirname, '../../tmp/workflow-sessions');
+try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch {}
+
+function persistSession(sessionId: string, session: WorkflowSession): void {
+  try {
+    const data = {
+      nodes: session.nodes,
+      edges: session.edges,
+      engineState: session.engine.getState(),
+      agentId: session.agentId,
+      userId: session.userId,
+      direction: session.direction,
+      createdAt: session.createdAt.toISOString(),
+    };
+    fs.writeFileSync(path.join(SESSION_DIR, `${sessionId}.json`), JSON.stringify(data), 'utf-8');
+  } catch (err) {
+    logger.error('Failed to persist workflow session', { sessionId, error: err });
+  }
+}
+
+function loadSessionFromDisk(sessionId: string): WorkflowSession | null {
+  try {
+    // Validate session ID format to prevent path traversal
+    if (!/^wf-\d+-[a-z0-9]+$/.test(sessionId)) return null;
+
+    const filePath = path.join(SESSION_DIR, `${sessionId}.json`);
+    if (!fs.existsSync(filePath)) return null;
+
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+    // Check expiry (30 minutes)
+    if (Date.now() - new Date(data.createdAt).getTime() > 30 * 60 * 1000) {
+      try { fs.unlinkSync(filePath); } catch {}
+      return null;
+    }
+
+    // Re-create the engine with the saved nodes/edges and restore its state
+    const engine = new WorkflowEngine(data.nodes, data.edges);
+    engine.restoreState(data.engineState as WorkflowEngineState);
+
+    const session: WorkflowSession = {
+      engine,
+      nodes: data.nodes,
+      edges: data.edges,
+      agentId: data.agentId,
+      userId: data.userId,
+      direction: data.direction,
+      createdAt: new Date(data.createdAt),
+    };
+
+    // Re-hydrate in-memory cache
+    workflowSessions.set(sessionId, session);
+    logger.info('Workflow session restored from disk', { sessionId });
+
+    return session;
+  } catch (err) {
+    logger.error('Failed to load workflow session from disk', { sessionId, error: err });
+    return null;
+  }
+}
+
+function deleteSessionFromDisk(sessionId: string): void {
+  try {
+    const filePath = path.join(SESSION_DIR, `${sessionId}.json`);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {}
+}
+
+/** Look up a session: try in-memory first, then fall back to disk */
+function getSession(sessionId: string): WorkflowSession | null {
+  return workflowSessions.get(sessionId) || loadSessionFromDisk(sessionId);
+}
+
+// Cleanup stale sessions older than 30 minutes (both in-memory and disk)
 setInterval(() => {
   const now = Date.now();
   for (const [sessionId, session] of workflowSessions) {
     if (now - session.createdAt.getTime() > 30 * 60 * 1000) {
       workflowSessions.delete(sessionId);
+      deleteSessionFromDisk(sessionId);
     }
   }
+  // Also clean up old session files on disk
+  try {
+    const files = fs.readdirSync(SESSION_DIR);
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const filePath = path.join(SESSION_DIR, file);
+      const stat = fs.statSync(filePath);
+      if (now - stat.mtimeMs > 30 * 60 * 1000) {
+        fs.unlinkSync(filePath);
+      }
+    }
+  } catch {}
 }, 5 * 60 * 1000);
 
 /**
@@ -1002,15 +1095,19 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
     // Start the workflow
     const result = await engine.start(direction);
 
-    // Generate session ID and store
+    // Generate session ID and store (both in-memory and on disk)
     const sessionId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    workflowSessions.set(sessionId, {
+    const session: WorkflowSession = {
       engine,
+      nodes,
+      edges,
       agentId: id,
       userId,
       direction,
       createdAt: new Date(),
-    });
+    };
+    workflowSessions.set(sessionId, session);
+    persistSession(sessionId, session);
 
     logger.info('Workflow call started', {
       sessionId,
@@ -1055,7 +1152,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const session = workflowSessions.get(sessionId);
+    const session = getSession(sessionId);
     if (!session) {
       res.status(404).json({ success: false, error: 'Workflow session not found or expired' });
       return;
@@ -1079,9 +1176,12 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
 
     const result = await session.engine.processMessage(message);
 
-    // Clean up if workflow is complete
+    // Clean up if workflow is complete, otherwise persist updated state
     if (result.isComplete) {
       workflowSessions.delete(sessionId);
+      deleteSessionFromDisk(sessionId);
+    } else {
+      persistSession(sessionId, session);
     }
 
     logger.info('Workflow message processed', {
@@ -1121,8 +1221,9 @@ export const endWorkflowCall = async (req: AuthRequest, res: Response): Promise<
     const session = workflowSessions.get(sessionId);
     if (session) {
       workflowSessions.delete(sessionId);
-      logger.info('Workflow call ended', { sessionId, agentId: id });
     }
+    deleteSessionFromDisk(sessionId);
+    logger.info('Workflow call ended', { sessionId, agentId: id });
 
     res.status(200).json({ success: true });
   } catch (error) {
