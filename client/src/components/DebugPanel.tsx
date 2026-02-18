@@ -5,6 +5,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import {
   Bug,
   AlertCircle,
@@ -12,6 +13,8 @@ import {
   CheckCircle2,
   ChevronRight,
   Crosshair,
+  MessageSquare,
+  AudioLines,
 } from "lucide-react";
 import { ValidationItem } from "@/utils/workflowValidator";
 
@@ -21,9 +24,10 @@ interface DebugPanelProps {
   errors: ValidationItem[];
   warnings: ValidationItem[];
   onNavigateToNode: (nodeId: string) => void;
+  onTest?: (mode: "text" | "audio") => void;
 }
 
-const DebugPanel = ({ isOpen, onClose, errors, warnings, onNavigateToNode }: DebugPanelProps) => {
+const DebugPanel = ({ isOpen, onClose, errors, warnings, onNavigateToNode, onTest }: DebugPanelProps) => {
   const hasIssues = errors.length > 0 || warnings.length > 0;
   const passed = errors.length === 0;
 
@@ -71,6 +75,28 @@ const DebugPanel = ({ isOpen, onClose, errors, warnings, onNavigateToNode }: Deb
               </div>
             )}
           </div>
+
+          {/* Test buttons - shown when no errors */}
+          {passed && onTest && (
+            <div className="mt-3 flex gap-2">
+              <Button
+                size="sm"
+                className="flex-1 bg-purple-600 hover:bg-purple-700 text-white"
+                onClick={() => onTest("text")}
+              >
+                <MessageSquare className="w-4 h-4 mr-1.5" />
+                Test Text
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1 bg-purple-600 hover:bg-purple-700 text-white"
+                onClick={() => onTest("audio")}
+              >
+                <AudioLines className="w-4 h-4 mr-1.5" />
+                Test Audio
+              </Button>
+            </div>
+          )}
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-200px)]">

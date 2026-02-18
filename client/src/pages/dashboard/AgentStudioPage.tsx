@@ -938,6 +938,11 @@ const AgentStudioPage = () => {
         errors={debugErrors}
         warnings={debugWarnings}
         onNavigateToNode={handleNavigateToNode}
+        onTest={(mode) => {
+          setShowDebugPanel(false);
+          setTestMode(mode);
+          setShowTestModal(true);
+        }}
       />
     </div>
   );
