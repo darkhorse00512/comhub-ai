@@ -33,6 +33,7 @@ interface AgentCallHistoryItem {
   startedAt: string;
   endedAt: string | null;
   messageCount: number;
+  collectedData: Record<string, any> | null;
 }
 
 interface ApiResponse<T> {
@@ -1140,12 +1141,13 @@ export const api = {
     }
   },
 
-  async endTestCallSession(callSessionId: string): Promise<ApiResponse<void>> {
+  async endTestCallSession(callSessionId: string, collectedData?: Record<string, any>): Promise<ApiResponse<void>> {
     try {
       const headers = await getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/calls/${callSessionId}/end-test`, {
         method: "POST",
         headers,
+        body: JSON.stringify(collectedData ? { collectedData } : {}),
       });
 
       if (!response.ok) {

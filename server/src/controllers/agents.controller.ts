@@ -1122,6 +1122,7 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       success: true,
       sessionId,
       ...result,
+      collectedFields: engine.getFields(),
     });
   } catch (error) {
     logger.error('Failed to start workflow call', { error });
@@ -1195,6 +1196,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     res.status(200).json({
       success: true,
       ...result,
+      collectedFields: session.engine.getFields(),
     });
   } catch (error) {
     logger.error('Failed to process workflow message', { error });
@@ -1218,14 +1220,17 @@ export const endWorkflowCall = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    const session = workflowSessions.get(sessionId);
+    // Get session from memory or disk to extract collected fields before cleanup
+    let collectedFields: Record<string, any> = {};
+    const session = workflowSessions.get(sessionId) || loadSessionFromDisk(sessionId);
     if (session) {
+      collectedFields = session.engine.getFields();
       workflowSessions.delete(sessionId);
     }
     deleteSessionFromDisk(sessionId);
-    logger.info('Workflow call ended', { sessionId, agentId: id });
+    logger.info('Workflow call ended', { sessionId, agentId: id, collectedFieldCount: Object.keys(collectedFields).length });
 
-    res.status(200).json({ success: true });
+    res.status(200).json({ success: true, collectedFields });
   } catch (error) {
     logger.error('Failed to end workflow call', { error });
     res.status(500).json({

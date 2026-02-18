@@ -27,6 +27,7 @@ import {
   History,
   ArrowLeft,
   RefreshCw,
+  ClipboardList,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -40,6 +41,7 @@ interface AgentCallHistoryItem {
   startedAt: string;
   endedAt: string | null;
   messageCount: number;
+  collectedData: Record<string, any> | null;
 }
 
 interface CallMessageItem {
@@ -74,6 +76,7 @@ interface WorkflowCallResult {
   transferTo?: string;
   transferType?: string;
   error?: string;
+  collectedFields?: Record<string, any>;
 }
 
 interface TestAgentModalProps {
@@ -110,6 +113,8 @@ const TestAgentModal = ({
   const [callSessionId, setCallSessionId] = useState<string | null>(null);
   const [currentWorkflowStep, setCurrentWorkflowStep] = useState<string | null>(null);
   const [waitingForInput, setWaitingForInput] = useState(false);
+  const [collectedFields, setCollectedFields] = useState<Record<string, any>>({});
+  const collectedFieldsRef = useRef<Record<string, any>>({});
 
   // History state
   const [showHistory, setShowHistory] = useState(false);
@@ -163,15 +168,18 @@ const TestAgentModal = ({
 
   // Scroll to bottom when messages change
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
-      );
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    const timer = setTimeout(() => {
+      if (scrollAreaRef.current) {
+        const scrollContainer = scrollAreaRef.current.querySelector(
+          "[data-radix-scroll-area-viewport]"
+        );
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
       }
-    }
-  }, [messages]);
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [messages, isLoading]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -450,21 +458,26 @@ const TestAgentModal = ({
     [agentId, getAuthHeaders, apiBaseUrl]
   );
 
-  const endWorkflowCallAPI = useCallback(async () => {
+  const endWorkflowCallAPI = useCallback(async (): Promise<Record<string, any>> => {
     const sessionId = workflowSessionIdRef.current;
-    if (!sessionId) return;
+    if (!sessionId) return {};
 
     try {
-      await fetch(
+      const response = await fetch(
         `${apiBaseUrl}/agents/${agentId}/workflow-call/${sessionId}/end`,
         {
           method: "POST",
           headers: getAuthHeaders(),
         }
       );
+      if (response.ok) {
+        const data = await response.json();
+        return data.collectedFields || {};
+      }
     } catch (error) {
       console.error("Error ending workflow call:", error);
     }
+    return {};
   }, [agentId, getAuthHeaders, apiBaseUrl]);
 
   // Process workflow result messages - display them and update state
@@ -480,6 +493,15 @@ const TestAgentModal = ({
         } else if (msg.type === "system") {
           addMessage("system", msg.text);
         }
+      }
+
+      // Merge collected fields from workflow engine
+      if (result.collectedFields && Object.keys(result.collectedFields).length > 0) {
+        setCollectedFields((prev) => {
+          const merged = { ...prev, ...result.collectedFields };
+          collectedFieldsRef.current = merged;
+          return merged;
+        });
       }
 
       setWaitingForInput(result.waitingForInput);
@@ -675,8 +697,9 @@ const TestAgentModal = ({
     isCallActiveRef.current = false;
     waitingForInputRef.current = false;
 
-    // End workflow session on server
-    await endWorkflowCallAPI();
+    // End workflow session on server and get any remaining collected fields
+    const endFields = await endWorkflowCallAPI();
+    const finalFields = { ...collectedFieldsRef.current, ...endFields };
     workflowSessionIdRef.current = null;
 
     if (timerRef.current) {
@@ -705,7 +728,10 @@ const TestAgentModal = ({
 
     if (callSessionId) {
       try {
-        await api.endTestCallSession(callSessionId);
+        await api.endTestCallSession(
+          callSessionId,
+          Object.keys(finalFields).length > 0 ? finalFields : undefined
+        );
       } catch (error) {
         console.error("Failed to end test call session:", error);
       }
@@ -719,6 +745,8 @@ const TestAgentModal = ({
     isSpeakingRef.current = false;
     setIsLoading(false);
     setWaitingForInput(false);
+    setCollectedFields({});
+    collectedFieldsRef.current = {};
 
     toast({
       title: "Call Ended",
@@ -1103,6 +1131,27 @@ const CallHistoryView = ({
             {format(new Date(selectedCall.startedAt), "MMM d, yyyy 'at' h:mm a")}
           </p>
         </div>
+
+        {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
+          <div className="rounded-lg border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-800 p-3 mb-3 shrink-0">
+            <p className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-2 flex items-center gap-1.5">
+              <ClipboardList className="w-3.5 h-3.5" />
+              Collected Information
+            </p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {Object.entries(selectedCall.collectedData).map(([key, value]) => (
+                <div key={key} className="flex flex-col">
+                  <span className="text-[10px] text-purple-500 dark:text-purple-400 capitalize">
+                    {key.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-xs text-gray-800 dark:text-gray-200 font-medium truncate">
+                    {String(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {loadingMessages ? (
           <div className="flex-1 flex items-center justify-center">

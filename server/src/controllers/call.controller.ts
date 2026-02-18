@@ -391,7 +391,13 @@ export class CallController {
         return;
       }
 
-      logger.info('Ending test call session', { callSessionId });
+      const { collectedData } = req.body || {};
+
+      logger.info('Ending test call session', { callSessionId, hasCollectedData: !!collectedData });
+
+      if (collectedData && typeof collectedData === 'object' && Object.keys(collectedData).length > 0) {
+        await callService.updateCollectedData(callSessionId, collectedData);
+      }
 
       await callService.updateCallStatus(callSessionId, 'ended');
 
@@ -437,6 +443,7 @@ export class CallController {
             startedAt: session.startedAt,
             endedAt: session.endedAt,
             messageCount: messages.length,
+            collectedData: session.collectedData || null,
           };
         })
       );

@@ -17,6 +17,7 @@ export interface CallSession {
   callerNumber: string | null;
   calleeNumber: string | null;
   agentId: string | null;
+  collectedData: Record<string, any> | null;
 }
 
 export interface CallMessage {
@@ -67,6 +68,7 @@ class CallService {
         callerNumber: data.caller_number,
         calleeNumber: data.callee_number,
         agentId: data.agent_id,
+        collectedData: data.collected_data || null,
       };
 
       this.activeCalls.set(callSession.id, callSession);
@@ -120,6 +122,22 @@ class CallService {
       }
     } catch (error) {
       logger.error('Failed to update call status:', error);
+      throw error;
+    }
+  }
+
+  async updateCollectedData(callSessionId: string, collectedData: Record<string, any>): Promise<void> {
+    try {
+      const { error } = await this.supabase
+        .from('call_sessions')
+        .update({ collected_data: collectedData })
+        .eq('id', callSessionId);
+
+      if (error) throw error;
+
+      logger.info('Collected data updated', { callSessionId, fieldCount: Object.keys(collectedData).length });
+    } catch (error) {
+      logger.error('Failed to update collected data:', error);
       throw error;
     }
   }
@@ -395,6 +413,7 @@ class CallService {
         callerNumber: session.caller_number,
         calleeNumber: session.callee_number,
         agentId: session.agent_id,
+        collectedData: session.collected_data || null,
       }));
     } catch (error) {
       logger.error('Failed to get user call sessions:', error);
@@ -424,6 +443,7 @@ class CallService {
         callerNumber: session.caller_number,
         calleeNumber: session.callee_number,
         agentId: session.agent_id,
+        collectedData: session.collected_data || null,
       }));
     } catch (error) {
       logger.error('Failed to get agent call sessions:', error);
