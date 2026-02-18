@@ -138,6 +138,8 @@ const TestAgentModal = ({
   const workflowSessionIdRef = useRef<string | null>(null);
   const waitingForInputRef = useRef(false);
   const callSessionIdRef = useRef<string | null>(null);
+  const handleUserMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const noSpeechCountRef = useRef(0);
 
   // Set mode when modal opens with initialMode
   useEffect(() => {
@@ -312,24 +314,27 @@ const TestAgentModal = ({
         let interimTranscript = "";
         let hasReceivedSpeech = false;
 
-        const resetSilenceTimer = () => {
+        const stopRecognition = () => {
+          if (recognitionRef.current) {
+            try { recognitionRef.current.stop(); } catch {}
+          }
+        };
+
+        // After user starts talking, stop after 2s silence.
+        // Before user talks, give 5s to begin speaking.
+        const startSilenceTimer = (ms: number) => {
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = setTimeout(() => {
-            if (recognitionRef.current) {
-              try {
-                recognitionRef.current.stop();
-              } catch {}
-            }
-          }, 2000);
+          silenceTimerRef.current = setTimeout(stopRecognition, ms);
         };
 
         recognition.onstart = () => {
           setIsRecording(true);
-          resetSilenceTimer();
+          startSilenceTimer(5000); // 5s for user to start speaking
         };
 
         recognition.onresult = (event: any) => {
           hasReceivedSpeech = true;
+          noSpeechCountRef.current = 0; // reset no-speech counter on actual speech
           interimTranscript = "";
           for (let i = event.resultIndex; i < event.results.length; i++) {
             if (event.results[i].isFinal) {
@@ -338,7 +343,7 @@ const TestAgentModal = ({
               interimTranscript += event.results[i][0].transcript;
             }
           }
-          resetSilenceTimer();
+          startSilenceTimer(2000); // 2s after last speech
         };
 
         recognition.onend = async () => {
@@ -346,38 +351,41 @@ const TestAgentModal = ({
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           recognitionRef.current = null;
 
+          if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
+
           // Use final transcript, or fall back to interim if final is empty
           const text = (finalTranscript.trim() || interimTranscript.trim());
 
-          if (text && isCallActiveRef.current) {
-            await handleUserMessage(text);
-          } else if (hasReceivedSpeech && isCallActiveRef.current) {
+          if (text) {
+            noSpeechCountRef.current = 0;
+            await handleUserMessageRef.current(text);
+          } else if (hasReceivedSpeech) {
             // User spoke but speech couldn't be transcribed — trigger fallback
-            await handleUserMessage("[SPEECH_NOT_RECOGNIZED]");
-          } else if (
-            !hasReceivedSpeech &&
-            isCallActiveRef.current &&
-            callModeRef.current === "audio" &&
-            waitingForInputRef.current
-          ) {
-            // No speech at all — restart listening
-            startAutoRecording();
+            await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
+          } else {
+            // No speech detected
+            noSpeechCountRef.current++;
+            if (noSpeechCountRef.current >= 2) {
+              // User hasn't spoken after 2 cycles (~10s) — trigger fallback
+              noSpeechCountRef.current = 0;
+              await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
+            } else if (waitingForInputRef.current) {
+              startAutoRecording();
+            }
           }
         };
 
         recognition.onerror = (event: any) => {
           if (event.error === "no-speech") {
+            // Handled by onend
             setIsRecording(false);
-            if (
-              isCallActiveRef.current &&
-              callModeRef.current === "audio" &&
-              waitingForInputRef.current
-            ) {
-              startAutoRecording();
-            }
           } else if (event.error !== "aborted") {
             console.error("Speech recognition error:", event.error);
             setIsRecording(false);
+            // Restart on transient errors
+            if (isCallActiveRef.current && callModeRef.current === "audio" && waitingForInputRef.current) {
+              startAutoRecording();
+            }
           }
         };
 
@@ -540,8 +548,12 @@ const TestAgentModal = ({
     async (text: string) => {
       if (!text.trim() || !isCallActiveRef.current) return;
 
+      const isSpeechNotRecognized = text === "[SPEECH_NOT_RECOGNIZED]";
+
       if (!waitingForInputRef.current) {
-        addMessage("system", "Waiting for the next conversation stage...");
+        if (!isSpeechNotRecognized) {
+          addMessage("system", "Waiting for the next conversation stage...");
+        }
         return;
       }
 
@@ -550,7 +562,10 @@ const TestAgentModal = ({
         return;
       }
 
-      addMessage("user", text);
+      // Don't show [SPEECH_NOT_RECOGNIZED] as a user message
+      if (!isSpeechNotRecognized) {
+        addMessage("user", text);
+      }
       setInputMessage("");
       setIsLoading(true);
       isLoadingRef.current = true;
@@ -583,6 +598,11 @@ const TestAgentModal = ({
     [sendWorkflowMessageAPI, processWorkflowResult, addMessage, startAutoRecording]
   );
 
+  // Keep ref always pointing to the latest handleUserMessage
+  useEffect(() => {
+    handleUserMessageRef.current = handleUserMessage;
+  }, [handleUserMessage]);
+
   // --- Start call ---
   const startCall = useCallback(async () => {
     try {
@@ -594,6 +614,7 @@ const TestAgentModal = ({
       setWaitingForInput(false);
       waitingForInputRef.current = false;
       workflowSessionIdRef.current = null;
+      noSpeechCountRef.current = 0;
       setCallDuration(0);
       setCurrentWorkflowStep("Initializing call...");
 
