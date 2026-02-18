@@ -321,7 +321,8 @@ export class CallController {
         userId,
         direction,
         direction === 'inbound' ? 'test-caller' : undefined,
-        direction === 'outbound' ? 'test-callee' : undefined
+        direction === 'outbound' ? 'test-callee' : undefined,
+        agentId || undefined
       );
 
       // Update status to active immediately for test calls
@@ -402,6 +403,52 @@ export class CallController {
       logger.error('Failed to end test call session:', error);
       res.status(500).json({
         error: 'Failed to end test call session',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  // Get call history for a specific agent
+  async getAgentCallHistory(req: Request, res: Response): Promise<void> {
+    try {
+      const userId = (req as any).user?.userId;
+      const { agentId } = req.params;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      if (!agentId) {
+        res.status(400).json({ error: 'Agent ID is required' });
+        return;
+      }
+
+      const callSessions = await callService.getAgentCallSessions(userId, agentId);
+
+      // Get message count for each session
+      const sessionsWithCounts = await Promise.all(
+        callSessions.map(async (session) => {
+          const messages = await callService.getCallMessages(session.id);
+          return {
+            id: session.id,
+            status: session.status,
+            direction: session.direction,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+            messageCount: messages.length,
+          };
+        })
+      );
+
+      res.status(200).json({
+        success: true,
+        callSessions: sessionsWithCounts,
+      });
+    } catch (error) {
+      logger.error('Failed to get agent call history:', error);
+      res.status(500).json({
+        error: 'Failed to get agent call history',
         details: error instanceof Error ? error.message : 'Unknown error',
       });
     }

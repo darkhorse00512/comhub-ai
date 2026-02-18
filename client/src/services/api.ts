@@ -26,6 +26,15 @@ interface CallHistoryItem {
   recordingUrl?: string;
 }
 
+interface AgentCallHistoryItem {
+  id: string;
+  status: "ringing" | "active" | "ended" | "failed";
+  direction: "inbound" | "outbound";
+  startedAt: string;
+  endedAt: string | null;
+  messageCount: number;
+}
+
 interface ApiResponse<T> {
   data: T | null;
   error: string | null;
@@ -224,6 +233,30 @@ export const api = {
       };
     } catch (error) {
       console.error("Error fetching call history:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAgentCallHistory(agentId: string): Promise<ApiResponse<AgentCallHistoryItem[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/calls/agent/${agentId}/history`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch agent call history");
+      }
+
+      const data = await response.json();
+      return {
+        data: data.callSessions || [],
+        error: null,
+      };
+    } catch (error) {
+      console.error("Error fetching agent call history:", error);
       return { data: null, error: (error as Error).message };
     }
   },
@@ -1128,4 +1161,4 @@ export const api = {
   },
 };
 
-export type { CallHistoryItem, ApiResponse };
+export type { CallHistoryItem, AgentCallHistoryItem, ApiResponse };

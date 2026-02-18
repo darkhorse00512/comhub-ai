@@ -21,6 +21,9 @@ router.post('/:callSessionId/end', callController.endCall);
 
 router.get('/history', callController.getCallHistory);
 
+// Agent-specific call history (must be before /:callSessionId to avoid conflicts)
+router.get('/agent/:agentId/history', callController.getAgentCallHistory);
+
 router.get('/:callSessionId', callController.getActiveCall);
 
 router.get('/:callSessionId/messages', callController.getCallMessages);

@@ -27,21 +27,27 @@ import {
   History,
   ArrowLeft,
   RefreshCw,
-  Clock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import { Node, Edge } from "@/components/FlowCanvas";
 
-interface AgentVersionItem {
+interface AgentCallHistoryItem {
   id: string;
-  agent_id: string;
-  version_number: number;
-  name: string;
-  node_count: number;
-  edge_count: number;
-  created_at: string;
+  status: "ringing" | "active" | "ended" | "failed";
+  direction: "inbound" | "outbound";
+  startedAt: string;
+  endedAt: string | null;
+  messageCount: number;
+}
+
+interface CallMessageItem {
+  id: string;
+  role: "user" | "ai";
+  content: string;
+  timestamp: string;
+  audioUrl: string | null;
 }
 
 interface Message {
@@ -107,9 +113,11 @@ const TestAgentModal = ({
 
   // History state
   const [showHistory, setShowHistory] = useState(false);
-  const [historyVersions, setHistoryVersions] = useState<AgentVersionItem[]>([]);
+  const [callHistoryItems, setCallHistoryItems] = useState<AgentCallHistoryItem[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const [selectedHistoryCall, setSelectedHistoryCall] = useState<AgentCallHistoryItem | null>(null);
+  const [selectedCallMessages, setSelectedCallMessages] = useState<CallMessageItem[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -825,15 +833,38 @@ const TestAgentModal = ({
   const fetchHistory = useCallback(async () => {
     setLoadingHistory(true);
     try {
-      const result = await api.getAgentVersions(agentId);
+      const result = await api.getAgentCallHistory(agentId);
       if (!result.error) {
-        setHistoryVersions(result.data || []);
+        setCallHistoryItems(result.data || []);
       }
     } catch (error) {
-      console.error("Failed to fetch agent versions:", error);
+      console.error("Failed to fetch call history:", error);
     }
     setLoadingHistory(false);
   }, [agentId]);
+
+  const fetchCallMessages = useCallback(async (callId: string) => {
+    setLoadingMessages(true);
+    try {
+      const result = await api.getCallMessages(callId);
+      if (!result.error) {
+        setSelectedCallMessages(result.data || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch call messages:", error);
+    }
+    setLoadingMessages(false);
+  }, []);
+
+  const selectHistoryCall = useCallback((call: AgentCallHistoryItem) => {
+    setSelectedHistoryCall(call);
+    fetchCallMessages(call.id);
+  }, [fetchCallMessages]);
+
+  const backToCallList = useCallback(() => {
+    setSelectedHistoryCall(null);
+    setSelectedCallMessages([]);
+  }, []);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
@@ -842,6 +873,8 @@ const TestAgentModal = ({
 
   const closeHistory = useCallback(() => {
     setShowHistory(false);
+    setSelectedHistoryCall(null);
+    setSelectedCallMessages([]);
   }, []);
 
   const handleClose = () => {
@@ -859,20 +892,22 @@ const TestAgentModal = ({
           {showHistory ? (
             <DialogTitle className="flex items-center gap-2">
               <button
-                onClick={closeHistory}
+                onClick={selectedHistoryCall ? backToCallList : closeHistory}
                 className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
               <History className="w-5 h-5 text-purple-500" />
-              Agent History
-              <button
-                onClick={fetchHistory}
-                disabled={loadingHistory}
-                className="p-1 rounded-lg hover:bg-white/10 transition-colors ml-1"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 opacity-50 hover:opacity-100 ${loadingHistory ? "animate-spin" : ""}`} />
-              </button>
+              {selectedHistoryCall ? "Conversation" : "Call History"}
+              {!selectedHistoryCall && (
+                <button
+                  onClick={fetchHistory}
+                  disabled={loadingHistory}
+                  className="p-1 rounded-lg hover:bg-white/10 transition-colors ml-1"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 opacity-50 hover:opacity-100 ${loadingHistory ? "animate-spin" : ""}`} />
+                </button>
+              )}
             </DialogTitle>
           ) : (
             <DialogTitle className="flex items-center gap-2">
@@ -893,12 +928,13 @@ const TestAgentModal = ({
 
         <div className="flex-1 flex flex-col min-h-0 px-5 pb-5">
           {showHistory ? (
-            <AgentVersionHistoryView
-              versions={historyVersions}
+            <CallHistoryView
+              calls={callHistoryItems}
               loadingHistory={loadingHistory}
-              agentId={agentId}
-              restoringVersionId={restoringVersionId}
-              setRestoringVersionId={setRestoringVersionId}
+              selectedCall={selectedHistoryCall}
+              selectedCallMessages={selectedCallMessages}
+              loadingMessages={loadingMessages}
+              onSelectCall={selectHistoryCall}
             />
           ) : (
           <Tabs
@@ -1002,49 +1038,32 @@ const TestAgentModal = ({
   );
 };
 
-// --- Agent Version History View component ---
-interface AgentVersionHistoryViewProps {
-  versions: AgentVersionItem[];
+// --- Call History View component ---
+interface CallHistoryViewProps {
+  calls: AgentCallHistoryItem[];
   loadingHistory: boolean;
-  agentId: string;
-  restoringVersionId: string | null;
-  setRestoringVersionId: (id: string | null) => void;
+  selectedCall: AgentCallHistoryItem | null;
+  selectedCallMessages: CallMessageItem[];
+  loadingMessages: boolean;
+  onSelectCall: (call: AgentCallHistoryItem) => void;
 }
 
-const AgentVersionHistoryView = ({
-  versions,
+const CallHistoryView = ({
+  calls,
   loadingHistory,
-  agentId,
-  restoringVersionId,
-  setRestoringVersionId,
-}: AgentVersionHistoryViewProps) => {
-  const { toast } = useToast();
-
-  const handleRestore = async (version: AgentVersionItem) => {
-    setRestoringVersionId(version.id);
-    try {
-      const result = await api.restoreAgentVersion(agentId, version.id);
-      if (result.error) {
-        toast({
-          title: "Error restoring version",
-          description: result.error,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Version restored",
-          description: `Restored to version ${version.version_number}. Reload the page to see changes.`,
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to restore version",
-        variant: "destructive",
-      });
-    } finally {
-      setRestoringVersionId(null);
-    }
+  selectedCall,
+  selectedCallMessages,
+  loadingMessages,
+  onSelectCall,
+}: CallHistoryViewProps) => {
+  const formatCallDuration = (startedAt: string, endedAt: string | null): string => {
+    if (!endedAt) return "0:00";
+    const start = new Date(startedAt).getTime();
+    const end = new Date(endedAt).getTime();
+    const seconds = Math.floor((end - start) / 1000);
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   const getTimeAgo = (dateStr: string): string => {
@@ -1054,7 +1073,6 @@ const AgentVersionHistoryView = ({
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
-
     if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
@@ -1062,84 +1080,154 @@ const AgentVersionHistoryView = ({
     return format(date, "MMM d");
   };
 
+  // --- Message detail view ---
+  if (selectedCall) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="rounded-lg border border-gray-200 p-3 mb-3 shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {selectedCall.direction === "inbound" ? (
+                <PhoneIncoming className="w-4 h-4 text-blue-500" />
+              ) : (
+                <PhoneOutgoing className="w-4 h-4 text-green-500" />
+              )}
+              <span className="text-sm font-medium capitalize">{selectedCall.direction}</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span>{formatCallDuration(selectedCall.startedAt, selectedCall.endedAt)}</span>
+              <span>{selectedCall.messageCount} messages</span>
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-400 mt-1">
+            {format(new Date(selectedCall.startedAt), "MMM d, yyyy 'at' h:mm a")}
+          </p>
+        </div>
+
+        {loadingMessages ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+              <span className="text-sm text-muted-foreground">Loading conversation...</span>
+            </div>
+          </div>
+        ) : selectedCallMessages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center">
+            <MessageSquare className="w-7 h-7 text-gray-300 mb-2" />
+            <p className="text-sm text-muted-foreground">No messages in this call</p>
+          </div>
+        ) : (
+          <div className="flex-1 h-0 overflow-y-auto space-y-3 pr-1">
+            {selectedCallMessages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                {msg.role === "ai" && (
+                  <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-purple-600" />
+                  </div>
+                )}
+                <div
+                  className={`max-w-[75%] rounded-lg px-3 py-2 ${
+                    msg.role === "user" ? "bg-blue-500 text-white" : "bg-muted text-foreground"
+                  }`}
+                >
+                  <p className="text-sm leading-relaxed">{msg.content}</p>
+                  <span
+                    className={`text-[10px] mt-1 block ${
+                      msg.role === "user" ? "text-blue-100" : "text-muted-foreground"
+                    }`}
+                  >
+                    {format(new Date(msg.timestamp), "h:mm a")}
+                  </span>
+                </div>
+                {msg.role === "user" && (
+                  <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User className="w-3.5 h-3.5 text-blue-600" />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- Call list view ---
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {loadingHistory ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-            <span className="text-sm text-muted-foreground">Loading history...</span>
+            <span className="text-sm text-muted-foreground">Loading call history...</span>
           </div>
         </div>
-      ) : versions.length === 0 ? (
+      ) : calls.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
-            <History className="w-7 h-7 text-gray-300" />
+            <Phone className="w-7 h-7 text-gray-300" />
           </div>
-          <p className="font-medium text-gray-700 mb-1">No version history yet</p>
+          <p className="font-medium text-gray-700 mb-1">No test calls yet</p>
           <p className="text-xs text-muted-foreground max-w-[250px]">
-            Save your agent to start tracking version history
+            Start a test call to begin recording conversation history
           </p>
         </div>
       ) : (
         <div className="flex-1 h-0 overflow-y-auto">
           <div className="space-y-2">
-            {versions.map((version, index) => (
-              <div
-                key={version.id}
-                className="group rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all p-3.5"
+            {calls.map((call) => (
+              <button
+                key={call.id}
+                onClick={() => onSelectCall(call)}
+                className="w-full group rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all p-3.5 text-left"
               >
-                <div className="flex items-start justify-between mb-1.5">
+                <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2.5">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
-                      index === 0
-                        ? "bg-purple-100 text-purple-700"
-                        : "bg-gray-100 text-gray-600"
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      call.direction === "inbound"
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-green-100 text-green-700"
                     }`}>
-                      v{version.version_number}
+                      {call.direction === "inbound" ? (
+                        <PhoneIncoming className="w-4 h-4" />
+                      ) : (
+                        <PhoneOutgoing className="w-4 h-4" />
+                      )}
                     </div>
                     <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium text-gray-900">
-                          {index === 0 ? "Latest" : `Version ${version.version_number}`}
-                        </p>
-                        {index === 0 && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded-full">
-                            Current
-                          </span>
-                        )}
-                      </div>
+                      <p className="text-sm font-medium text-gray-900 capitalize">
+                        {call.direction} Call
+                      </p>
                       <p className="text-[11px] text-gray-400">
-                        {getTimeAgo(version.created_at)} · {version.node_count} nodes · {version.edge_count} edges
+                        {getTimeAgo(call.startedAt)} ·{" "}
+                        {formatCallDuration(call.startedAt, call.endedAt)} ·{" "}
+                        {call.messageCount} msg{call.messageCount !== 1 ? "s" : ""}
                       </p>
                     </div>
                   </div>
-
-                  {index > 0 && (
-                    <button
-                      className="text-xs text-purple-600 hover:text-purple-800 font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-purple-100"
-                      onClick={() => handleRestore(version)}
-                      disabled={restoringVersionId === version.id}
-                    >
-                      {restoringVersionId === version.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Clock className="w-3 h-3" />
-                      )}
-                      Restore
-                    </button>
-                  )}
+                  <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${
+                    call.status === "ended"
+                      ? "bg-green-100 text-green-700"
+                      : call.status === "active"
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-gray-100 text-gray-600"
+                  }`}>
+                    {call.status === "ended" ? "Completed" : call.status}
+                  </span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
       )}
 
-      {versions.length > 0 && (
+      {calls.length > 0 && (
         <div className="pt-3 mt-2 border-t shrink-0">
           <p className="text-xs text-center text-muted-foreground">
-            {versions.length} version{versions.length !== 1 ? "s" : ""} saved
+            {calls.length} test call{calls.length !== 1 ? "s" : ""}
           </p>
         </div>
       )}

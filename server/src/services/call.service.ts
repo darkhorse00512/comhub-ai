@@ -16,6 +16,7 @@ export interface CallSession {
   direction: 'inbound' | 'outbound';
   callerNumber: string | null;
   calleeNumber: string | null;
+  agentId: string | null;
 }
 
 export interface CallMessage {
@@ -36,7 +37,8 @@ class CallService {
     userId: string,
     direction: 'inbound' | 'outbound',
     callerNumber?: string,
-    calleeNumber?: string
+    calleeNumber?: string,
+    agentId?: string
   ): Promise<CallSession> {
     try {
       const { data, error } = await this.supabase
@@ -47,6 +49,7 @@ class CallService {
           direction,
           caller_number: callerNumber || null,
           callee_number: calleeNumber || null,
+          agent_id: agentId || null,
         })
         .select()
         .single();
@@ -63,6 +66,7 @@ class CallService {
         direction: data.direction as any,
         callerNumber: data.caller_number,
         calleeNumber: data.callee_number,
+        agentId: data.agent_id,
       };
 
       this.activeCalls.set(callSession.id, callSession);
@@ -390,9 +394,39 @@ class CallService {
         direction: session.direction as any,
         callerNumber: session.caller_number,
         calleeNumber: session.callee_number,
+        agentId: session.agent_id,
       }));
     } catch (error) {
       logger.error('Failed to get user call sessions:', error);
+      throw error;
+    }
+  }
+
+  async getAgentCallSessions(userId: string, agentId: string): Promise<CallSession[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('call_sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .order('started_at', { ascending: false });
+
+      if (error) throw error;
+
+      return data.map((session) => ({
+        id: session.id,
+        userId: session.user_id,
+        status: session.status as any,
+        startedAt: session.started_at,
+        endedAt: session.ended_at,
+        channelId: session.channel_id,
+        direction: session.direction as any,
+        callerNumber: session.caller_number,
+        calleeNumber: session.callee_number,
+        agentId: session.agent_id,
+      }));
+    } catch (error) {
+      logger.error('Failed to get agent call sessions:', error);
       throw error;
     }
   }
