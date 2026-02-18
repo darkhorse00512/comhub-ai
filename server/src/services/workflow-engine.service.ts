@@ -89,6 +89,7 @@ interface ParsedAIResponse {
   text: string;
   transition?: string;
   wantsToComplete: boolean;
+  wantsFallback: boolean;
 }
 
 /**
@@ -120,13 +121,16 @@ function parseAIResponse(response: string, validTransitionNames?: string[]): Par
     response.includes('[NEXT]') ||
     response.includes('[STAGE_COMPLETE]');
 
+  const wantsFallback = response.includes('[FALLBACK]');
+
   const text = response
     .replace(/\[TRANSITION:[^\]]+\]/g, '')
     .replace(/\[NEXT\]/g, '')
     .replace(/\[STAGE_COMPLETE\]/g, '')
+    .replace(/\[FALLBACK\]/g, '')
     .trim();
 
-  return { text, transition, wantsToComplete };
+  return { text, transition, wantsToComplete, wantsFallback };
 }
 
 /**
@@ -247,6 +251,12 @@ export class WorkflowEngine {
     return this.getNextNodeId(node.id);
   }
 
+  private getDialogueFallbackNodeId(node: WorkflowNode): string | null {
+    const outEdges = this.edges.filter((e) => e.source === node.id);
+    const fallbackEdge = outEdges.find((e) => e.sourceHandle === 'fallback');
+    return fallbackEdge?.target || null;
+  }
+
   // --- System prompt builder for dialogue stages ---
 
   private buildDialogueSystemPrompt(node: WorkflowNode): string {
@@ -333,7 +343,8 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 6. The transition signal is invisible to the caller. Do NOT say it aloud, mention it, or reference it.
 7. The transition name must EXACTLY match one of the options listed above. Do not invent new names.
 8. Keep responses concise and natural for voice conversation (1-3 sentences).
-9. Be friendly and professional.`;
+9. Be friendly and professional.
+10. If the caller's message is completely unintelligible, irrelevant, or you absolutely cannot understand their intent after multiple attempts, append [FALLBACK] at the end of your response. This will route the call to a fallback handler. Only use this as a last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES — read these carefully:
 1. Your PRIMARY job is to have a natural, helpful conversation. Keep talking to the caller, ask questions, provide information.
@@ -343,7 +354,8 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 5. When — and ONLY when — you have fully completed ALL objectives of this conversation stage, append [NEXT] at the very end of your response.
 6. NEVER include [NEXT] in your first response. You must have a real conversation first.
 7. Do NOT say "[NEXT]" aloud — it is an invisible system signal.
-8. If there is more to discuss, do NOT include [NEXT]. Keep the conversation going.`;
+8. If there is more to discuss, do NOT include [NEXT]. Keep the conversation going.
+9. If the caller's message is completely unintelligible, irrelevant, or you absolutely cannot understand their intent after multiple attempts, append [FALLBACK] at the end of your response. This will route the call to a fallback handler. Only use this as a last resort.`;
     }
 
     return prompt;
@@ -518,6 +530,35 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
     const transitions: Array<{ id: string; name: string }> = dialogueNode.data?.transitions || [];
     const validTransitionNames = transitions.map((t) => t.name);
 
+    // --- Handle unrecognized speech (voice mode) ---
+    if (userMessage === '[SPEECH_NOT_RECOGNIZED]') {
+      logger.info('WorkflowEngine: Speech not recognized, checking for fallback', {
+        nodeLabel: dialogueNode.data?.label,
+      });
+
+      const fallbackNodeId = this.getDialogueFallbackNodeId(dialogueNode);
+      if (fallbackNodeId) {
+        // Follow fallback edge
+        this.state.isInDialogue = false;
+        this.state.currentDialogueNodeId = null;
+        this.state.currentNodeId = fallbackNodeId;
+        return this.executeFromCurrent(messages);
+      }
+
+      // No fallback connected — ask user to repeat and stay in dialogue
+      const retryMsg = "I'm sorry, I didn't catch that. Could you please repeat?";
+      messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
+      this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
+      this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
+
+      return {
+        messages,
+        waitingForInput: true,
+        isComplete: false,
+        currentStage: dialogueNode.data?.label || 'AI Dialogue',
+      };
+    }
+
     logger.info('WorkflowEngine: Processing dialogue message', {
       userMessage: userMessage.substring(0, 100),
       nodeLabel: dialogueNode.data?.label,
@@ -551,11 +592,12 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
     }
 
     // Parse the AI response, validating transitions against the actual available names
-    const { text, transition, wantsToComplete } = parseAIResponse(aiResponse, validTransitionNames);
+    const { text, transition, wantsToComplete, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
 
     logger.info('WorkflowEngine: Dialogue AI response', {
       responsePreview: text.substring(0, 100),
       wantsToComplete,
+      wantsFallback,
       transition,
       turnCount: this.state.dialogueTurnCount,
     });
@@ -569,6 +611,20 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
     // Track in both dialogue history and conversation context
     this.state.dialogueHistory.push({ role: 'assistant', content: text });
     this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
+
+    // --- Handle AI-triggered fallback ---
+    if (wantsFallback) {
+      const fallbackNodeId = this.getDialogueFallbackNodeId(dialogueNode);
+      if (fallbackNodeId) {
+        logger.info('WorkflowEngine: AI triggered fallback', { nodeLabel: dialogueNode.data?.label });
+        this.state.isInDialogue = false;
+        this.state.currentDialogueNodeId = null;
+        this.state.currentNodeId = fallbackNodeId;
+        return this.executeFromCurrent(messages);
+      }
+      // No fallback node connected — stay in dialogue
+      logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected');
+    }
 
     // --- Decide whether to advance ---
     // A dialogue advances when:
@@ -701,6 +757,17 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             transitions: (node.data?.transitions || []).map((t: any) => t.name),
             contextLength: this.state.conversationContext.length,
           });
+
+          // Validate: warn if no fallback node is connected
+          const fallbackTarget = this.getDialogueFallbackNodeId(node);
+          if (!fallbackTarget) {
+            const label = node.data?.label || node.id;
+            logger.warn('WorkflowEngine: Dialogue node has no fallback connection', { nodeId: node.id, label });
+            messages.push({
+              type: 'system',
+              text: `Warning: Dialogue node "${label}" has no fallback connection. Connect a Fallback node to handle unrecognized input.`,
+            });
+          }
 
           // Build system prompt (includes conversationContext for full awareness)
           const stagePrompt = this.buildDialogueSystemPrompt(node);

@@ -59,13 +59,21 @@ function getNodeOutputHandles(node: Node): OutputHandle[] {
 
   if (nodeType === "dialogue") {
     const transitions = node.data?.transitions || [];
+    const handles: OutputHandle[] = [];
     if (transitions.length > 0) {
-      return transitions.map((t: any) => ({
-        id: t.id || `t-${t.name}`,
-        label: t.name,
-        color: "#22c55e",
-      }));
+      handles.push(
+        ...transitions.map((t: any) => ({
+          id: t.id || `t-${t.name}`,
+          label: t.name,
+          color: "#22c55e",
+        }))
+      );
+    } else {
+      handles.push({ id: "default", label: "Next" });
     }
+    // Always add a fallback handle for dialogue nodes
+    handles.push({ id: "fallback", label: "Fallback", color: "#f97316" });
+    return handles;
   }
 
   // Default: single output
@@ -87,12 +95,9 @@ function getButtonLayoutForNode(node: Node): {
     return { buttonHeight: 0, buttonGap: 0, bottomPad: 0, hasBottomButtons: false, moreTextOffset: 0 };
   }
 
-  // DialogueNode with multiple transitions: py-1.5 (34px height), space-y-1.5 (6px gap)
+  // DialogueNode: transitions + fallback button. py-1.5 (34px height), space-y-1.5 (6px gap)
   if (nodeType === "dialogue") {
-    const transitions = node.data?.transitions || [];
-    if (transitions.length > 0) {
-      return { buttonHeight: 34, buttonGap: 6, bottomPad: 12, hasBottomButtons: true, moreTextOffset: 0 };
-    }
+    return { buttonHeight: 34, buttonGap: 6, bottomPad: 12, hasBottomButtons: true, moreTextOffset: 0 };
   }
 
   // SwitchNode: may have "+N more cases" text below the 3 visible buttons

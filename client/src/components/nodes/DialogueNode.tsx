@@ -408,6 +408,13 @@ const DialogueNode = ({
               <ChevronRight className="w-4 h-4 text-green-500" />
             </div>
           )}
+          {/* Fallback output */}
+          <div className="flex items-center justify-between bg-orange-50 rounded-lg px-3 py-1.5 border border-orange-200">
+            <span className="text-sm font-medium text-orange-600">
+              Fallback
+            </span>
+            <ChevronRight className="w-4 h-4 text-orange-400" />
+          </div>
         </div>
       </div>
 

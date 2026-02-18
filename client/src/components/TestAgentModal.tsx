@@ -309,6 +309,7 @@ const TestAgentModal = ({
         recognition.lang = "en-US";
 
         let finalTranscript = "";
+        let interimTranscript = "";
         let hasReceivedSpeech = false;
 
         const resetSilenceTimer = () => {
@@ -329,9 +330,12 @@ const TestAgentModal = ({
 
         recognition.onresult = (event: any) => {
           hasReceivedSpeech = true;
+          interimTranscript = "";
           for (let i = event.resultIndex; i < event.results.length; i++) {
             if (event.results[i].isFinal) {
               finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
             }
           }
           resetSilenceTimer();
@@ -342,15 +346,21 @@ const TestAgentModal = ({
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           recognitionRef.current = null;
 
-          const text = finalTranscript.trim();
+          // Use final transcript, or fall back to interim if final is empty
+          const text = (finalTranscript.trim() || interimTranscript.trim());
+
           if (text && isCallActiveRef.current) {
             await handleUserMessage(text);
+          } else if (hasReceivedSpeech && isCallActiveRef.current) {
+            // User spoke but speech couldn't be transcribed — trigger fallback
+            await handleUserMessage("[SPEECH_NOT_RECOGNIZED]");
           } else if (
             !hasReceivedSpeech &&
             isCallActiveRef.current &&
             callModeRef.current === "audio" &&
             waitingForInputRef.current
           ) {
+            // No speech at all — restart listening
             startAutoRecording();
           }
         };
