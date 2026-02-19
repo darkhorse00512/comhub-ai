@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { User, Session } from "@supabase/supabase-js";
 import { useState, useEffect, createContext, useContext, ReactNode, useCallback } from "react";
+import { ensureBackendToken } from "@/services/api";
 
 interface AuthContextType {
   user: User | null;
@@ -36,14 +37,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsAdmin(checkAdminFromToken());
   }, []);
 
+  // Actively fetch backend token and check admin status
+  const fetchAndCheckAdmin = useCallback(async () => {
+    const admin = await ensureBackendToken();
+    setIsAdmin(admin);
+  }, []);
+
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
-        // Check admin status after a short delay to allow backend token to be set
-        setTimeout(refreshAdminStatus, 500);
+        if (session) {
+          // Actively fetch backend token to determine admin status
+          fetchAndCheckAdmin();
+        }
       }
     );
 
@@ -51,30 +60,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
-      // Check admin status after a short delay
-      setTimeout(refreshAdminStatus, 500);
+      if (session) {
+        fetchAndCheckAdmin();
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, [refreshAdminStatus]);
-
-  // Also check when backend_token changes in localStorage
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === "backend_token") {
-        refreshAdminStatus();
-      }
-    };
-    window.addEventListener("storage", handleStorage);
-
-    // Check periodically for token updates (same-tab changes don't trigger storage events)
-    const interval = setInterval(refreshAdminStatus, 3000);
-
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      clearInterval(interval);
-    };
-  }, [refreshAdminStatus]);
+  }, [fetchAndCheckAdmin]);
 
   const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/`;

@@ -204,6 +204,18 @@ const getAuthHeaders = async (): Promise<HeadersInit> => {
   };
 };
 
+// Force fetch/refresh backend token and return whether user is admin
+export const ensureBackendToken = async (): Promise<boolean> => {
+  const token = await getBackendToken();
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.is_admin === true;
+  } catch {
+    return false;
+  }
+};
+
 export const api = {
   async getCallHistory(): Promise<ApiResponse<CallHistoryItem[]>> {
     try {
