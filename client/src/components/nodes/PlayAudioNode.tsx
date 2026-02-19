@@ -1,5 +1,5 @@
 import { memo, useState, useRef, useCallback } from "react";
-import { Copy, Pencil, Trash2, Volume2, ChevronRight, HelpCircle, Upload, Mic, Play, Pause, X, AlertTriangle, Sparkles } from "lucide-react";
+import { Copy, Pencil, Trash2, Volume2, ChevronRight, HelpCircle, Upload, Mic, Play, Pause, X, AlertTriangle, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,29 +14,39 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
+import { api } from "@/services/api";
 
 interface PlayAudioNodeProps {
   id: string;
   data: any;
   isConnectable?: boolean;
+  agentId?: string;
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
 }
 
-const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeProps) => {
+const PlayAudioNode = ({ id, data, agentId, onClone, onDelete, onUpdate }: PlayAudioNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
   const [editedFallbackText, setEditedFallbackText] = useState(data.fallbackText || "");
   const [editedAudioFileName, setEditedAudioFileName] = useState(data.audioFileName || "");
-  const [editedAudioData, setEditedAudioData] = useState<string | null>(data.audioData || null);
+  const [editedAudioUrl, setEditedAudioUrl] = useState<string | null>(data.audioUrl || null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingFileRef = useRef<{ blob: Blob; name: string } | null>(null);
+
+  const audioSrc = previewUrl || editedAudioUrl || data.audioUrl || data.audioData;
+  const nodeAudioSrc = data.audioUrl || data.audioData;
+  const hasAudio = !!(audioSrc);
+  const hasNodeAudio = !!(nodeAudioSrc);
 
   const handleClone = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -53,11 +63,13 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
     setEditedName(data.label || "");
     setEditedFallbackText(data.fallbackText || "");
     setEditedAudioFileName(data.audioFileName || "");
-    setEditedAudioData(data.audioData || null);
+    setEditedAudioUrl(data.audioUrl || null);
+    setPreviewUrl(null);
+    pendingFileRef.current = null;
     setIsEditModalOpen(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editedName.trim()) {
       toast({
         title: "Name is required",
@@ -67,15 +79,43 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
       return;
     }
 
+    let finalAudioUrl = editedAudioUrl;
+    let finalAudioFileName = editedAudioFileName;
+
+    if (pendingFileRef.current && agentId) {
+      setIsUploading(true);
+      const result = await api.uploadAgentAudio(
+        agentId,
+        pendingFileRef.current.blob,
+        pendingFileRef.current.name
+      );
+      setIsUploading(false);
+
+      if (result.error) {
+        toast({
+          title: "Upload failed",
+          description: result.error,
+          variant: "destructive"
+        });
+        return;
+      }
+
+      finalAudioUrl = result.data!.audioUrl;
+      finalAudioFileName = result.data!.audioFileName;
+      pendingFileRef.current = null;
+    }
+
     if (onUpdate) {
       onUpdate(id, {
         ...data,
         label: editedName,
         fallbackText: editedFallbackText,
-        audioFileName: editedAudioFileName,
-        audioData: editedAudioData,
+        audioFileName: finalAudioFileName,
+        audioUrl: finalAudioUrl,
+        audioData: null,
       });
     }
+    setPreviewUrl(null);
     setIsEditModalOpen(false);
   };
 
@@ -83,7 +123,9 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
     setEditedName(data.label || "");
     setEditedFallbackText(data.fallbackText || "");
     setEditedAudioFileName(data.audioFileName || "");
-    setEditedAudioData(data.audioData || null);
+    setEditedAudioUrl(data.audioUrl || null);
+    setPreviewUrl(null);
+    pendingFileRef.current = null;
     setIsPlaying(false);
     setIsRecording(false);
     setIsEditModalOpen(false);
@@ -112,22 +154,20 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setEditedAudioData(reader.result as string);
-      setEditedAudioFileName(file.name);
-    };
-    reader.readAsDataURL(file);
+    pendingFileRef.current = { blob: file, name: file.name };
+    setPreviewUrl(URL.createObjectURL(file));
+    setEditedAudioFileName(file.name);
 
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   }, [toast]);
 
   const handleRemoveAudio = () => {
-    setEditedAudioData(null);
+    setEditedAudioUrl(null);
+    setPreviewUrl(null);
     setEditedAudioFileName("");
+    pendingFileRef.current = null;
     setIsPlaying(false);
     if (audioRef.current) {
       audioRef.current.pause();
@@ -135,7 +175,6 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
   };
 
   const togglePlayback = () => {
-    const audioSrc = editedAudioData || data.audioData;
     if (!audioSrc) return;
 
     if (!audioRef.current) {
@@ -156,13 +195,13 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
 
   const togglePlaybackPreview = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!data.audioData) return;
+    if (!nodeAudioSrc) return;
 
     if (!audioRef.current) {
-      audioRef.current = new Audio(data.audioData);
+      audioRef.current = new Audio(nodeAudioSrc);
       audioRef.current.onended = () => setIsPlaying(false);
-    } else if (audioRef.current.src !== data.audioData) {
-      audioRef.current.src = data.audioData;
+    } else if (audioRef.current.src !== nodeAudioSrc) {
+      audioRef.current.src = nodeAudioSrc;
     }
 
     if (isPlaying) {
@@ -189,12 +228,9 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
 
       mediaRecorder.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: "audio/wav" });
-        const reader = new FileReader();
-        reader.onload = () => {
-          setEditedAudioData(reader.result as string);
-          setEditedAudioFileName("recorded-audio.wav");
-        };
-        reader.readAsDataURL(blob);
+        pendingFileRef.current = { blob, name: "recorded-audio.wav" };
+        setPreviewUrl(URL.createObjectURL(blob));
+        setEditedAudioFileName("recorded-audio.wav");
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -222,8 +258,6 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
       description: "Audio transcription will be available when connected to a speech-to-text service.",
     });
   };
-
-  const hasAudio = !!(editedAudioData || data.audioData);
 
   return (
     <>
@@ -290,7 +324,7 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
           </h3>
 
           {/* Audio Preview */}
-          {data.audioData ? (
+          {hasNodeAudio ? (
             <button
               onClick={togglePlaybackPreview}
               className="w-full flex items-center gap-2.5 bg-indigo-50 rounded-lg px-3 py-2.5 border border-indigo-200 hover:bg-indigo-100 transition-colors text-left"
@@ -344,9 +378,18 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
             <div className="flex items-center justify-between">
               <DialogTitle>Node configuration</DialogTitle>
               <div className="flex items-center gap-2">
-                <Button onClick={handleSaveEdit} size="sm" className="bg-indigo-600 hover:bg-indigo-700 gap-1.5">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                  Save
+                <Button
+                  onClick={handleSaveEdit}
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-1.5"
+                  disabled={isUploading}
+                >
+                  {isUploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  )}
+                  {isUploading ? "Uploading..." : "Save"}
                 </Button>
               </div>
             </div>
@@ -368,7 +411,7 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
             <div className="grid gap-2">
               <Label className="text-sm font-semibold text-gray-700">Audio file</Label>
 
-              {(editedAudioData) ? (
+              {hasAudio ? (
                 <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/50 p-4">
                   <div className="flex items-center gap-3">
                     <button
@@ -386,7 +429,7 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
                         {editedAudioFileName || "Audio file"}
                       </p>
                       <p className="text-xs text-gray-500">
-                        {isPlaying ? "Playing..." : "Ready to play"}
+                        {isPlaying ? "Playing..." : pendingFileRef.current ? "Ready to upload" : "Ready to play"}
                       </p>
                     </div>
                     <button
@@ -452,7 +495,7 @@ const PlayAudioNode = ({ id, data, onClone, onDelete, onUpdate }: PlayAudioNodeP
                 <button
                   onClick={handleTranscribeAudio}
                   className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 font-medium transition-colors"
-                  disabled={!editedAudioData}
+                  disabled={!hasAudio}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   Transcribe audio

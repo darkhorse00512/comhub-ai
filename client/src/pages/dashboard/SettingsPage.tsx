@@ -31,9 +31,6 @@ import {
   User,
   Bell,
   Shield,
-  Globe,
-  Bot,
-  Volume2,
   Save,
   Loader2,
   Mail,
@@ -57,8 +54,6 @@ const SettingsPage = () => {
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingNotifications, setSavingNotifications] = useState(false);
-  const [savingAI, setSavingAI] = useState(false);
-
   // Profile form
   const [profileForm, setProfileForm] = useState({
     name: "",
@@ -95,13 +90,6 @@ const SettingsPage = () => {
     marketingEmails: false,
   });
 
-  const [aiSettings, setAiSettings] = useState({
-    voiceModel: "alloy",
-    language: "en-US",
-    maxCallDuration: "30",
-    silenceTimeout: "2",
-  });
-
   // Load settings from API on mount
   useEffect(() => {
     const loadSettings = async () => {
@@ -119,12 +107,6 @@ const SettingsPage = () => {
           callAlerts: s.call_alerts ?? true,
           weeklyReport: s.weekly_report ?? false,
           marketingEmails: s.marketing_emails ?? false,
-        });
-        setAiSettings({
-          voiceModel: s.ai_voice_model || "alloy",
-          language: s.ai_language || "en-US",
-          maxCallDuration: s.ai_max_call_duration?.toString() || "30",
-          silenceTimeout: s.ai_silence_timeout?.toString() || "2",
         });
       }
       setLoadingSettings(false);
@@ -359,30 +341,6 @@ const SettingsPage = () => {
     }
   };
 
-  const handleSaveAI = async () => {
-    setSavingAI(true);
-    const response = await api.updateSettings({
-      ai_voice_model: aiSettings.voiceModel,
-      ai_language: aiSettings.language,
-      ai_max_call_duration: parseInt(aiSettings.maxCallDuration) || 30,
-      ai_silence_timeout: parseInt(aiSettings.silenceTimeout) || 2,
-    });
-    setSavingAI(false);
-
-    if (response.error) {
-      toast({
-        title: "Error saving AI settings",
-        description: response.error,
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "AI settings updated",
-        description: "Your AI configuration has been saved.",
-      });
-    }
-  };
-
   if (loadingSettings) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -413,7 +371,7 @@ const SettingsPage = () => {
       </motion.div>
 
       <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+        <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
           <TabsTrigger value="profile" className="gap-2">
             <User className="w-4 h-4" />
             <span className="hidden sm:inline">Profile</span>
@@ -421,10 +379,6 @@ const SettingsPage = () => {
           <TabsTrigger value="notifications" className="gap-2">
             <Bell className="w-4 h-4" />
             <span className="hidden sm:inline">Notifications</span>
-          </TabsTrigger>
-          <TabsTrigger value="ai" className="gap-2">
-            <Bot className="w-4 h-4" />
-            <span className="hidden sm:inline">AI Config</span>
           </TabsTrigger>
           <TabsTrigger value="security" className="gap-2">
             <Shield className="w-4 h-4" />
@@ -685,114 +639,6 @@ const SettingsPage = () => {
                 <Button onClick={handleSaveNotifications} disabled={savingNotifications} className="gap-2">
                   {savingNotifications ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   {savingNotifications ? "Saving..." : "Save Preferences"}
-                </Button>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
-
-        {/* AI Config Tab */}
-        <TabsContent value="ai">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <Card className="bg-card/50 backdrop-blur border-border/50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-primary" />
-                  AI Configuration
-                </CardTitle>
-                <CardDescription>
-                  Customize how the AI assistant behaves during calls
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="voice">Voice Model</Label>
-                    <Select
-                      value={aiSettings.voiceModel}
-                      onValueChange={(value) =>
-                        setAiSettings({ ...aiSettings, voiceModel: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <Volume2 className="w-4 h-4 mr-2" />
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
-                        <SelectItem value="echo">Echo (Male)</SelectItem>
-                        <SelectItem value="fable">Fable (British)</SelectItem>
-                        <SelectItem value="onyx">Onyx (Deep Male)</SelectItem>
-                        <SelectItem value="nova">Nova (Female)</SelectItem>
-                        <SelectItem value="shimmer">Shimmer (Soft Female)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="language">Language</Label>
-                    <Select
-                      value={aiSettings.language}
-                      onValueChange={(value) =>
-                        setAiSettings({ ...aiSettings, language: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <Globe className="w-4 h-4 mr-2" />
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="en-US">English (US)</SelectItem>
-                        <SelectItem value="en-GB">English (UK)</SelectItem>
-                        <SelectItem value="de-DE">German</SelectItem>
-                        <SelectItem value="es-ES">Spanish</SelectItem>
-                        <SelectItem value="fr-FR">French</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="maxDuration">
-                      Max Call Duration (seconds)
-                    </Label>
-                    <Input
-                      id="maxDuration"
-                      type="number"
-                      value={aiSettings.maxCallDuration}
-                      onChange={(e) =>
-                        setAiSettings({
-                          ...aiSettings,
-                          maxCallDuration: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="silenceTimeout">
-                      Silence Timeout (seconds)
-                    </Label>
-                    <Input
-                      id="silenceTimeout"
-                      type="number"
-                      value={aiSettings.silenceTimeout}
-                      onChange={(e) =>
-                        setAiSettings({
-                          ...aiSettings,
-                          silenceTimeout: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                <Button onClick={handleSaveAI} disabled={savingAI} className="gap-2">
-                  {savingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {savingAI ? "Saving..." : "Save AI Settings"}
                 </Button>
               </CardContent>
             </Card>

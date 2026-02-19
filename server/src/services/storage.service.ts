@@ -3,10 +3,12 @@ import logger from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 
 const BUCKET_NAME = 'call-recordings';
+const PLAY_AUDIO_BUCKET = 'Play Audio';
 
 class StorageService {
   private supabase = getSupabaseClient();
   private bucketInitialized = false;
+  private playAudioBucketInitialized = false;
 
   async ensureBucketExists(): Promise<void> {
     if (this.bucketInitialized) return;
@@ -143,6 +145,101 @@ class StorageService {
       .getPublicUrl(filename);
 
     return data.publicUrl;
+  }
+
+  async ensurePlayAudioBucketExists(): Promise<void> {
+    if (this.playAudioBucketInitialized) return;
+
+    try {
+      const { data: buckets, error: listError } = await this.supabase
+        .storage
+        .listBuckets();
+
+      if (listError) {
+        throw new Error(`Supabase storage error: ${listError.message}`);
+      }
+
+      const bucketExists = buckets?.some(b => b.name === PLAY_AUDIO_BUCKET);
+
+      if (!bucketExists) {
+        const { error: createError } = await this.supabase
+          .storage
+          .createBucket(PLAY_AUDIO_BUCKET, {
+            public: true,
+            fileSizeLimit: 15728640, // 15MB
+            allowedMimeTypes: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/mp4', 'audio/x-m4a'],
+          });
+
+        if (createError && !createError.message.includes('already exists')) {
+          throw new Error(`Failed to create bucket: ${createError.message}`);
+        }
+      }
+
+      this.playAudioBucketInitialized = true;
+    } catch (error) {
+      logger.error('Failed to ensure Play Audio bucket exists:', error);
+      throw error;
+    }
+  }
+
+  async uploadPlayAudio(
+    audioBuffer: Buffer,
+    agentId: string,
+    originalName: string
+  ): Promise<string> {
+    await this.ensurePlayAudioBucketExists();
+
+    const uniqueId = uuidv4().slice(0, 8);
+    const ext = originalName.split('.').pop()?.toLowerCase() || 'mp3';
+    const filename = `${agentId}/${Date.now()}_${uniqueId}.${ext}`;
+
+    const contentTypeMap: Record<string, string> = {
+      mp3: 'audio/mpeg',
+      wav: 'audio/wav',
+      m4a: 'audio/mp4',
+    };
+
+    const { error } = await this.supabase
+      .storage
+      .from(PLAY_AUDIO_BUCKET)
+      .upload(filename, audioBuffer, {
+        contentType: contentTypeMap[ext] || 'audio/mpeg',
+        upsert: true,
+      });
+
+    if (error) {
+      logger.error('Failed to upload play audio:', error);
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+
+    const { data: urlData } = this.supabase
+      .storage
+      .from(PLAY_AUDIO_BUCKET)
+      .getPublicUrl(filename);
+
+    logger.info('Play audio uploaded successfully', { filename, agentId });
+    return urlData.publicUrl;
+  }
+
+  async deletePlayAudio(fileUrl: string): Promise<void> {
+    try {
+      const bucketPath = `/storage/v1/object/public/${PLAY_AUDIO_BUCKET}/`;
+      const idx = fileUrl.indexOf(bucketPath);
+      if (idx === -1) return;
+
+      const filePath = decodeURIComponent(fileUrl.substring(idx + bucketPath.length));
+
+      const { error } = await this.supabase
+        .storage
+        .from(PLAY_AUDIO_BUCKET)
+        .remove([filePath]);
+
+      if (error) {
+        logger.error('Failed to delete play audio:', error);
+      }
+    } catch (error) {
+      logger.error('Failed to delete play audio file:', error);
+    }
   }
 }
 

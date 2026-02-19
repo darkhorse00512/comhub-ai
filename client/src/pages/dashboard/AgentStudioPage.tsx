@@ -51,6 +51,9 @@ import HistoryPanel from "@/components/HistoryPanel";
 import FieldsPanel from "@/components/FieldsPanel";
 import DebugPanel from "@/components/DebugPanel";
 import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
+import AgentConfigureSection from "@/components/agent/AgentConfigureSection";
+import AgentOutboundSection from "@/components/agent/AgentOutboundSection";
+import AgentCallsSection from "@/components/agent/AgentCallsSection";
 
 interface Agent {
   id: string;
@@ -323,6 +326,7 @@ const AgentStudioPage = () => {
     play_audio: (props: any) => (
       <PlayAudioNode
         {...props}
+        agentId={agent?.id}
         onClone={handleCloneNode}
         onDelete={handleDeleteNode}
         onUpdate={handleUpdateNode}
@@ -632,7 +636,8 @@ const AgentStudioPage = () => {
 
   const handleMenuItemClick = (itemId: string) => {
     setSelectedMenuItem(itemId);
-    if (itemId !== "studio") {
+    const implemented = ["studio", "configure", "outbound", "calls"];
+    if (!implemented.includes(itemId)) {
       toast({
         title: itemId.charAt(0).toUpperCase() + itemId.slice(1),
         description: "This section is coming soon!",
@@ -846,8 +851,29 @@ const AgentStudioPage = () => {
             />
           </div>
 
-          {/* Other Menu Content */}
-          {selectedMenuItem !== "studio" && (
+          {/* Configure Section */}
+          {selectedMenuItem === "configure" && agent && (
+            <AgentConfigureSection
+              agent={agent}
+              onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
+            />
+          )}
+
+          {/* Outbound Section */}
+          {selectedMenuItem === "outbound" && agent && (
+            <AgentOutboundSection
+              agent={agent}
+              onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
+            />
+          )}
+
+          {/* Calls Section */}
+          {selectedMenuItem === "calls" && agent && (
+            <AgentCallsSection agentId={agent.id} />
+          )}
+
+          {/* Placeholder for unimplemented sections */}
+          {!["studio", "configure", "outbound", "calls"].includes(selectedMenuItem) && (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
                 <div className="text-6xl mb-4">🚧</div>

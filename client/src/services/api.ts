@@ -26,7 +26,7 @@ interface CallHistoryItem {
   recordingUrl?: string;
 }
 
-interface AgentCallHistoryItem {
+export interface AgentCallHistoryItem {
   id: string;
   status: "ringing" | "active" | "ended" | "failed";
   direction: "inbound" | "outbound";
@@ -913,6 +913,40 @@ export const api = {
       return { data: data.data, error: null };
     } catch (error) {
       console.error("Error cloning agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async uploadAgentAudio(
+    agentId: string,
+    file: Blob,
+    fileName: string
+  ): Promise<ApiResponse<{ audioUrl: string; audioFileName: string }>> {
+    try {
+      const token = await getBackendToken();
+      const formData = new FormData();
+      formData.append("audio", file, fileName);
+
+      const response = await fetch(
+        `${API_BASE_URL}/agents/${agentId}/upload-audio`,
+        {
+          method: "POST",
+          headers: {
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to upload audio");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error uploading agent audio:", error);
       return { data: null, error: (error as Error).message };
     }
   },

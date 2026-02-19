@@ -6,6 +6,7 @@ import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
 import { gptService, ChatMessage } from '../services/ai/gpt.service';
 import { WorkflowEngine, WorkflowEngineState } from '../services/workflow-engine.service';
+import storageService from '../services/storage.service';
 
 const supabase = getSupabaseClient();
 
@@ -1240,6 +1241,59 @@ export const endWorkflowCall = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+/**
+ * Upload audio file for PlayAudio nodes
+ */
+export const uploadAudio = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const { data: agent, error: fetchError } = await supabase
+      .from('agents')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !agent) {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
+    const file = (req as any).file;
+    if (!file) {
+      res.status(400).json({ success: false, error: 'No audio file provided' });
+      return;
+    }
+
+    const publicUrl = await storageService.uploadPlayAudio(
+      file.buffer,
+      id,
+      file.originalname
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        audioUrl: publicUrl,
+        audioFileName: file.originalname,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to upload play audio:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Upload failed',
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -1254,4 +1308,5 @@ export default {
   startWorkflowCall,
   sendWorkflowMessage,
   endWorkflowCall,
+  uploadAudio,
 };
