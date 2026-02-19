@@ -7,6 +7,7 @@ export interface AuthRequest extends Request {
     id: string;
     userId: string;
     email: string;
+    is_admin: boolean;
   };
 }
 
@@ -29,6 +30,7 @@ export const authMiddleware = (
       id: decoded.userId,        // For controllers that use req.user.id
       userId: decoded.userId,     // For controllers that use req.user.userId
       email: decoded.email,
+      is_admin: decoded.is_admin || false,
     };
 
     logger.debug('Request authenticated', { userId: decoded.userId });

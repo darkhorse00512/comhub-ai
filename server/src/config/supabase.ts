@@ -14,16 +14,19 @@ export interface Database {
           id: string;
           email: string;
           created_at: string;
+          is_admin: boolean;
         };
         Insert: {
           id?: string;
           email: string;
           created_at?: string;
+          is_admin?: boolean;
         };
         Update: {
           id?: string;
           email?: string;
           created_at?: string;
+          is_admin?: boolean;
         };
       };
       call_sessions: {

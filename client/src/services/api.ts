@@ -1195,6 +1195,104 @@ export const api = {
       return { data: null, error: (error as Error).message };
     }
   },
+
+  // Admin APIs
+  async getAdminStats(): Promise<ApiResponse<{ totalUsers: number; totalAgents: number; totalCalls: number; activeCalls: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/stats`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch admin stats");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin stats:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAdminUsers(page: number = 1, limit: number = 20, search: string = ""): Promise<ApiResponse<{ users: any[]; total: number; page: number; limit: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+      if (search) params.set("search", search);
+
+      const response = await fetch(`${API_BASE_URL}/admin/users?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch users");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin users:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async toggleUserAdmin(userId: string): Promise<ApiResponse<{ userId: string; is_admin: boolean }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/toggle-admin`, {
+        method: "PUT",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to toggle admin status");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error toggling admin:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteUserAdmin(userId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete user");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  checkIsAdmin(): boolean {
+    try {
+      const token = localStorage.getItem("backend_token");
+      if (!token) return false;
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      return payload.is_admin === true;
+    } catch {
+      return false;
+    }
+  },
 };
 
 export type { CallHistoryItem, AgentCallHistoryItem, ApiResponse };

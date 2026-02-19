@@ -8,6 +8,7 @@ import groupsRoutes from './groups.routes';
 import agentsRoutes from './agents.routes';
 import settingsRoutes from './settings.routes';
 import feedbackRoutes from './feedback.routes';
+import adminRoutes from './admin.routes';
 import config from '../config';
 
 const router = Router();
@@ -21,6 +22,7 @@ router.use('/groups', groupsRoutes);
 router.use('/agents', agentsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/feedback', feedbackRoutes);
+router.use('/admin', adminRoutes);
 
 router.get('/health', (_req, res) => {
   res.status(200).json({

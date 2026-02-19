@@ -19,7 +19,7 @@ export class AuthController {
 
       const { data: existingUser } = await supabase
         .from("users")
-        .select("id")
+        .select("id, is_admin")
         .eq("email", email)
         .single() as { data: UserRow | null };
 
@@ -28,6 +28,7 @@ export class AuthController {
         const token = AuthUtils.generateToken({
           userId: existingUser.id,
           email: email,
+          is_admin: existingUser.is_admin || false,
         });
 
         res.status(200).json({
@@ -35,6 +36,7 @@ export class AuthController {
           user: {
             id: existingUser.id,
             email: email,
+            is_admin: existingUser.is_admin || false,
           },
           token,
         });
@@ -69,6 +71,7 @@ export class AuthController {
       const token = AuthUtils.generateToken({
         userId: newUser.id,
         email: newUser.email,
+        is_admin: false,
       });
 
       logger.info("User registered successfully", {
@@ -82,6 +85,7 @@ export class AuthController {
           id: newUser.id,
           email: newUser.email,
           createdAt: newUser.created_at,
+          is_admin: false,
         },
         token,
       });
@@ -184,6 +188,7 @@ export class AuthController {
       const token = AuthUtils.generateToken({
         userId: user.id,
         email: user.email,
+        is_admin: user.is_admin || false,
       });
 
       logger.info("User logged in successfully", {
@@ -197,6 +202,7 @@ export class AuthController {
           id: user.id,
           email: user.email,
           createdAt: user.created_at,
+          is_admin: user.is_admin || false,
         },
         token,
       });
@@ -225,6 +231,7 @@ export class AuthController {
         user: {
           userId: decoded.userId,
           email: decoded.email,
+          is_admin: decoded.is_admin || false,
         },
       });
     } catch (error) {
@@ -325,6 +332,7 @@ export class AuthController {
           id: user.id,
           email: user.email,
           createdAt: user.created_at,
+          is_admin: user.is_admin || false,
         },
       });
     } catch (error) {

@@ -1,22 +1,40 @@
 import { supabase } from "@/integrations/supabase/client";
 import { User, Session } from "@supabase/supabase-js";
-import { useState, useEffect, createContext, useContext, ReactNode } from "react";
+import { useState, useEffect, createContext, useContext, ReactNode, useCallback } from "react";
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  isAdmin: boolean;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  refreshAdminStatus: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const checkAdminFromToken = (): boolean => {
+  try {
+    const token = localStorage.getItem("backend_token");
+    if (!token) return false;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.is_admin === true;
+  } catch {
+    return false;
+  }
+};
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const refreshAdminStatus = useCallback(() => {
+    setIsAdmin(checkAdminFromToken());
+  }, []);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -24,6 +42,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+        // Check admin status after a short delay to allow backend token to be set
+        setTimeout(refreshAdminStatus, 500);
       }
     );
 
@@ -31,14 +51,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      // Check admin status after a short delay
+      setTimeout(refreshAdminStatus, 500);
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [refreshAdminStatus]);
+
+  // Also check when backend_token changes in localStorage
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "backend_token") {
+        refreshAdminStatus();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
+    // Check periodically for token updates (same-tab changes don't trigger storage events)
+    const interval = setInterval(refreshAdminStatus, 3000);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
+  }, [refreshAdminStatus]);
 
   const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/`;
-    
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -59,10 +99,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    setIsAdmin(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, signUp, signIn, signOut, refreshAdminStatus }}>
       {children}
     </AuthContext.Provider>
   );

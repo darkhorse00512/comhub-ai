@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -26,13 +26,14 @@ import {
   ChevronRight,
   Bot,
   BookOpen,
+  Shield,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
-const navItems = [
+const baseNavItems = [
   { title: "Home", icon: Home, path: "/dashboard" },
   { title: "Agents", icon: Bot, path: "/dashboard/agents" },
   { title: "Telephony", icon: Phone, path: "/dashboard/telephony" },
@@ -43,8 +44,23 @@ const navItems = [
   { title: "Tutorial", icon: BookOpen, path: "/dashboard/tutorial" },
 ];
 
+const adminNavItem = { title: "Admin", icon: Shield, path: "/dashboard/admin" };
+
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
-  const { user, loading, signOut } = useAuth();
+  const { user, loading, signOut, isAdmin } = useAuth();
+
+  const navItems = useMemo(() => {
+    if (!isAdmin) return baseNavItems;
+    // Insert Admin after Settings, before Feedback
+    const items = [...baseNavItems];
+    const feedbackIndex = items.findIndex((i) => i.title === "Feedback");
+    if (feedbackIndex !== -1) {
+      items.splice(feedbackIndex, 0, adminNavItem);
+    } else {
+      items.push(adminNavItem);
+    }
+    return items;
+  }, [isAdmin]);
   const navigate = useNavigate();
   const location = useLocation();
 

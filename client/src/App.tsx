@@ -15,6 +15,7 @@ import UsagePage from "./pages/dashboard/UsagePage";
 import GroupsPage from "./pages/dashboard/GroupsPage";
 import SettingsPage from "./pages/dashboard/SettingsPage";
 import FeedbackPage from "./pages/dashboard/FeedbackPage";
+import AdminPage from "./pages/dashboard/AdminPage";
 import CallHistory from "./pages/CallHistory";
 import BulkDialer from "./pages/BulkDialer";
 import TutorialPage from "./pages/TutorialPage";
@@ -40,6 +41,7 @@ const App = () => (
             <Route path="/dashboard/groups" element={<DashboardLayout><GroupsPage /></DashboardLayout>} />
             <Route path="/dashboard/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
             <Route path="/dashboard/feedback" element={<DashboardLayout><FeedbackPage /></DashboardLayout>} />
+            <Route path="/dashboard/admin" element={<DashboardLayout><AdminPage /></DashboardLayout>} />
             <Route path="/dashboard/tutorial" element={<DashboardLayout><TutorialPage /></DashboardLayout>} />
             <Route path="/history" element={<CallHistory />} />
             <Route path="/bulk-dialer" element={<BulkDialer />} />

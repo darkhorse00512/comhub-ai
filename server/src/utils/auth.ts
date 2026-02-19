@@ -6,6 +6,7 @@ import logger from './logger';
 export interface JWTPayload {
   userId: string;
   email: string;
+  is_admin?: boolean;
   iat?: number;
   exp?: number;
 }
