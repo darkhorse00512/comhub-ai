@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(() => checkAdminFromToken());
 
   const refreshAdminStatus = useCallback(() => {
     setIsAdmin(checkAdminFromToken());
@@ -98,6 +98,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    localStorage.removeItem("backend_token");
     await supabase.auth.signOut();
     setIsAdmin(false);
   };
