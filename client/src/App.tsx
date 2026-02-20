@@ -9,6 +9,7 @@ import Auth from "./pages/Auth";
 import DashboardLayout from "./components/layout/DashboardLayout";
 import HomePage from "./pages/dashboard/HomePage";
 import AgentsPage from "./pages/dashboard/AgentsPage";
+import AgentLayout from "./components/agent/AgentLayout";
 import AgentStudioPage from "./pages/dashboard/AgentStudioPage";
 import AgentConfigurePage from "./pages/dashboard/AgentConfigurePage";
 import AgentOutboundPage from "./pages/dashboard/AgentOutboundPage";
@@ -41,13 +42,16 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/dashboard" element={<DashboardLayout><HomePage /></DashboardLayout>} />
             <Route path="/dashboard/agents" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
-            <Route path="/dashboard/agents/:agentId/studio" element={<AgentStudioPage />} />
-            <Route path="/dashboard/agents/:agentId/configure" element={<AgentConfigurePage />} />
-            <Route path="/dashboard/agents/:agentId/outbound" element={<AgentOutboundPage />} />
-            <Route path="/dashboard/agents/:agentId/calls" element={<AgentCallsPage />} />
-            <Route path="/dashboard/agents/:agentId/chats" element={<AgentChatsPage />} />
-            <Route path="/dashboard/agents/:agentId/analytics" element={<AgentAnalyticsPage />} />
-            <Route path="/dashboard/agents/:agentId/feedback" element={<AgentFeedbackPage />} />
+            {/* Agent pages - nested under AgentLayout so sidebar stays mounted */}
+            <Route path="/dashboard/agents/:agentId" element={<AgentLayout />}>
+              <Route path="studio" element={<AgentStudioPage />} />
+              <Route path="configure" element={<AgentConfigurePage />} />
+              <Route path="outbound" element={<AgentOutboundPage />} />
+              <Route path="calls" element={<AgentCallsPage />} />
+              <Route path="chats" element={<AgentChatsPage />} />
+              <Route path="analytics" element={<AgentAnalyticsPage />} />
+              <Route path="feedback" element={<AgentFeedbackPage />} />
+            </Route>
             <Route path="/dashboard/telephony" element={<DashboardLayout><TelephonyPage /></DashboardLayout>} />
             <Route path="/dashboard/usage" element={<DashboardLayout><UsagePage /></DashboardLayout>} />
             <Route path="/dashboard/groups" element={<DashboardLayout><GroupsPage /></DashboardLayout>} />

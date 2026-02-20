@@ -1,16 +1,14 @@
-import AgentLayout from "@/components/agent/AgentLayout";
+import { useAgentContext } from "@/components/agent/AgentLayout";
 import AgentOutboundSection from "@/components/agent/AgentOutboundSection";
 
 const AgentOutboundPage = () => {
+  const { agent, setAgent } = useAgentContext();
+
   return (
-    <AgentLayout>
-      {(agent, setAgent) => (
-        <AgentOutboundSection
-          agent={agent}
-          onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
-        />
-      )}
-    </AgentLayout>
+    <AgentOutboundSection
+      agent={agent}
+      onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
+    />
   );
 };
 

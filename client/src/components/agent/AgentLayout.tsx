@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Outlet, useOutletContext } from "react-router-dom";
 import {
   Bot,
   Settings,
@@ -20,6 +20,15 @@ export interface Agent {
   config: any;
 }
 
+export interface AgentContextType {
+  agent: Agent;
+  setAgent: (agent: Agent) => void;
+}
+
+export function useAgentContext() {
+  return useOutletContext<AgentContextType>();
+}
+
 const menuItems = [
   { id: "studio", label: "Studio", icon: Bot, path: "studio" },
   { id: "configure", label: "Configure", icon: Settings, path: "configure" },
@@ -30,12 +39,7 @@ const menuItems = [
   { id: "feedback", label: "Feedback", icon: MessageSquare, path: "feedback" },
 ];
 
-interface AgentLayoutProps {
-  children: (agent: Agent, setAgent: (agent: Agent) => void) => React.ReactNode;
-  hideTopBar?: boolean;
-}
-
-const AgentLayout = ({ children, hideTopBar }: AgentLayoutProps) => {
+const AgentLayout = () => {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -47,6 +51,7 @@ const AgentLayout = ({ children, hideTopBar }: AgentLayoutProps) => {
   // Determine active menu item from URL
   const pathSegments = location.pathname.split("/");
   const activeItem = pathSegments[pathSegments.length - 1] || "studio";
+  const isStudio = activeItem === "studio";
 
   useEffect(() => {
     if (agentId) {
@@ -114,8 +119,8 @@ const AgentLayout = ({ children, hideTopBar }: AgentLayoutProps) => {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Top Bar - shown for non-studio pages */}
-        {!hideTopBar && (
+        {/* Top Bar - hidden for studio (it has its own) */}
+        {!isStudio && (
           <div className="h-16 border-b border-border flex items-center px-6 bg-background/95 backdrop-blur-sm z-10">
             <div className="flex items-center gap-4">
               <Button
@@ -145,9 +150,9 @@ const AgentLayout = ({ children, hideTopBar }: AgentLayoutProps) => {
           </div>
         )}
 
-        {/* Page Content */}
+        {/* Page Content - Outlet renders the matched child route */}
         <div className="flex-1 flex overflow-auto">
-          {children(agent, setAgent)}
+          <Outlet context={{ agent, setAgent } satisfies AgentContextType} />
         </div>
       </div>
     </div>

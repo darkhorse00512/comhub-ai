@@ -46,7 +46,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import FieldsPanel from "@/components/FieldsPanel";
 import DebugPanel from "@/components/DebugPanel";
 import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
-import AgentLayout, { Agent } from "@/components/agent/AgentLayout";
+import { useAgentContext } from "@/components/agent/AgentLayout";
 
 const nodeCategories = [
   { type: "scripted", label: "Scripted", icon: FileCode, color: "bg-blue-100 text-blue-600", borderColor: "border-blue-400" },
@@ -63,21 +63,7 @@ const nodeCategories = [
 ];
 
 const AgentStudioPage = () => {
-  return (
-    <AgentLayout hideTopBar>
-      {(agent, setAgent) => (
-        <StudioContent agent={agent} onAgentUpdate={setAgent} />
-      )}
-    </AgentLayout>
-  );
-};
-
-interface StudioContentProps {
-  agent: Agent;
-  onAgentUpdate: (agent: Agent) => void;
-}
-
-const StudioContent = ({ agent, onAgentUpdate }: StudioContentProps) => {
+  const { agent, setAgent: onAgentUpdate } = useAgentContext();
   const navigate = useNavigate();
   const { toast } = useToast();
 

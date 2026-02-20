@@ -35,7 +35,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
-import AgentLayout from "@/components/agent/AgentLayout";
+import { useAgentContext } from "@/components/agent/AgentLayout";
 
 const typeIcons: Record<string, any> = {
   feature: Star,
@@ -52,14 +52,7 @@ const statusColors: Record<string, string> = {
 };
 
 const AgentFeedbackPage = () => {
-  return (
-    <AgentLayout>
-      {(agent) => <FeedbackContent agentId={agent.id} agentName={agent.name} />}
-    </AgentLayout>
-  );
-};
-
-const FeedbackContent = ({ agentId, agentName }: { agentId: string; agentName: string }) => {
+  const { agent } = useAgentContext();
   const { toast } = useToast();
   const [feedbackList, setFeedbackList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,7 +87,7 @@ const FeedbackContent = ({ agentId, agentName }: { agentId: string; agentName: s
     }
 
     setSubmitting(true);
-    const fullSubject = `[Agent: ${agentName}] ${subject.trim()}`;
+    const fullSubject = `[Agent: ${agent.name}] ${subject.trim()}`;
     const result = await api.submitFeedback(type, fullSubject, message.trim());
     setSubmitting(false);
 
@@ -128,7 +121,7 @@ const FeedbackContent = ({ agentId, agentName }: { agentId: string; agentName: s
             Feedback
           </h2>
           <p className="text-muted-foreground mt-1">
-            Submit feedback or report issues for {agentName}
+            Submit feedback or report issues for {agent.name}
           </p>
         </div>
 

@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { api, AgentCallHistoryItem } from "@/services/api";
-import AgentLayout from "@/components/agent/AgentLayout";
+import { useAgentContext } from "@/components/agent/AgentLayout";
 
 interface ChatMessage {
   id: string;
@@ -38,14 +38,7 @@ const formatDuration = (startedAt: string, endedAt: string | null): string => {
 };
 
 const AgentChatsPage = () => {
-  return (
-    <AgentLayout>
-      {(agent) => <ChatsContent agentId={agent.id} />}
-    </AgentLayout>
-  );
-};
-
-const ChatsContent = ({ agentId }: { agentId: string }) => {
+  const { agent } = useAgentContext();
   const [calls, setCalls] = useState<AgentCallHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
@@ -55,18 +48,16 @@ const ChatsContent = ({ agentId }: { agentId: string }) => {
 
   useEffect(() => {
     fetchCalls();
-  }, [agentId]);
+  }, [agent.id]);
 
   const fetchCalls = async () => {
     setLoading(true);
-    const result = await api.getAgentCallHistory(agentId);
+    const result = await api.getAgentCallHistory(agent.id);
     if (result.data) {
-      // Sort by most recent first
       const sorted = [...result.data].sort(
         (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
       );
       setCalls(sorted);
-      // Auto-select first call
       if (sorted.length > 0 && !selectedCallId) {
         handleSelectCall(sorted[0].id);
       }

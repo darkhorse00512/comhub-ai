@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { api, AgentCallHistoryItem } from "@/services/api";
-import AgentLayout from "@/components/agent/AgentLayout";
+import { useAgentContext } from "@/components/agent/AgentLayout";
 
 interface DailyStats {
   date: string;
@@ -35,24 +35,17 @@ interface DailyStats {
 }
 
 const AgentAnalyticsPage = () => {
-  return (
-    <AgentLayout>
-      {(agent) => <AnalyticsContent agentId={agent.id} agentName={agent.name} />}
-    </AgentLayout>
-  );
-};
-
-const AnalyticsContent = ({ agentId, agentName }: { agentId: string; agentName: string }) => {
+  const { agent } = useAgentContext();
   const [calls, setCalls] = useState<AgentCallHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchCalls();
-  }, [agentId]);
+  }, [agent.id]);
 
   const fetchCalls = async () => {
     setLoading(true);
-    const result = await api.getAgentCallHistory(agentId);
+    const result = await api.getAgentCallHistory(agent.id);
     if (result.data) {
       setCalls(result.data);
     }
@@ -132,7 +125,7 @@ const AnalyticsContent = ({ agentId, agentName }: { agentId: string; agentName: 
               Analytics
             </h2>
             <p className="text-muted-foreground mt-1">
-              Performance metrics for {agentName}
+              Performance metrics for {agent.name}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={fetchCalls}>
