@@ -122,6 +122,35 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
           <SidebarSeparator />
 
+          {isAdmin && (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")}
+                  tooltip="Admin"
+                  size="lg"
+                >
+                  <Link to="/dashboard/admin" className="flex items-center gap-3">
+                    <Shield className="w-5 h-5" />
+                    <span className="group-data-[collapsible=icon]:hidden">Admin</span>
+                    {(location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")) && (
+                      <ChevronRight className="ml-auto w-4 h-4 group-data-[collapsible=icon]:hidden" />
+                    )}
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          )}
+
+          {
+            isAdmin && (
+              <>
+                <SidebarSeparator />
+              </>
+            )
+          }
+
           <SidebarFooter className="p-4">
             <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
               <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
@@ -135,26 +164,6 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 </p>
               </div>
             </div>
-            {isAdmin && (
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")}
-                    tooltip="Admin"
-                    size="lg"
-                  >
-                    <Link to="/dashboard/admin" className="flex items-center gap-3">
-                      <Shield className="w-5 h-5" />
-                      <span className="group-data-[collapsible=icon]:hidden">Admin</span>
-                      {(location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")) && (
-                        <ChevronRight className="ml-auto w-4 h-4 group-data-[collapsible=icon]:hidden" />
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            )}
             <Button
               variant="ghost"
               size="sm"
