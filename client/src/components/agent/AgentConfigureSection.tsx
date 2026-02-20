@@ -3,6 +3,9 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -18,6 +21,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Globe,
   Volume2,
   Save,
@@ -26,6 +41,10 @@ import {
   EyeOff,
   Timer,
   Key,
+  Settings,
+  VolumeX,
+  Info,
+  Voicemail,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
@@ -42,12 +61,30 @@ interface AgentConfigureSectionProps {
   onAgentUpdate: (agent: Agent) => void;
 }
 
+const InfoTooltip = ({ text }: { text: string }) => (
+  <TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[250px]">
+        <p className="text-xs">{text}</p>
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+);
+
 const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionProps) => {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
 
   const existingSettings = agent.config?.settings || {};
 
+  // Agent info
+  const [agentName, setAgentName] = useState(agent.name || "");
+  const [agentDescription, setAgentDescription] = useState(agent.description || "");
+
+  // Existing settings
   const [settings, setSettings] = useState({
     language: existingSettings.language || "en-US",
     ttsProvider: existingSettings.ttsProvider || "openai",
@@ -56,11 +93,33 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     elevenlabsVoiceId: existingSettings.elevenlabsVoiceId || "",
     maxCallDuration: existingSettings.maxCallDuration?.toString() || "30",
     silenceTimeout: existingSettings.silenceTimeout?.toString() || "2",
+    // Background noise
+    backgroundNoiseEnabled: existingSettings.backgroundNoiseEnabled ?? false,
+    backgroundNoiseType: existingSettings.backgroundNoiseType || "office",
+    backgroundNoiseApplyTo: existingSettings.backgroundNoiseApplyTo || "whole_call",
+    backgroundNoiseVolume: existingSettings.backgroundNoiseVolume ?? 0.28,
+    // On Idle
+    onIdleMessage: existingSettings.onIdleMessage || "",
+    onIdleTimeout: existingSettings.onIdleTimeout?.toString() || "10",
+    onIdleThreshold: existingSettings.onIdleThreshold?.toString() || "3",
+    onIdleTerminationMessage: existingSettings.onIdleTerminationMessage || "",
+    // Interruption
+    interruptionSensitivity: existingSettings.interruptionSensitivity || "low",
+    interruptionWordCountThreshold: existingSettings.interruptionWordCountThreshold?.toString() || "3",
   });
 
   const [showApiKey, setShowApiKey] = useState(false);
 
   const handleSave = async () => {
+    if (!agentName.trim()) {
+      toast({
+        title: "Error",
+        description: "Agent name is required.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     const updatedConfig = {
       ...agent.config,
@@ -68,10 +127,18 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
         ...settings,
         maxCallDuration: parseInt(settings.maxCallDuration) || 30,
         silenceTimeout: parseInt(settings.silenceTimeout) || 2,
+        backgroundNoiseVolume: settings.backgroundNoiseVolume,
+        onIdleTimeout: parseInt(settings.onIdleTimeout) || 10,
+        onIdleThreshold: parseInt(settings.onIdleThreshold) || 3,
+        interruptionWordCountThreshold: parseInt(settings.interruptionWordCountThreshold) || 3,
       },
     };
 
-    const result = await api.updateAgent(agent.id, { config: updatedConfig });
+    const result = await api.updateAgent(agent.id, {
+      name: agentName.trim(),
+      description: agentDescription.trim(),
+      config: updatedConfig,
+    });
     setSaving(false);
 
     if (result.error) {
@@ -81,7 +148,12 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
         variant: "destructive",
       });
     } else {
-      onAgentUpdate({ ...agent, config: updatedConfig });
+      onAgentUpdate({
+        ...agent,
+        name: agentName.trim(),
+        description: agentDescription.trim(),
+        config: updatedConfig,
+      });
       toast({
         title: "Settings saved",
         description: "Agent configuration updated successfully.",
@@ -94,202 +166,520 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="max-w-2xl mx-auto space-y-6"
+        className="max-w-4xl mx-auto space-y-6"
       >
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Configure</h2>
-          <p className="text-muted-foreground mt-1">
-            Set language, voice, and call settings for this agent
-          </p>
-        </div>
-
-        {/* Language */}
-        <Card className="bg-card/50 backdrop-blur border-border/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Globe className="w-5 h-5 text-primary" />
-              Language
-            </CardTitle>
-            <CardDescription>
-              Set the primary language for this agent
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <Label>Agent Language</Label>
-              <Select
-                value={settings.language}
-                onValueChange={(value) => setSettings({ ...settings, language: value })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="en-US">English (US)</SelectItem>
-                  <SelectItem value="en-GB">English (UK)</SelectItem>
-                  <SelectItem value="de-DE">German</SelectItem>
-                  <SelectItem value="es-ES">Spanish</SelectItem>
-                  <SelectItem value="fr-FR">French</SelectItem>
-                  <SelectItem value="it-IT">Italian</SelectItem>
-                  <SelectItem value="pt-BR">Portuguese (Brazil)</SelectItem>
-                  <SelectItem value="ja-JP">Japanese</SelectItem>
-                  <SelectItem value="zh-CN">Chinese (Simplified)</SelectItem>
-                  <SelectItem value="ko-KR">Korean</SelectItem>
-                  <SelectItem value="ru-RU">Russian</SelectItem>
-                  <SelectItem value="tr-TR">Turkish</SelectItem>
-                  <SelectItem value="ar-SA">Arabic</SelectItem>
-                  <SelectItem value="nl-NL">Dutch</SelectItem>
-                  <SelectItem value="pl-PL">Polish</SelectItem>
-                  <SelectItem value="sv-SE">Swedish</SelectItem>
-                  <SelectItem value="hi-IN">Hindi</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Voice & Audio */}
-        <Card className="bg-card/50 backdrop-blur border-border/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Volume2 className="w-5 h-5 text-primary" />
-              Voice & Audio
-            </CardTitle>
-            <CardDescription>
-              Choose the TTS provider and voice for this agent
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {/* TTS Provider */}
-            <div className="space-y-2">
-              <Label>TTS Provider</Label>
-              <Select
-                value={settings.ttsProvider}
-                onValueChange={(value) => setSettings({ ...settings, ttsProvider: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="openai">OpenAI</SelectItem>
-                  <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* OpenAI Voice */}
-            {settings.ttsProvider === "openai" && (
-              <div className="space-y-2">
-                <Label>Voice</Label>
-                <Select
-                  value={settings.openaiVoice}
-                  onValueChange={(value) => setSettings({ ...settings, openaiVoice: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
-                    <SelectItem value="echo">Echo (Male)</SelectItem>
-                    <SelectItem value="fable">Fable (British)</SelectItem>
-                    <SelectItem value="onyx">Onyx (Deep Male)</SelectItem>
-                    <SelectItem value="nova">Nova (Female)</SelectItem>
-                    <SelectItem value="shimmer">Shimmer (Soft Female)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* ElevenLabs Settings */}
-            {settings.ttsProvider === "elevenlabs" && (
-              <div className="space-y-4 p-4 rounded-lg bg-secondary/30 border border-border">
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-1.5">
-                    <Key className="w-3.5 h-3.5" />
-                    ElevenLabs API Key
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      type={showApiKey ? "text" : "password"}
-                      placeholder="Enter your ElevenLabs API key"
-                      value={settings.elevenlabsApiKey}
-                      onChange={(e) => setSettings({ ...settings, elevenlabsApiKey: e.target.value })}
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Get your API key from{" "}
-                    <a href="https://elevenlabs.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                      elevenlabs.io
-                    </a>
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Voice ID</Label>
-                  <Input
-                    placeholder="Enter ElevenLabs voice ID"
-                    value={settings.elevenlabsVoiceId}
-                    onChange={(e) => setSettings({ ...settings, elevenlabsVoiceId: e.target.value })}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Find voice IDs in your ElevenLabs dashboard under Voice Lab
-                  </p>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Call Settings */}
-        <Card className="bg-card/50 backdrop-blur border-border/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Timer className="w-5 h-5 text-primary" />
-              Call Settings
-            </CardTitle>
-            <CardDescription>
-              Configure timing and behavior during calls
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Max Call Duration (seconds)</Label>
-                <Input
-                  type="number"
-                  value={settings.maxCallDuration}
-                  onChange={(e) => setSettings({ ...settings, maxCallDuration: e.target.value })}
-                  min={1}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Silence Timeout (seconds)</Label>
-                <Input
-                  type="number"
-                  value={settings.silenceTimeout}
-                  onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
-                  min={1}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Save Button */}
-        <div className="flex justify-end pb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Configure</h2>
+            <p className="text-muted-foreground mt-1">
+              Manage your agent's settings
+            </p>
+          </div>
           <Button onClick={handleSave} disabled={saving} className="gap-2">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? "Saving..." : "Save Configuration"}
           </Button>
         </div>
+
+        <Tabs defaultValue="general" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="general" className="gap-1.5">
+              <Settings className="w-4 h-4" />
+              General
+            </TabsTrigger>
+            <TabsTrigger value="voice" className="gap-1.5">
+              <Volume2 className="w-4 h-4" />
+              Voice & Audio
+            </TabsTrigger>
+            <TabsTrigger value="call" className="gap-1.5">
+              <Timer className="w-4 h-4" />
+              Call Settings
+            </TabsTrigger>
+          </TabsList>
+
+          {/* ===== GENERAL TAB ===== */}
+          <TabsContent value="general" className="mt-6 space-y-6">
+            <div className="grid lg:grid-cols-2 gap-6">
+              {/* Left Column */}
+              <div className="space-y-6">
+                {/* Agent Section */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base text-primary">Agent</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>
+                        Agent Name <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        value={agentName}
+                        onChange={(e) => setAgentName(e.target.value)}
+                        placeholder="Enter agent name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Agent Description</Label>
+                      <Textarea
+                        value={agentDescription}
+                        onChange={(e) => setAgentDescription(e.target.value)}
+                        placeholder="Describe what this agent does..."
+                        rows={3}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Voicemail Detection Notice */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base text-primary">
+                      <Voicemail className="w-4 h-4" />
+                      Voicemail Detection
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                      Voicemail configuration has moved to the Add Node toolbar in the Studio tab.
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {/* Background Noise */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base text-primary">
+                      <VolumeX className="w-4 h-4" />
+                      Background Noise
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="bg-noise"
+                        checked={settings.backgroundNoiseEnabled}
+                        onCheckedChange={(checked) =>
+                          setSettings({ ...settings, backgroundNoiseEnabled: checked === true })
+                        }
+                      />
+                      <label
+                        htmlFor="bg-noise"
+                        className="text-sm font-medium cursor-pointer select-none"
+                      >
+                        Enable background noise
+                      </label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Add ambient background noise to make conversations more natural
+                    </p>
+
+                    {settings.backgroundNoiseEnabled && (
+                      <div className="space-y-4 pt-2">
+                        <div className="space-y-2">
+                          <Label>Noise Type</Label>
+                          <Select
+                            value={settings.backgroundNoiseType}
+                            onValueChange={(value) =>
+                              setSettings({ ...settings, backgroundNoiseType: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="office">Office</SelectItem>
+                              <SelectItem value="cafe">Cafe</SelectItem>
+                              <SelectItem value="restaurant">Restaurant</SelectItem>
+                              <SelectItem value="street">Street</SelectItem>
+                              <SelectItem value="nature">Nature</SelectItem>
+                              <SelectItem value="rain">Rain</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            Choose the type of background ambience
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Apply To</Label>
+                          <Select
+                            value={settings.backgroundNoiseApplyTo}
+                            onValueChange={(value) =>
+                              setSettings({ ...settings, backgroundNoiseApplyTo: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="whole_call">Whole Call</SelectItem>
+                              <SelectItem value="agent_only">Agent Only</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            Choose when to apply the background noise
+                          </p>
+                        </div>
+
+                        <div className="space-y-3">
+                          <Label>Volume</Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[settings.backgroundNoiseVolume]}
+                              onValueChange={([value]) =>
+                                setSettings({ ...settings, backgroundNoiseVolume: value })
+                              }
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              className="flex-1"
+                            />
+                            <Input
+                              type="number"
+                              value={settings.backgroundNoiseVolume}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0 && v <= 1) {
+                                  setSettings({ ...settings, backgroundNoiseVolume: v });
+                                }
+                              }}
+                              className="w-20 text-center"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Set the volume level (0.0 = silent, 1.0 = full volume)
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-6">
+                {/* On Idle */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base text-primary">On Idle</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        Message <span className="text-destructive">*</span>
+                        <InfoTooltip text="The message the agent will say when the user is idle (not speaking). This helps re-engage the conversation." />
+                      </Label>
+                      <Textarea
+                        value={settings.onIdleMessage}
+                        onChange={(e) =>
+                          setSettings({ ...settings, onIdleMessage: e.target.value })
+                        }
+                        placeholder="e.g., Are you still there?"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-1.5">
+                          Timeout <span className="text-destructive">*</span>
+                          <InfoTooltip text="Number of seconds of silence before the idle message is sent." />
+                        </Label>
+                        <Input
+                          type="number"
+                          value={settings.onIdleTimeout}
+                          onChange={(e) =>
+                            setSettings({ ...settings, onIdleTimeout: e.target.value })
+                          }
+                          min={1}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-1.5">
+                          Threshold <span className="text-destructive">*</span>
+                          <InfoTooltip text="Maximum number of times the idle message can be sent before the call is terminated." />
+                        </Label>
+                        <Input
+                          type="number"
+                          value={settings.onIdleThreshold}
+                          onChange={(e) =>
+                            setSettings({ ...settings, onIdleThreshold: e.target.value })
+                          }
+                          min={1}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        Termination Message
+                        <InfoTooltip text="The final message the agent will say before hanging up when the idle threshold is reached." />
+                      </Label>
+                      <Textarea
+                        value={settings.onIdleTerminationMessage}
+                        onChange={(e) =>
+                          setSettings({ ...settings, onIdleTerminationMessage: e.target.value })
+                        }
+                        placeholder="e.g., Sorry, I'm not sure I can help with that. Goodbye!"
+                        rows={3}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Interruption */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base text-primary">Interruption</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        Sensitivity <span className="text-destructive">*</span>
+                        <InfoTooltip text="Controls how easily the user can interrupt the agent. Low = agent finishes speaking before listening, High = agent stops immediately when user speaks." />
+                      </Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSettings({ ...settings, interruptionSensitivity: "low" })
+                          }
+                          className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                            settings.interruptionSensitivity === "low"
+                              ? "bg-primary text-primary-foreground shadow-md"
+                              : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
+                          }`}
+                        >
+                          Low
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSettings({ ...settings, interruptionSensitivity: "high" })
+                          }
+                          className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                            settings.interruptionSensitivity === "high"
+                              ? "bg-primary text-primary-foreground shadow-md"
+                              : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
+                          }`}
+                        >
+                          High
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        Word count threshold <span className="text-destructive">*</span>
+                        <InfoTooltip text="Minimum number of words the user must speak before the agent considers it an interruption." />
+                      </Label>
+                      <Input
+                        type="number"
+                        value={settings.interruptionWordCountThreshold}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            interruptionWordCountThreshold: e.target.value,
+                          })
+                        }
+                        min={1}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* ===== VOICE & AUDIO TAB ===== */}
+          <TabsContent value="voice" className="mt-6 space-y-6">
+            <div className="max-w-2xl space-y-6">
+              {/* Language */}
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Globe className="w-5 h-5 text-primary" />
+                    Language
+                  </CardTitle>
+                  <CardDescription>
+                    Set the primary language for this agent
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <Label>Agent Language</Label>
+                    <Select
+                      value={settings.language}
+                      onValueChange={(value) => setSettings({ ...settings, language: value })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en-US">English (US)</SelectItem>
+                        <SelectItem value="en-GB">English (UK)</SelectItem>
+                        <SelectItem value="de-DE">German</SelectItem>
+                        <SelectItem value="es-ES">Spanish</SelectItem>
+                        <SelectItem value="fr-FR">French</SelectItem>
+                        <SelectItem value="it-IT">Italian</SelectItem>
+                        <SelectItem value="pt-BR">Portuguese (Brazil)</SelectItem>
+                        <SelectItem value="ja-JP">Japanese</SelectItem>
+                        <SelectItem value="zh-CN">Chinese (Simplified)</SelectItem>
+                        <SelectItem value="ko-KR">Korean</SelectItem>
+                        <SelectItem value="ru-RU">Russian</SelectItem>
+                        <SelectItem value="tr-TR">Turkish</SelectItem>
+                        <SelectItem value="ar-SA">Arabic</SelectItem>
+                        <SelectItem value="nl-NL">Dutch</SelectItem>
+                        <SelectItem value="pl-PL">Polish</SelectItem>
+                        <SelectItem value="sv-SE">Swedish</SelectItem>
+                        <SelectItem value="hi-IN">Hindi</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Voice & Audio */}
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Volume2 className="w-5 h-5 text-primary" />
+                    Voice & Audio
+                  </CardTitle>
+                  <CardDescription>
+                    Choose the TTS provider and voice for this agent
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="space-y-2">
+                    <Label>TTS Provider</Label>
+                    <Select
+                      value={settings.ttsProvider}
+                      onValueChange={(value) => setSettings({ ...settings, ttsProvider: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {settings.ttsProvider === "openai" && (
+                    <div className="space-y-2">
+                      <Label>Voice</Label>
+                      <Select
+                        value={settings.openaiVoice}
+                        onValueChange={(value) => setSettings({ ...settings, openaiVoice: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
+                          <SelectItem value="echo">Echo (Male)</SelectItem>
+                          <SelectItem value="fable">Fable (British)</SelectItem>
+                          <SelectItem value="onyx">Onyx (Deep Male)</SelectItem>
+                          <SelectItem value="nova">Nova (Female)</SelectItem>
+                          <SelectItem value="shimmer">Shimmer (Soft Female)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {settings.ttsProvider === "elevenlabs" && (
+                    <div className="space-y-4 p-4 rounded-lg bg-secondary/30 border border-border">
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-1.5">
+                          <Key className="w-3.5 h-3.5" />
+                          ElevenLabs API Key
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            placeholder="Enter your ElevenLabs API key"
+                            value={settings.elevenlabsApiKey}
+                            onChange={(e) => setSettings({ ...settings, elevenlabsApiKey: e.target.value })}
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Get your API key from{" "}
+                          <a href="https://elevenlabs.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                            elevenlabs.io
+                          </a>
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Voice ID</Label>
+                        <Input
+                          placeholder="Enter ElevenLabs voice ID"
+                          value={settings.elevenlabsVoiceId}
+                          onChange={(e) => setSettings({ ...settings, elevenlabsVoiceId: e.target.value })}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Find voice IDs in your ElevenLabs dashboard under Voice Lab
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* ===== CALL SETTINGS TAB ===== */}
+          <TabsContent value="call" className="mt-6 space-y-6">
+            <div className="max-w-2xl">
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Timer className="w-5 h-5 text-primary" />
+                    Call Settings
+                  </CardTitle>
+                  <CardDescription>
+                    Configure timing and behavior during calls
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Max Call Duration (seconds)</Label>
+                      <Input
+                        type="number"
+                        value={settings.maxCallDuration}
+                        onChange={(e) => setSettings({ ...settings, maxCallDuration: e.target.value })}
+                        min={1}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Silence Timeout (seconds)</Label>
+                      <Input
+                        type="number"
+                        value={settings.silenceTimeout}
+                        onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
+                        min={1}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
       </motion.div>
     </div>
   );
