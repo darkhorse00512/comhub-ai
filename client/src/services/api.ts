@@ -1209,7 +1209,7 @@ export const api = {
   },
 
   // Admin APIs
-  async getAdminStats(): Promise<ApiResponse<{ totalUsers: number; totalAgents: number; totalCalls: number; activeCalls: number }>> {
+  async getAdminStats(): Promise<ApiResponse<{ totalUsers: number; totalAgents: number; totalCalls: number; activeCalls: number; totalPhoneNumbers: number; totalFeedback: number }>> {
     try {
       const headers = await getAuthHeaders();
       const response = await fetch(`${API_BASE_URL}/admin/stats`, {
@@ -1434,6 +1434,70 @@ export const api = {
     }
   },
 
+  async getVoiceSettings(): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-settings`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch voice settings");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching voice settings:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateVoiceSettings(settings: { apiKey?: string; defaultVoiceId?: string; defaultModel?: string }): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-settings`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(settings),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update voice settings");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating voice settings:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async fetchElevenLabsVoices(): Promise<ApiResponse<{ voices: any[] }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-settings/voices`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch ElevenLabs voices");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching ElevenLabs voices:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   checkIsAdmin(): boolean {
     try {
       const token = localStorage.getItem("backend_token");
@@ -1446,4 +1510,4 @@ export const api = {
   },
 };
 
-export type { CallHistoryItem, AgentCallHistoryItem, ApiResponse };
+export type { CallHistoryItem, ApiResponse };

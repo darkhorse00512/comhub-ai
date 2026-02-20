@@ -52,7 +52,14 @@ import {
   MessageSquare,
   PhoneCall,
   Eye,
+  EyeOff,
+  Volume2,
+  Key,
+  Save,
+  Play,
+  Check,
 } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/services/api";
@@ -864,6 +871,260 @@ const FeedbackTab = () => {
   );
 };
 
+// ===== Voice Tab (ElevenLabs) =====
+const VoiceTab = () => {
+  const { toast } = useToast();
+  const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [defaultVoiceId, setDefaultVoiceId] = useState("");
+  const [defaultModel, setDefaultModel] = useState("eleven_multilingual_v2");
+  const [voices, setVoices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [fetchingVoices, setFetchingVoices] = useState(false);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [audioRef] = useState<{ current: HTMLAudioElement | null }>({ current: null });
+
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    const result = await api.getVoiceSettings();
+    if (result.data) {
+      setApiKey(result.data.apiKey || "");
+      setHasApiKey(result.data.hasApiKey || false);
+      setDefaultVoiceId(result.data.defaultVoiceId || "");
+      setDefaultModel(result.data.defaultModel || "eleven_multilingual_v2");
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const result = await api.updateVoiceSettings({
+      apiKey: apiKey,
+      defaultVoiceId,
+      defaultModel,
+    });
+    setSaving(false);
+    if (result.error) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+    } else {
+      setHasApiKey(result.data?.hasApiKey || false);
+      setApiKey(result.data?.apiKey || "");
+      toast({ title: "Voice settings saved" });
+    }
+  };
+
+  const handleFetchVoices = async () => {
+    setFetchingVoices(true);
+    const result = await api.fetchElevenLabsVoices();
+    setFetchingVoices(false);
+    if (result.error) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+    } else {
+      setVoices(result.data?.voices || []);
+      toast({ title: `${result.data?.voices?.length || 0} voices loaded` });
+    }
+  };
+
+  const handlePlayPreview = (voiceId: string, previewUrl: string) => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (playingVoice === voiceId) {
+      setPlayingVoice(null);
+      return;
+    }
+    const audio = new Audio(previewUrl);
+    audio.onended = () => setPlayingVoice(null);
+    audio.play();
+    audioRef.current = audio;
+    setPlayingVoice(voiceId);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* API Key & Model */}
+      <Card className="bg-card/50 backdrop-blur border-border/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Key className="w-5 h-5 text-primary" />
+            ElevenLabs Configuration
+          </CardTitle>
+          <CardDescription>
+            Configure the platform-wide ElevenLabs API key and default voice settings
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <Label>API Key</Label>
+            <div className="relative">
+              <Input
+                type={showApiKey ? "text" : "password"}
+                placeholder={hasApiKey ? "API key is set (enter new key to replace)" : "Enter your ElevenLabs API key"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {hasApiKey && (
+              <p className="text-xs text-green-600 flex items-center gap-1">
+                <Check className="w-3 h-3" /> API key is configured
+              </p>
+            )}
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Default Model</Label>
+              <Select value={defaultModel} onValueChange={setDefaultModel}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eleven_multilingual_v2">Multilingual v2</SelectItem>
+                  <SelectItem value="eleven_turbo_v2">Turbo v2</SelectItem>
+                  <SelectItem value="eleven_turbo_v2_5">Turbo v2.5</SelectItem>
+                  <SelectItem value="eleven_monolingual_v1">Monolingual v1</SelectItem>
+                  <SelectItem value="eleven_flash_v2_5">Flash v2.5</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Default Voice ID</Label>
+              <Input
+                placeholder="Select from voices below or enter ID"
+                value={defaultVoiceId}
+                onChange={(e) => setDefaultVoiceId(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? "Saving..." : "Save Settings"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Available Voices */}
+      <Card className="bg-card/50 backdrop-blur border-border/50">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Volume2 className="w-5 h-5 text-primary" />
+                Available Voices
+              </CardTitle>
+              <CardDescription>
+                Fetch and browse voices from your ElevenLabs account
+              </CardDescription>
+            </div>
+            <Button onClick={handleFetchVoices} disabled={fetchingVoices || !hasApiKey} className="gap-2">
+              {fetchingVoices ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {fetchingVoices ? "Loading..." : "Fetch Voices"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!hasApiKey ? (
+            <div className="text-center py-8 text-muted-foreground">
+              Save your ElevenLabs API key first to fetch available voices.
+            </div>
+          ) : voices.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              Click "Fetch Voices" to load voices from your ElevenLabs account.
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Voice ID</TableHead>
+                    <TableHead>Labels</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {voices.map((v: any) => (
+                    <TableRow key={v.voiceId} className={defaultVoiceId === v.voiceId ? "bg-primary/5" : ""}>
+                      <TableCell className="font-medium">
+                        {v.name}
+                        {defaultVoiceId === v.voiceId && (
+                          <Badge variant="default" className="ml-2 text-xs bg-primary">Default</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs capitalize">{v.category || "-"}</Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{v.voiceId}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {Object.entries(v.labels || {}).map(([k, val]) => (
+                            <Badge key={k} variant="secondary" className="text-xs">
+                              {String(val)}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {v.previewUrl && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handlePlayPreview(v.voiceId, v.previewUrl)}
+                              title="Preview voice"
+                            >
+                              <Play className={`w-4 h-4 ${playingVoice === v.voiceId ? "text-primary" : ""}`} />
+                            </Button>
+                          )}
+                          <Button
+                            variant={defaultVoiceId === v.voiceId ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setDefaultVoiceId(v.voiceId)}
+                            title="Set as default"
+                            className="text-xs"
+                          >
+                            {defaultVoiceId === v.voiceId ? "Selected" : "Use"}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
 // ===== Main AdminPage =====
 const AdminPage = () => {
   const { isAdmin } = useAuth();
@@ -900,13 +1161,14 @@ const AdminPage = () => {
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="calls">Calls</TabsTrigger>
           <TabsTrigger value="phones">Phones</TabsTrigger>
           <TabsTrigger value="feedback">Feedback</TabsTrigger>
+          <TabsTrigger value="voice">Voice</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -931,6 +1193,10 @@ const AdminPage = () => {
 
         <TabsContent value="feedback">
           <FeedbackTab />
+        </TabsContent>
+
+        <TabsContent value="voice">
+          <VoiceTab />
         </TabsContent>
       </Tabs>
     </motion.div>

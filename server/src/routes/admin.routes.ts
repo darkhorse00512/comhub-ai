@@ -23,4 +23,8 @@ router.get('/phone-numbers', adminController.getPhoneNumbers);
 router.get('/feedback', adminController.getAllFeedback);
 router.put('/feedback/:feedbackId/status', adminController.updateFeedbackStatus);
 
+router.get('/voice-settings', adminController.getVoiceSettings);
+router.put('/voice-settings', adminController.updateVoiceSettings);
+router.get('/voice-settings/voices', adminController.fetchElevenLabsVoices);
+
 export default router;
