@@ -13,4 +13,14 @@ router.get('/users', adminController.getUsers);
 router.put('/users/:userId/toggle-admin', adminController.toggleAdmin);
 router.delete('/users/:userId', adminController.deleteUser);
 
+router.get('/agents', adminController.getAgents);
+router.delete('/agents/:agentId', adminController.deleteAgent);
+
+router.get('/calls', adminController.getCalls);
+
+router.get('/phone-numbers', adminController.getPhoneNumbers);
+
+router.get('/feedback', adminController.getAllFeedback);
+router.put('/feedback/:feedbackId/status', adminController.updateFeedbackStatus);
+
 export default router;

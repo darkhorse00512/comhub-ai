@@ -1295,6 +1295,145 @@ export const api = {
     }
   },
 
+  async getAdminAgents(page: number = 1, limit: number = 20, search: string = ""): Promise<ApiResponse<{ agents: any[]; total: number; page: number; limit: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+      if (search) params.set("search", search);
+
+      const response = await fetch(`${API_BASE_URL}/admin/agents?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch agents");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin agents:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteAdminAgent(agentId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/agents/${agentId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete agent");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting admin agent:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAdminCalls(page: number = 1, limit: number = 20, status?: string, direction?: string): Promise<ApiResponse<{ calls: any[]; total: number; page: number; limit: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+      if (status && status !== "all") params.set("status", status);
+      if (direction && direction !== "all") params.set("direction", direction);
+
+      const response = await fetch(`${API_BASE_URL}/admin/calls?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch calls");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin calls:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAdminPhoneNumbers(page: number = 1, limit: number = 20): Promise<ApiResponse<{ phoneNumbers: any[]; total: number; page: number; limit: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+
+      const response = await fetch(`${API_BASE_URL}/admin/phone-numbers?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch phone numbers");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin phone numbers:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async getAdminFeedback(page: number = 1, limit: number = 20, type?: string, status?: string): Promise<ApiResponse<{ feedback: any[]; total: number; page: number; limit: number }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+      if (type && type !== "all") params.set("type", type);
+      if (status && status !== "all") params.set("status", status);
+
+      const response = await fetch(`${API_BASE_URL}/admin/feedback?${params}`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch feedback");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error fetching admin feedback:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateAdminFeedbackStatus(feedbackId: string, status: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/feedback/${feedbackId}/status`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ status }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update feedback status");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating feedback status:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   checkIsAdmin(): boolean {
     try {
       const token = localStorage.getItem("backend_token");

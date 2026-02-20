@@ -8,11 +8,13 @@ class AdminController {
 
   getDashboardStats = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const [usersResult, agentsResult, callsResult, activeCallsResult] = await Promise.all([
+      const [usersResult, agentsResult, callsResult, activeCallsResult, phonesResult, feedbackResult] = await Promise.all([
         this.supabase.from('users').select('id', { count: 'exact', head: true }),
         this.supabase.from('agents').select('id', { count: 'exact', head: true }),
         this.supabase.from('call_sessions').select('id', { count: 'exact', head: true }),
         this.supabase.from('call_sessions').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+        this.supabase.from('phone_numbers').select('id', { count: 'exact', head: true }),
+        this.supabase.from('feedback').select('id', { count: 'exact', head: true }),
       ]);
 
       res.status(200).json({
@@ -22,6 +24,8 @@ class AdminController {
           totalAgents: agentsResult.count || 0,
           totalCalls: callsResult.count || 0,
           activeCalls: activeCallsResult.count || 0,
+          totalPhoneNumbers: phonesResult.count || 0,
+          totalFeedback: feedbackResult.count || 0,
         },
       });
     } catch (error) {
@@ -156,6 +160,332 @@ class AdminController {
     } catch (error) {
       logger.error('Failed to toggle admin:', error);
       res.status(500).json({ error: 'Failed to toggle admin status' });
+    }
+  };
+
+  // ===== AGENTS =====
+  getAgents = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const search = (req.query.search as string) || '';
+      const offset = (page - 1) * limit;
+
+      const { data: agents, error, count } = await this.supabase
+        .from('agents')
+        .select('id, name, description, user_id, created_at', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        logger.error('Failed to fetch agents:', error);
+        res.status(500).json({ error: 'Failed to fetch agents' });
+        return;
+      }
+
+      // Get owner emails
+      const userIds = [...new Set((agents || []).map((a: any) => a.user_id))];
+      let userEmails: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const { data: users } = await this.supabase
+          .from('users')
+          .select('id, email')
+          .in('id', userIds);
+        if (users) {
+          for (const u of users) {
+            userEmails[u.id] = u.email;
+          }
+        }
+      }
+
+      let enriched = (agents || []).map((a: any) => ({
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        ownerEmail: userEmails[a.user_id] || 'Unknown',
+        userId: a.user_id,
+        createdAt: a.created_at,
+      }));
+
+      // Client-side search (by name or owner email)
+      if (search) {
+        const s = search.toLowerCase();
+        enriched = enriched.filter(
+          (a: any) => a.name?.toLowerCase().includes(s) || a.ownerEmail?.toLowerCase().includes(s)
+        );
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          agents: enriched,
+          total: search ? enriched.length : (count || 0),
+          page,
+          limit,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to get agents:', error);
+      res.status(500).json({ error: 'Failed to fetch agents' });
+    }
+  };
+
+  deleteAgent = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { agentId } = req.params;
+
+      const { data: agent, error: fetchError } = await this.supabase
+        .from('agents')
+        .select('id, name')
+        .eq('id', agentId)
+        .single();
+
+      if (fetchError || !agent) {
+        res.status(404).json({ error: 'Agent not found' });
+        return;
+      }
+
+      await this.supabase.from('agent_versions').delete().eq('agent_id', agentId);
+      await this.supabase.from('agents').delete().eq('id', agentId);
+
+      logger.info('Agent deleted by admin', { agentId, agentName: agent.name, by: req.user?.id });
+
+      res.status(200).json({ success: true, message: 'Agent deleted successfully' });
+    } catch (error) {
+      logger.error('Failed to delete agent:', error);
+      res.status(500).json({ error: 'Failed to delete agent' });
+    }
+  };
+
+  // ===== CALLS =====
+  getCalls = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const status = req.query.status as string;
+      const direction = req.query.direction as string;
+      const offset = (page - 1) * limit;
+
+      let query = this.supabase
+        .from('call_sessions')
+        .select('id, user_id, status, direction, started_at, ended_at, caller_number, callee_number, duration, agent_id', { count: 'exact' })
+        .order('started_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (status && status !== 'all') {
+        query = query.eq('status', status);
+      }
+      if (direction && direction !== 'all') {
+        query = query.eq('direction', direction);
+      }
+
+      const { data: calls, error, count } = await query;
+
+      if (error) {
+        logger.error('Failed to fetch calls:', error);
+        res.status(500).json({ error: 'Failed to fetch calls' });
+        return;
+      }
+
+      // Get user emails
+      const userIds = [...new Set((calls || []).map((c: any) => c.user_id).filter(Boolean))];
+      let userEmails: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const { data: users } = await this.supabase
+          .from('users')
+          .select('id, email')
+          .in('id', userIds);
+        if (users) {
+          for (const u of users) {
+            userEmails[u.id] = u.email;
+          }
+        }
+      }
+
+      const enriched = (calls || []).map((c: any) => ({
+        id: c.id,
+        userEmail: userEmails[c.user_id] || 'Unknown',
+        status: c.status,
+        direction: c.direction,
+        startedAt: c.started_at,
+        endedAt: c.ended_at,
+        callerNumber: c.caller_number,
+        calleeNumber: c.callee_number,
+        duration: c.duration,
+        agentId: c.agent_id,
+      }));
+
+      res.status(200).json({
+        success: true,
+        data: {
+          calls: enriched,
+          total: count || 0,
+          page,
+          limit,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to get calls:', error);
+      res.status(500).json({ error: 'Failed to fetch calls' });
+    }
+  };
+
+  // ===== PHONE NUMBERS =====
+  getPhoneNumbers = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const offset = (page - 1) * limit;
+
+      const { data: phones, error, count } = await this.supabase
+        .from('phone_numbers')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        logger.error('Failed to fetch phone numbers:', error);
+        res.status(500).json({ error: 'Failed to fetch phone numbers' });
+        return;
+      }
+
+      // Get user emails
+      const userIds = [...new Set((phones || []).map((p: any) => p.user_id).filter(Boolean))];
+      let userEmails: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const { data: users } = await this.supabase
+          .from('users')
+          .select('id, email')
+          .in('id', userIds);
+        if (users) {
+          for (const u of users) {
+            userEmails[u.id] = u.email;
+          }
+        }
+      }
+
+      const enriched = (phones || []).map((p: any) => ({
+        id: p.id,
+        phoneNumber: p.phone_number,
+        country: p.country,
+        type: p.type,
+        status: p.status,
+        ownerEmail: userEmails[p.user_id] || 'Unknown',
+        createdAt: p.created_at,
+      }));
+
+      res.status(200).json({
+        success: true,
+        data: {
+          phoneNumbers: enriched,
+          total: count || 0,
+          page,
+          limit,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to get phone numbers:', error);
+      res.status(500).json({ error: 'Failed to fetch phone numbers' });
+    }
+  };
+
+  // ===== FEEDBACK =====
+  getAllFeedback = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const type = req.query.type as string;
+      const status = req.query.status as string;
+      const offset = (page - 1) * limit;
+
+      let query = this.supabase
+        .from('feedback')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (type && type !== 'all') {
+        query = query.eq('type', type);
+      }
+      if (status && status !== 'all') {
+        query = query.eq('status', status);
+      }
+
+      const { data: feedback, error, count } = await query;
+
+      if (error) {
+        logger.error('Failed to fetch feedback:', error);
+        res.status(500).json({ error: 'Failed to fetch feedback' });
+        return;
+      }
+
+      // Get user emails
+      const userIds = [...new Set((feedback || []).map((f: any) => f.user_id).filter(Boolean))];
+      let userEmails: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const { data: users } = await this.supabase
+          .from('users')
+          .select('id, email')
+          .in('id', userIds);
+        if (users) {
+          for (const u of users) {
+            userEmails[u.id] = u.email;
+          }
+        }
+      }
+
+      const enriched = (feedback || []).map((f: any) => ({
+        id: f.id,
+        userEmail: userEmails[f.user_id] || f.email || 'Unknown',
+        type: f.type,
+        subject: f.subject,
+        message: f.message,
+        status: f.status,
+        createdAt: f.created_at,
+      }));
+
+      res.status(200).json({
+        success: true,
+        data: {
+          feedback: enriched,
+          total: count || 0,
+          page,
+          limit,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to get feedback:', error);
+      res.status(500).json({ error: 'Failed to fetch feedback' });
+    }
+  };
+
+  updateFeedbackStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { feedbackId } = req.params;
+      const { status } = req.body;
+
+      if (!['new', 'reviewed', 'resolved'].includes(status)) {
+        res.status(400).json({ error: 'Invalid status. Must be: new, reviewed, or resolved' });
+        return;
+      }
+
+      const { error } = await this.supabase
+        .from('feedback')
+        .update({ status })
+        .eq('id', feedbackId);
+
+      if (error) {
+        logger.error('Failed to update feedback status:', error);
+        res.status(500).json({ error: 'Failed to update feedback status' });
+        return;
+      }
+
+      logger.info('Feedback status updated by admin', { feedbackId, status, by: req.user?.id });
+
+      res.status(200).json({ success: true, data: { feedbackId, status } });
+    } catch (error) {
+      logger.error('Failed to update feedback status:', error);
+      res.status(500).json({ error: 'Failed to update feedback status' });
     }
   };
 
