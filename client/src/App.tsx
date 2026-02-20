@@ -10,6 +10,12 @@ import DashboardLayout from "./components/layout/DashboardLayout";
 import HomePage from "./pages/dashboard/HomePage";
 import AgentsPage from "./pages/dashboard/AgentsPage";
 import AgentStudioPage from "./pages/dashboard/AgentStudioPage";
+import AgentConfigurePage from "./pages/dashboard/AgentConfigurePage";
+import AgentOutboundPage from "./pages/dashboard/AgentOutboundPage";
+import AgentCallsPage from "./pages/dashboard/AgentCallsPage";
+import AgentChatsPage from "./pages/dashboard/AgentChatsPage";
+import AgentAnalyticsPage from "./pages/dashboard/AgentAnalyticsPage";
+import AgentFeedbackPage from "./pages/dashboard/AgentFeedbackPage";
 import TelephonyPage from "./pages/dashboard/TelephonyPage";
 import UsagePage from "./pages/dashboard/UsagePage";
 import GroupsPage from "./pages/dashboard/GroupsPage";
@@ -36,6 +42,12 @@ const App = () => (
             <Route path="/dashboard" element={<DashboardLayout><HomePage /></DashboardLayout>} />
             <Route path="/dashboard/agents" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
             <Route path="/dashboard/agents/:agentId/studio" element={<AgentStudioPage />} />
+            <Route path="/dashboard/agents/:agentId/configure" element={<AgentConfigurePage />} />
+            <Route path="/dashboard/agents/:agentId/outbound" element={<AgentOutboundPage />} />
+            <Route path="/dashboard/agents/:agentId/calls" element={<AgentCallsPage />} />
+            <Route path="/dashboard/agents/:agentId/chats" element={<AgentChatsPage />} />
+            <Route path="/dashboard/agents/:agentId/analytics" element={<AgentAnalyticsPage />} />
+            <Route path="/dashboard/agents/:agentId/feedback" element={<AgentFeedbackPage />} />
             <Route path="/dashboard/telephony" element={<DashboardLayout><TelephonyPage /></DashboardLayout>} />
             <Route path="/dashboard/usage" element={<DashboardLayout><UsagePage /></DashboardLayout>} />
             <Route path="/dashboard/groups" element={<DashboardLayout><GroupsPage /></DashboardLayout>} />

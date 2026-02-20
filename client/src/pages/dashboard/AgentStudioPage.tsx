@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { FlowCanvas, FlowCanvasRef, Node, Edge } from "@/components/FlowCanvas";
 import {
   Save,
@@ -7,13 +7,8 @@ import {
   Rocket,
   History,
   Database,
-  Bot,
-  Settings,
-  PhoneOutgoing,
   Phone,
   MessageSquare,
-  BarChart3,
-  MessageCircle,
   FileCode,
   GitBranch,
   ToggleLeft,
@@ -51,16 +46,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import FieldsPanel from "@/components/FieldsPanel";
 import DebugPanel from "@/components/DebugPanel";
 import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
-import AgentConfigureSection from "@/components/agent/AgentConfigureSection";
-import AgentOutboundSection from "@/components/agent/AgentOutboundSection";
-import AgentCallsSection from "@/components/agent/AgentCallsSection";
-
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  config: any;
-}
+import AgentLayout, { Agent } from "@/components/agent/AgentLayout";
 
 const nodeCategories = [
   { type: "scripted", label: "Scripted", icon: FileCode, color: "bg-blue-100 text-blue-600", borderColor: "border-blue-400" },
@@ -76,26 +62,27 @@ const nodeCategories = [
   { type: "voicemail", label: "Voicemail", icon: Voicemail, color: "bg-amber-50 text-amber-600", borderColor: "border-amber-300" },
 ];
 
-const leftMenuItems = [
-  { id: "studio", label: "Studio", icon: Bot, path: "studio" },
-  { id: "configure", label: "Configure", icon: Settings, path: "configure" },
-  { id: "outbound", label: "Outbound", icon: PhoneOutgoing, path: "outbound" },
-  { id: "calls", label: "Calls", icon: Phone, path: "calls" },
-  { id: "chats", label: "Chats", icon: MessageCircle, path: "chats" },
-  { id: "analytics", label: "Analytics", icon: BarChart3, path: "analytics" },
-  { id: "feedback", label: "Feedback", icon: MessageSquare, path: "feedback" },
-];
-
 const AgentStudioPage = () => {
-  const { agentId } = useParams<{ agentId: string }>();
+  return (
+    <AgentLayout hideTopBar>
+      {(agent, setAgent) => (
+        <StudioContent agent={agent} onAgentUpdate={setAgent} />
+      )}
+    </AgentLayout>
+  );
+};
+
+interface StudioContentProps {
+  agent: Agent;
+  onAgentUpdate: (agent: Agent) => void;
+}
+
+const StudioContent = ({ agent, onAgentUpdate }: StudioContentProps) => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [loading, setLoading] = useState(true);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
-  const [selectedMenuItem, setSelectedMenuItem] = useState("studio");
   const [showTestModal, setShowTestModal] = useState(false);
   const [testMode, setTestMode] = useState<"text" | "audio">("text");
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -137,6 +124,19 @@ const AgentStudioPage = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  // Load flow from agent config
+  useEffect(() => {
+    if (agent.config?.flow) {
+      const loadedNodes = agent.config.flow.nodes || [];
+      const loadedEdges = agent.config.flow.edges || [];
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
+      savedStateRef.current = { nodes: loadedNodes, edges: loadedEdges };
+    } else {
+      initializeDefaultFlow();
+    }
+  }, [agent.id]);
+
   // Clear debug error highlights when workflow changes
   useEffect(() => {
     if (errorNodeIds.size > 0) {
@@ -146,7 +146,7 @@ const AgentStudioPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
 
-  // Node action handlers - use functional updates to avoid stale closures
+  // Node action handlers
   const handleCloneNode = useCallback((nodeId: string) => {
     setNodes((currentNodes) => {
       const nodeToClone = currentNodes.find((n) => n.id === nodeId);
@@ -179,7 +179,6 @@ const AgentStudioPage = () => {
       const nodeToDelete = currentNodes.find((n) => n.id === nodeId);
       if (!nodeToDelete) return currentNodes;
 
-      // Don't allow deleting Agent Setup node
       if (nodeToDelete.id === "agent-setup") {
         toast({
           title: "Cannot delete",
@@ -204,7 +203,6 @@ const AgentStudioPage = () => {
 
   const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
     setNodes((currentNodes) => {
-      // If updating a callDirection node, check if the new direction already exists
       const nodeToUpdate = currentNodes.find(n => n.id === nodeId);
       if (nodeToUpdate?.type === "callDirection" && newData.direction) {
         const existingDirections = currentNodes
@@ -223,31 +221,23 @@ const AgentStudioPage = () => {
 
       return currentNodes.map((node) =>
         node.id === nodeId
-          ? {
-              ...node,
-              data: {
-                ...newData,
-              },
-            }
+          ? { ...node, data: { ...newData } }
           : node
       );
     });
   }, [toast]);
 
   const handleAddFieldNode = useCallback((fieldName: string, valueType: string, defaultValue: string) => {
-    // Find a good position: below existing field_setter nodes, or default position
     setNodes((currentNodes) => {
       const fieldSetterNodes = currentNodes.filter((n) => n.type === "field_setter");
       let posX = 400;
       let posY = 200;
 
       if (fieldSetterNodes.length > 0) {
-        // Place below the last field_setter node
         const lastFS = fieldSetterNodes.reduce((a, b) => (a.position.y > b.position.y ? a : b));
         posX = lastFS.position.x;
         posY = lastFS.position.y + 200;
       } else if (currentNodes.length > 0) {
-        // Place to the right of existing nodes
         const maxX = Math.max(...currentNodes.map((n) => n.position.x));
         posX = maxX + 400;
         posY = 200;
@@ -274,141 +264,45 @@ const AgentStudioPage = () => {
     });
   }, [toast]);
 
-  // Node components with handlers - defined inside component to access callbacks
   const nodeComponents = {
     agentSetup: AgentSetupNode,
     callDirection: (props: any) => (
-      <CallDirectionNode
-        {...props}
-        onDelete={handleDeleteNode}
-      />
+      <CallDirectionNode {...props} onDelete={handleDeleteNode} />
     ),
     scripted: (props: any) => (
-      <ScriptedNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <ScriptedNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     dialogue: (props: any) => (
-      <DialogueNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <DialogueNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     field_setter: (props: any) => (
-      <FieldSetterNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     junction: (props: any) => (
-      <JunctionNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <JunctionNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     switch: (props: any) => (
-      <SwitchNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <SwitchNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     play_audio: (props: any) => (
-      <PlayAudioNode
-        {...props}
-        agentId={agent?.id}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <PlayAudioNode {...props} agentId={agent?.id} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     call_transfer: (props: any) => (
-      <CallTransferNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <CallTransferNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     time_limit: (props: any) => (
-      <TimeLimitNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <TimeLimitNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     reconfigure: (props: any) => (
-      <ReconfigureNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <ReconfigureNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     fallback: (props: any) => (
-      <FallbackNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <FallbackNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     voicemail: (props: any) => (
-      <VoicemailNode
-        {...props}
-        onClone={handleCloneNode}
-        onDelete={handleDeleteNode}
-        onUpdate={handleUpdateNode}
-      />
+      <VoicemailNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     default: () => <div>Unknown Node</div>,
-  };
-
-  useEffect(() => {
-    if (agentId) {
-      fetchAgent();
-    }
-  }, [agentId]);
-
-  const fetchAgent = async () => {
-    if (!agentId) return;
-
-    setLoading(true);
-    const response = await api.getAgent(agentId);
-    if (response.error) {
-      toast({
-        title: "Error loading agent",
-        description: response.error,
-        variant: "destructive",
-      });
-      navigate("/dashboard/agents");
-    } else {
-      setAgent(response.data);
-      // Load flow from agent config
-      if (response.data?.config?.flow) {
-        const loadedNodes = response.data.config.flow.nodes || [];
-        const loadedEdges = response.data.config.flow.edges || [];
-        setNodes(loadedNodes);
-        setEdges(loadedEdges);
-        // Save the initial state for unsaved changes detection
-        savedStateRef.current = { nodes: loadedNodes, edges: loadedEdges };
-      } else {
-        // Initialize with default Agent Setup node
-        initializeDefaultFlow();
-      }
-    }
-    setLoading(false);
   };
 
   const initializeDefaultFlow = () => {
@@ -419,8 +313,7 @@ const AgentStudioPage = () => {
         position: { x: 250, y: 100 },
         data: {
           label: "Agent Setup",
-          systemMessage:
-            "You are a helpful AI assistant for phone conversations.",
+          systemMessage: "You are a helpful AI assistant for phone conversations.",
         },
       },
       {
@@ -445,7 +338,6 @@ const AgentStudioPage = () => {
 
     setNodes(defaultNodes);
     setEdges(defaultEdges);
-    // Save the initial state for unsaved changes detection
     savedStateRef.current = { nodes: defaultNodes, edges: defaultEdges };
   };
 
@@ -461,19 +353,11 @@ const AgentStudioPage = () => {
   };
 
   const handleSave = async (showToast = true): Promise<boolean> => {
-    if (!agent) return false;
-
     setIsSaving(true);
-    const flowData = {
-      nodes,
-      edges,
-    };
+    const flowData = { nodes, edges };
 
     const response = await api.updateAgent(agent.id, {
-      config: {
-        ...agent.config,
-        flow: flowData,
-      },
+      config: { ...agent.config, flow: flowData },
     });
 
     setIsSaving(false);
@@ -488,7 +372,6 @@ const AgentStudioPage = () => {
       }
       return false;
     } else {
-      // Update saved state after successful save
       savedStateRef.current = { nodes, edges };
       if (showToast) {
         toast({
@@ -500,7 +383,6 @@ const AgentStudioPage = () => {
     }
   };
 
-  // Handle back button click with unsaved changes check
   const handleBackClick = () => {
     if (hasUnsavedChanges()) {
       setPendingNavigation("/dashboard/agents");
@@ -510,7 +392,6 @@ const AgentStudioPage = () => {
     }
   };
 
-  // Handle save from modal
   const handleModalSave = async () => {
     const saved = await handleSave(false);
     if (saved) {
@@ -528,7 +409,6 @@ const AgentStudioPage = () => {
     }
   };
 
-  // Handle revert from modal
   const handleModalRevert = () => {
     if (savedStateRef.current) {
       setNodes(savedStateRef.current.nodes);
@@ -570,7 +450,7 @@ const AgentStudioPage = () => {
     if (saved) {
       toast({
         title: "Agent Deployed Successfully",
-        description: `${agent?.name} is now live and ready to handle calls.`,
+        description: `${agent.name} is now live and ready to handle calls.`,
       });
     } else {
       toast({
@@ -589,22 +469,14 @@ const AgentStudioPage = () => {
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
-
       const type = event.dataTransfer.getData("application/nodeType");
       if (!type) return;
 
-      // Use canvas ref to convert screen coordinates to canvas coordinates
-      // This accounts for zoom and pan
       let position: { x: number; y: number };
       if (flowCanvasRef.current) {
         const canvasPos = flowCanvasRef.current.screenToCanvas(event.clientX, event.clientY);
-        // Offset by half the typical node size to center the drop
-        position = {
-          x: canvasPos.x - 140,
-          y: canvasPos.y - 60,
-        };
+        position = { x: canvasPos.x - 140, y: canvasPos.y - 60 };
       } else {
-        // Fallback if ref not available
         const canvasRect = event.currentTarget.getBoundingClientRect();
         position = {
           x: event.clientX - canvasRect.left - 100,
@@ -619,9 +491,7 @@ const AgentStudioPage = () => {
         id: `${type}-${Date.now()}`,
         type: type,
         position,
-        data: {
-          label: nodeCategory.label,
-        },
+        data: { label: nodeCategory.label },
       };
 
       setNodes((currentNodes) => [...currentNodes, newNode]);
@@ -634,56 +504,10 @@ const AgentStudioPage = () => {
     event.dataTransfer.dropEffect = "move";
   }, []);
 
-  const handleMenuItemClick = (itemId: string) => {
-    setSelectedMenuItem(itemId);
-    const implemented = ["studio", "configure", "outbound", "calls"];
-    if (!implemented.includes(itemId)) {
-      toast({
-        title: itemId.charAt(0).toUpperCase() + itemId.slice(1),
-        description: "This section is coming soon!",
-      });
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="w-12 h-12 rounded-full border-4 border-primary border-t-transparent animate-spin" />
-      </div>
-    );
-  }
-
-  if (!agent) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 bg-background flex">
-      {/* Left Sidebar Menu */}
-      <div className="w-16 bg-secondary border-r border-border flex flex-col items-center py-4 gap-4">
-        {leftMenuItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = selectedMenuItem === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => handleMenuItemClick(item.id)}
-              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-secondary-foreground/10"
-              }`}
-              title={item.label}
-            >
-              <Icon className="w-5 h-5" />
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Main Content */}
+    <>
+      {/* Studio has its own top bar with extra buttons */}
       <div className="flex-1 flex flex-col">
-        {/* Top Bar */}
         <div className="h-16 border-b border-border flex items-center justify-between px-6 bg-background/95 backdrop-blur-sm z-10">
           <div className="flex items-center gap-4">
             <Button
@@ -753,10 +577,9 @@ const AgentStudioPage = () => {
         </div>
 
         <div className="flex-1 flex overflow-auto relative">
-          {/* Node Palette Sidebar - Sticky */}
-          {selectedMenuItem === "studio" && showNodePalette && (
+          {/* Node Palette Sidebar */}
+          {showNodePalette && (
             <div className="absolute left-4 top-4 z-20 w-52 bg-background overflow-y-auto max-h-[calc(100%-2rem)] shadow-lg rounded-2xl border border-border">
-              {/* Close Button */}
               <div className="sticky top-0 bg-background flex justify-start p-3 z-10">
                 <button
                   onClick={() => setShowNodePalette(false)}
@@ -767,11 +590,7 @@ const AgentStudioPage = () => {
               </div>
 
               <div className="px-4 pb-4">
-                {/* Add Node Title */}
-                <h2 className="text-base font-semibold text-primary mb-4">
-                  Add Node
-                </h2>
-
+                <h2 className="text-base font-semibold text-primary mb-4">Add Node</h2>
                 <div className="space-y-2">
                   {nodeCategories.map((nodeType) => {
                     const Icon = nodeType.icon;
@@ -783,9 +602,7 @@ const AgentStudioPage = () => {
                         className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border ${nodeType.color} ${nodeType.borderColor} cursor-grab active:cursor-grabbing transition-colors hover:opacity-80`}
                       >
                         <Icon className="w-4 h-4" />
-                        <span className="text-sm font-medium">
-                          {nodeType.label}
-                        </span>
+                        <span className="text-sm font-medium">{nodeType.label}</span>
                       </div>
                     );
                   })}
@@ -794,34 +611,26 @@ const AgentStudioPage = () => {
             </div>
           )}
 
-          {/* Fixed Test Buttons - Right Side, below flow controls */}
-          {selectedMenuItem === "studio" && (
-            <div className="absolute right-4 top-[68px] z-20 flex flex-col gap-2">
-              <button
-                onClick={() => {
-                  setTestMode("text");
-                  setShowTestModal(true);
-                }}
-                className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
-                title="Test (Text Mode)"
-              >
-                <MessageSquare className="w-5 h-5" />
-              </button>
-              <button
-                onClick={() => {
-                  setTestMode("audio");
-                  setShowTestModal(true);
-                }}
-                className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
-                title="Test (Audio Mode)"
-              >
-                <AudioLines className="w-5 h-5" />
-              </button>
-            </div>
-          )}
+          {/* Test Buttons */}
+          <div className="absolute right-4 top-[68px] z-20 flex flex-col gap-2">
+            <button
+              onClick={() => { setTestMode("text"); setShowTestModal(true); }}
+              className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
+              title="Test (Text Mode)"
+            >
+              <MessageSquare className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => { setTestMode("audio"); setShowTestModal(true); }}
+              className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
+              title="Test (Audio Mode)"
+            >
+              <AudioLines className="w-5 h-5" />
+            </button>
+          </div>
 
-          {/* Floating Add Node Button - shown when palette is closed */}
-          {selectedMenuItem === "studio" && !showNodePalette && (
+          {/* Floating Add Node Button */}
+          {!showNodePalette && (
             <div className="absolute left-4 top-4 z-20">
               <button
                 onClick={() => setShowNodePalette(true)}
@@ -833,12 +642,8 @@ const AgentStudioPage = () => {
             </div>
           )}
 
-          {/* Flow Canvas - Always rendered but hidden when not on studio */}
-          <div
-            className={`flex-1 ${selectedMenuItem !== "studio" ? "hidden" : ""}`}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-          >
+          {/* Flow Canvas */}
+          <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
             <FlowCanvas
               ref={flowCanvasRef}
               nodes={nodes}
@@ -850,73 +655,30 @@ const AgentStudioPage = () => {
               errorNodeIds={errorNodeIds}
             />
           </div>
-
-          {/* Configure Section */}
-          {selectedMenuItem === "configure" && agent && (
-            <AgentConfigureSection
-              agent={agent}
-              onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
-            />
-          )}
-
-          {/* Outbound Section */}
-          {selectedMenuItem === "outbound" && agent && (
-            <AgentOutboundSection
-              agent={agent}
-              onAgentUpdate={(updatedAgent) => setAgent(updatedAgent)}
-            />
-          )}
-
-          {/* Calls Section */}
-          {selectedMenuItem === "calls" && agent && (
-            <AgentCallsSection agentId={agent.id} />
-          )}
-
-          {/* Placeholder for unimplemented sections */}
-          {!["studio", "configure", "outbound", "calls"].includes(selectedMenuItem) && (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <div className="text-6xl mb-4">🚧</div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">
-                  {selectedMenuItem.charAt(0).toUpperCase() +
-                    selectedMenuItem.slice(1)}
-                </h2>
-                <p className="text-muted-foreground">
-                  This section is under construction
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Test Agent Modal */}
-      {agent && (
-        <TestAgentModal
-          isOpen={showTestModal}
-          onClose={() => setShowTestModal(false)}
-          agentId={agent.id}
-          agentName={agent.name}
-          nodes={nodes}
-          edges={edges}
-          initialMode={testMode}
-        />
-      )}
+      {/* Modals and Panels */}
+      <TestAgentModal
+        isOpen={showTestModal}
+        onClose={() => setShowTestModal(false)}
+        agentId={agent.id}
+        agentName={agent.name}
+        nodes={nodes}
+        edges={edges}
+        initialMode={testMode}
+      />
 
-      {/* AI Workflow Generator Modal */}
-      {agent && (
-        <AIWorkflowGenerator
-          isOpen={showAIGenerator}
-          onClose={() => setShowAIGenerator(false)}
-          onGenerate={(generatedNodes, generatedEdges) => {
-            setNodes(generatedNodes);
-            setEdges(generatedEdges);
-          }}
-          agentId={agent.id}
-        />
-      )}
+      <AIWorkflowGenerator
+        isOpen={showAIGenerator}
+        onClose={() => setShowAIGenerator(false)}
+        onGenerate={(generatedNodes, generatedEdges) => {
+          setNodes(generatedNodes);
+          setEdges(generatedEdges);
+        }}
+        agentId={agent.id}
+      />
 
-      {/* Unsaved Changes Modal */}
       <UnsavedChangesModal
         isOpen={showUnsavedModal}
         onClose={() => setShowUnsavedModal(false)}
@@ -925,29 +687,23 @@ const AgentStudioPage = () => {
         isSaving={isSaving}
       />
 
-      {/* History Panel */}
-      {agent && (
-        <HistoryPanel
-          isOpen={showHistoryPanel}
-          onClose={() => setShowHistoryPanel(false)}
-          agentId={agent.id}
-          onRestore={(config) => {
-            // Load the restored version's flow into the canvas
-            if (config?.flow) {
-              setNodes(config.flow.nodes || []);
-              setEdges(config.flow.edges || []);
-              savedStateRef.current = {
-                nodes: config.flow.nodes || [],
-                edges: config.flow.edges || [],
-              };
-            }
-            // Update the agent object with restored config
-            setAgent((prev: any) => prev ? { ...prev, config } : prev);
-          }}
-        />
-      )}
+      <HistoryPanel
+        isOpen={showHistoryPanel}
+        onClose={() => setShowHistoryPanel(false)}
+        agentId={agent.id}
+        onRestore={(config) => {
+          if (config?.flow) {
+            setNodes(config.flow.nodes || []);
+            setEdges(config.flow.edges || []);
+            savedStateRef.current = {
+              nodes: config.flow.nodes || [],
+              edges: config.flow.edges || [],
+            };
+          }
+          onAgentUpdate({ ...agent, config });
+        }}
+      />
 
-      {/* Fields Panel */}
       <FieldsPanel
         isOpen={showFieldsPanel}
         onClose={() => setShowFieldsPanel(false)}
@@ -957,7 +713,6 @@ const AgentStudioPage = () => {
         onAddFieldNode={handleAddFieldNode}
       />
 
-      {/* Debug Panel */}
       <DebugPanel
         isOpen={showDebugPanel}
         onClose={() => { setShowDebugPanel(false); setErrorNodeIds(new Set()); }}
@@ -970,7 +725,7 @@ const AgentStudioPage = () => {
           setShowTestModal(true);
         }}
       />
-    </div>
+    </>
   );
 };
 
