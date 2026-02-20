@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -33,7 +33,7 @@ interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
-const baseNavItems = [
+const navItems = [
   { title: "Home", icon: Home, path: "/dashboard" },
   { title: "Agents", icon: Bot, path: "/dashboard/agents" },
   { title: "Telephony", icon: Phone, path: "/dashboard/telephony" },
@@ -44,23 +44,9 @@ const baseNavItems = [
   { title: "Tutorial", icon: BookOpen, path: "/dashboard/tutorial" },
 ];
 
-const adminNavItem = { title: "Admin", icon: Shield, path: "/dashboard/admin" };
-
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const { user, loading, signOut, isAdmin } = useAuth();
 
-  const navItems = useMemo(() => {
-    if (!isAdmin) return baseNavItems;
-    // Insert Admin after Settings, before Feedback
-    const items = [...baseNavItems];
-    const feedbackIndex = items.findIndex((i) => i.title === "Feedback");
-    if (feedbackIndex !== -1) {
-      items.splice(feedbackIndex, 0, adminNavItem);
-    } else {
-      items.push(adminNavItem);
-    }
-    return items;
-  }, [isAdmin]);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -149,6 +135,26 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 </p>
               </div>
             </div>
+            {isAdmin && (
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")}
+                    tooltip="Admin"
+                    size="lg"
+                  >
+                    <Link to="/dashboard/admin" className="flex items-center gap-3">
+                      <Shield className="w-5 h-5" />
+                      <span className="group-data-[collapsible=icon]:hidden">Admin</span>
+                      {(location.pathname === "/dashboard/admin" || location.pathname.startsWith("/dashboard/admin")) && (
+                        <ChevronRight className="ml-auto w-4 h-4 group-data-[collapsible=icon]:hidden" />
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            )}
             <Button
               variant="ghost"
               size="sm"
