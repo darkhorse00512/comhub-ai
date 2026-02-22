@@ -43,10 +43,6 @@ router.get('/phone-numbers', adminController.getPhoneNumbers);
 router.get('/feedback', adminController.getAllFeedback);
 router.put('/feedback/:feedbackId/status', adminController.updateFeedbackStatus);
 
-router.get('/voice-settings', adminController.getVoiceSettings);
-router.put('/voice-settings', adminController.updateVoiceSettings);
-router.get('/voice-settings/voices', adminController.fetchElevenLabsVoices);
-
 router.get('/voice-models', adminController.getVoiceModels);
 router.post('/voice-models', voiceModelFields, adminController.createVoiceModel);
 router.put('/voice-models/:modelId', voiceModelFields, adminController.updateVoiceModel);

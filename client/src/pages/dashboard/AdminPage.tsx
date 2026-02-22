@@ -54,13 +54,13 @@ import {
   Eye,
   EyeOff,
   Volume2,
-  Key,
   Save,
   Check,
   Plus,
   Pencil,
   ImagePlus,
   Play,
+  Pause,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -875,7 +875,7 @@ const FeedbackTab = () => {
   );
 };
 
-// ===== Voice Tab (ElevenLabs Config + Voice Models CRUD) =====
+// ===== Voice Tab (Voice Models CRUD) =====
 interface VoiceModel {
   id: string;
   name: string;
@@ -891,15 +891,6 @@ interface VoiceModel {
 
 const VoiceTab = () => {
   const { toast } = useToast();
-
-  // --- ElevenLabs Config state ---
-  const [apiKey, setApiKey] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [defaultVoiceId, setDefaultVoiceId] = useState("");
-  const [defaultModel, setDefaultModel] = useState("eleven_multilingual_v2");
-  const [configLoading, setConfigLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   // --- Voice Models state ---
   const [models, setModels] = useState<VoiceModel[]>([]);
@@ -922,18 +913,6 @@ const VoiceTab = () => {
   const [formAudio, setFormAudio] = useState<File | null>(null);
   const [formAudioName, setFormAudioName] = useState<string | null>(null);
 
-  const loadConfig = useCallback(async () => {
-    setConfigLoading(true);
-    const result = await api.getVoiceSettings();
-    if (result.data) {
-      setApiKey(result.data.apiKey || "");
-      setHasApiKey(result.data.hasApiKey || false);
-      setDefaultVoiceId(result.data.defaultVoiceId || "");
-      setDefaultModel(result.data.defaultModel || "eleven_multilingual_v2");
-    }
-    setConfigLoading(false);
-  }, []);
-
   const loadModels = useCallback(async () => {
     setModelsLoading(true);
     const result = await api.getVoiceModels();
@@ -943,20 +922,7 @@ const VoiceTab = () => {
     setModelsLoading(false);
   }, []);
 
-  useEffect(() => { loadConfig(); loadModels(); }, [loadConfig, loadModels]);
-
-  const handleSaveConfig = async () => {
-    setSaving(true);
-    const result = await api.updateVoiceSettings({ apiKey, defaultVoiceId, defaultModel });
-    setSaving(false);
-    if (result.error) {
-      toast({ title: "Error", description: result.error, variant: "destructive" });
-    } else {
-      setHasApiKey(result.data?.hasApiKey || false);
-      setApiKey(result.data?.apiKey || "");
-      toast({ title: "Voice settings saved" });
-    }
-  };
+  useEffect(() => { loadModels(); }, [loadModels]);
 
   const openAddDialog = () => {
     setFormName("");
@@ -1005,16 +971,23 @@ const VoiceTab = () => {
   };
 
   const handlePlayPreview = (modelId: string, audioUrl: string) => {
+    // If clicking the same model that's playing, pause it
+    if (playingModelId === modelId && audioElRef.current) {
+      audioElRef.current.pause();
+      audioElRef.current = null;
+      setPlayingModelId(null);
+      return;
+    }
+    // Stop any currently playing audio
     if (audioElRef.current) {
       audioElRef.current.pause();
       audioElRef.current = null;
     }
-    if (playingModelId === modelId) {
-      setPlayingModelId(null);
-      return;
-    }
     const audio = new Audio(audioUrl);
-    audio.onended = () => setPlayingModelId(null);
+    audio.onended = () => {
+      setPlayingModelId(null);
+      audioElRef.current = null;
+    };
     audio.play();
     audioElRef.current = audio;
     setPlayingModelId(modelId);
@@ -1068,86 +1041,8 @@ const VoiceTab = () => {
     }
   };
 
-  if (configLoading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      {/* ElevenLabs Configuration */}
-      <Card className="bg-card/50 backdrop-blur border-border/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Key className="w-5 h-5 text-primary" />
-            ElevenLabs Configuration
-          </CardTitle>
-          <CardDescription>
-            Configure the platform-wide ElevenLabs API key and default voice settings
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <Label>API Key</Label>
-            <div className="relative">
-              <Input
-                type={showApiKey ? "text" : "password"}
-                placeholder={hasApiKey ? "API key is set (enter new key to replace)" : "Enter your ElevenLabs API key"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            {hasApiKey && (
-              <p className="text-xs text-green-600 flex items-center gap-1">
-                <Check className="w-3 h-3" /> API key is configured
-              </p>
-            )}
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Default Model</Label>
-              <Select value={defaultModel} onValueChange={setDefaultModel}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="eleven_multilingual_v2">Multilingual v2</SelectItem>
-                  <SelectItem value="eleven_turbo_v2">Turbo v2</SelectItem>
-                  <SelectItem value="eleven_turbo_v2_5">Turbo v2.5</SelectItem>
-                  <SelectItem value="eleven_monolingual_v1">Monolingual v1</SelectItem>
-                  <SelectItem value="eleven_flash_v2_5">Flash v2.5</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Default Voice ID</Label>
-              <Input
-                placeholder="Enter default voice ID"
-                value={defaultVoiceId}
-                onChange={(e) => setDefaultVoiceId(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <Button onClick={handleSaveConfig} disabled={saving} className="gap-2">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {saving ? "Saving..." : "Save Settings"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Voice Models */}
       <Card className="bg-card/50 backdrop-blur border-border/50">
         <CardHeader>
@@ -1213,9 +1108,13 @@ const VoiceTab = () => {
                             size="icon"
                             className="h-7 w-7"
                             onClick={() => handlePlayPreview(m.id, m.preview_audio_url!)}
-                            title="Play preview"
+                            title={playingModelId === m.id ? "Pause preview" : "Play preview"}
                           >
-                            <Play className={`w-3.5 h-3.5 ${playingModelId === m.id ? "text-primary" : ""}`} />
+                            {playingModelId === m.id ? (
+                              <Pause className="w-3.5 h-3.5 text-primary" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5" />
+                            )}
                           </Button>
                         )}
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDialog(m)}>
