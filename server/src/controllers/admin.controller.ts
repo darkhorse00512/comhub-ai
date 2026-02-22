@@ -709,8 +709,8 @@ class AdminController {
 
   createVoiceModel = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, category, description } = req.body;
-      const file = (req as any).file;
+      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, description } = req.body;
+      const files = (req as any).files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
       if (!name || !elevenlabs_voice_id || !elevenlabs_api_key) {
         res.status(400).json({ error: 'Name, voice ID, and API key are required' });
@@ -718,8 +718,16 @@ class AdminController {
       }
 
       let imageUrl: string | null = null;
-      if (file) {
-        imageUrl = await storageService.uploadVoiceModelImage(file.buffer, file.originalname);
+      let previewAudioUrl: string | null = null;
+
+      const imageFile = files?.image?.[0];
+      const audioFile = files?.preview_audio?.[0];
+
+      if (imageFile) {
+        imageUrl = await storageService.uploadVoiceModelImage(imageFile.buffer, imageFile.originalname);
+      }
+      if (audioFile) {
+        previewAudioUrl = await storageService.uploadVoiceModelAudio(audioFile.buffer, audioFile.originalname);
       }
 
       const { data, error } = await this.supabase
@@ -730,7 +738,7 @@ class AdminController {
           elevenlabs_api_key,
           model: model || 'eleven_multilingual_v2',
           image_url: imageUrl,
-          category: category || null,
+          preview_audio_url: previewAudioUrl,
           description: description || null,
         })
         .select()
@@ -744,7 +752,6 @@ class AdminController {
 
       logger.info('Voice model created by admin', { id: data.id, by: req.user?.id });
 
-      // Mask API key in response
       res.status(201).json({
         success: true,
         data: {
@@ -761,10 +768,9 @@ class AdminController {
   updateVoiceModel = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const { modelId } = req.params;
-      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, category, description } = req.body;
-      const file = (req as any).file;
+      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, description } = req.body;
+      const files = (req as any).files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
-      // Get existing model
       const { data: existing, error: fetchError } = await this.supabase
         .from('voice_models')
         .select('*')
@@ -777,12 +783,22 @@ class AdminController {
       }
 
       let imageUrl = existing.image_url;
-      if (file) {
-        // Delete old image if exists
+      let previewAudioUrl = existing.preview_audio_url;
+
+      const imageFile = files?.image?.[0];
+      const audioFile = files?.preview_audio?.[0];
+
+      if (imageFile) {
         if (existing.image_url) {
-          await storageService.deleteVoiceModelImage(existing.image_url);
+          await storageService.deleteVoiceModelFile(existing.image_url);
         }
-        imageUrl = await storageService.uploadVoiceModelImage(file.buffer, file.originalname);
+        imageUrl = await storageService.uploadVoiceModelImage(imageFile.buffer, imageFile.originalname);
+      }
+      if (audioFile) {
+        if (existing.preview_audio_url) {
+          await storageService.deleteVoiceModelFile(existing.preview_audio_url);
+        }
+        previewAudioUrl = await storageService.uploadVoiceModelAudio(audioFile.buffer, audioFile.originalname);
       }
 
       const updates: any = {
@@ -794,9 +810,9 @@ class AdminController {
         updates.elevenlabs_api_key = elevenlabs_api_key;
       }
       if (model !== undefined) updates.model = model;
-      if (category !== undefined) updates.category = category;
       if (description !== undefined) updates.description = description;
       if (imageUrl !== existing.image_url) updates.image_url = imageUrl;
+      if (previewAudioUrl !== existing.preview_audio_url) updates.preview_audio_url = previewAudioUrl;
 
       const { data, error } = await this.supabase
         .from('voice_models')
@@ -832,15 +848,17 @@ class AdminController {
     try {
       const { modelId } = req.params;
 
-      // Get model to delete its image
       const { data: existing } = await this.supabase
         .from('voice_models')
-        .select('image_url')
+        .select('image_url, preview_audio_url')
         .eq('id', modelId)
         .single();
 
       if (existing?.image_url) {
-        await storageService.deleteVoiceModelImage(existing.image_url);
+        await storageService.deleteVoiceModelFile(existing.image_url);
+      }
+      if (existing?.preview_audio_url) {
+        await storageService.deleteVoiceModelFile(existing.preview_audio_url);
       }
 
       const { error } = await this.supabase

@@ -60,6 +60,7 @@ import {
   Plus,
   Pencil,
   ImagePlus,
+  Play,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -882,7 +883,7 @@ interface VoiceModel {
   elevenlabs_api_key: string;
   model: string;
   image_url: string | null;
-  category: string | null;
+  preview_audio_url: string | null;
   description: string | null;
   is_active: boolean;
   created_at: string;
@@ -906,6 +907,8 @@ const VoiceTab = () => {
   const [modelDialog, setModelDialog] = useState<{ mode: "add" | "edit"; model?: VoiceModel } | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<VoiceModel | null>(null);
   const [modelSaving, setModelSaving] = useState(false);
+  const [playingModelId, setPlayingModelId] = useState<string | null>(null);
+  const [audioElRef] = useState<{ current: HTMLAudioElement | null }>({ current: null });
 
   // --- Model form state ---
   const [formName, setFormName] = useState("");
@@ -913,10 +916,11 @@ const VoiceTab = () => {
   const [formApiKey, setFormApiKey] = useState("");
   const [formShowApiKey, setFormShowApiKey] = useState(false);
   const [formModel, setFormModel] = useState("eleven_multilingual_v2");
-  const [formCategory, setFormCategory] = useState("");
   const [formDescription, setFormDescription] = useState("");
   const [formImage, setFormImage] = useState<File | null>(null);
   const [formImagePreview, setFormImagePreview] = useState<string | null>(null);
+  const [formAudio, setFormAudio] = useState<File | null>(null);
+  const [formAudioName, setFormAudioName] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
     setConfigLoading(true);
@@ -960,10 +964,11 @@ const VoiceTab = () => {
     setFormApiKey("");
     setFormShowApiKey(false);
     setFormModel("eleven_multilingual_v2");
-    setFormCategory("");
     setFormDescription("");
     setFormImage(null);
     setFormImagePreview(null);
+    setFormAudio(null);
+    setFormAudioName(null);
     setModelDialog({ mode: "add" });
   };
 
@@ -973,10 +978,11 @@ const VoiceTab = () => {
     setFormApiKey(model.elevenlabs_api_key);
     setFormShowApiKey(false);
     setFormModel(model.model);
-    setFormCategory(model.category || "");
     setFormDescription(model.description || "");
     setFormImage(null);
     setFormImagePreview(model.image_url);
+    setFormAudio(null);
+    setFormAudioName(model.preview_audio_url ? "Current audio uploaded" : null);
     setModelDialog({ mode: "edit", model });
   };
 
@@ -988,6 +994,30 @@ const VoiceTab = () => {
       reader.onload = () => setFormImagePreview(reader.result as string);
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleAudioSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFormAudio(file);
+      setFormAudioName(file.name);
+    }
+  };
+
+  const handlePlayPreview = (modelId: string, audioUrl: string) => {
+    if (audioElRef.current) {
+      audioElRef.current.pause();
+      audioElRef.current = null;
+    }
+    if (playingModelId === modelId) {
+      setPlayingModelId(null);
+      return;
+    }
+    const audio = new Audio(audioUrl);
+    audio.onended = () => setPlayingModelId(null);
+    audio.play();
+    audioElRef.current = audio;
+    setPlayingModelId(modelId);
   };
 
   const handleSaveModel = async () => {
@@ -1006,9 +1036,9 @@ const VoiceTab = () => {
     formData.append("elevenlabs_voice_id", formVoiceId.trim());
     if (formApiKey.trim()) formData.append("elevenlabs_api_key", formApiKey.trim());
     formData.append("model", formModel);
-    if (formCategory.trim()) formData.append("category", formCategory.trim());
     if (formDescription.trim()) formData.append("description", formDescription.trim());
     if (formImage) formData.append("image", formImage);
+    if (formAudio) formData.append("preview_audio", formAudio);
 
     const result = modelDialog?.mode === "add"
       ? await api.createVoiceModel(formData)
@@ -1175,13 +1205,19 @@ const VoiceTab = () => {
                   {/* Info */}
                   <div className="p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="font-medium text-sm text-foreground">{m.name}</h4>
-                        {m.category && (
-                          <Badge variant="outline" className="text-[10px] mt-1 capitalize">{m.category}</Badge>
-                        )}
-                      </div>
+                      <h4 className="font-medium text-sm text-foreground">{m.name}</h4>
                       <div className="flex gap-1 shrink-0">
+                        {m.preview_audio_url && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handlePlayPreview(m.id, m.preview_audio_url!)}
+                            title="Play preview"
+                          >
+                            <Play className={`w-3.5 h-3.5 ${playingModelId === m.id ? "text-primary" : ""}`} />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDialog(m)}>
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
@@ -1250,6 +1286,23 @@ const VoiceTab = () => {
               </div>
             </div>
 
+            {/* Audio preview upload */}
+            <div className="space-y-2">
+              <Label>Voice Preview Audio</Label>
+              <Input
+                type="file"
+                accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/x-m4a,.mp3,.wav,.m4a"
+                onChange={handleAudioSelect}
+                className="text-sm"
+              />
+              {formAudioName && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> {formAudioName}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">MP3, WAV, or M4A. Max 15MB. Used as voice preview for users.</p>
+            </div>
+
             <div className="space-y-2">
               <Label>Name *</Label>
               <Input
@@ -1301,15 +1354,6 @@ const VoiceTab = () => {
                   {formShowApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Input
-                placeholder="e.g. Professional, Casual, Character"
-                value={formCategory}
-                onChange={(e) => setFormCategory(e.target.value)}
-              />
             </div>
 
             <div className="space-y-2">

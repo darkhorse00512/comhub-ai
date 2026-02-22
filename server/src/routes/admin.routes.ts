@@ -6,18 +6,24 @@ import adminController from '../controllers/admin.controller';
 
 const router = Router();
 
-const imageUpload = multer({
+const voiceModelUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    if (allowedTypes.includes(file.mimetype)) {
+    const imageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    const audioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/mp4', 'audio/x-m4a'];
+    if (imageTypes.includes(file.mimetype) || audioTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Only JPEG, PNG, WebP, and GIF images are allowed'));
+      cb(new Error('Only image (JPEG, PNG, WebP, GIF) and audio (MP3, WAV, M4A) files are allowed'));
     }
   },
 });
+
+const voiceModelFields = voiceModelUpload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'preview_audio', maxCount: 1 },
+]);
 
 router.use(authMiddleware);
 router.use(adminMiddleware);
@@ -42,8 +48,8 @@ router.put('/voice-settings', adminController.updateVoiceSettings);
 router.get('/voice-settings/voices', adminController.fetchElevenLabsVoices);
 
 router.get('/voice-models', adminController.getVoiceModels);
-router.post('/voice-models', imageUpload.single('image'), adminController.createVoiceModel);
-router.put('/voice-models/:modelId', imageUpload.single('image'), adminController.updateVoiceModel);
+router.post('/voice-models', voiceModelFields, adminController.createVoiceModel);
+router.put('/voice-models/:modelId', voiceModelFields, adminController.updateVoiceModel);
 router.delete('/voice-models/:modelId', adminController.deleteVoiceModel);
 
 export default router;

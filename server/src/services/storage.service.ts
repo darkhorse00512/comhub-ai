@@ -265,8 +265,8 @@ class StorageService {
           .storage
           .createBucket(VOICE_MODELS_BUCKET, {
             public: true,
-            fileSizeLimit: 5242880, // 5MB
-            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+            fileSizeLimit: 15728640, // 15MB
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/mp4', 'audio/x-m4a'],
           });
 
         if (createError && !createError.message.includes('already exists')) {
@@ -321,7 +321,7 @@ class StorageService {
     return urlData.publicUrl;
   }
 
-  async deleteVoiceModelImage(fileUrl: string): Promise<void> {
+  async deleteVoiceModelFile(fileUrl: string): Promise<void> {
     try {
       const bucketPath = `/storage/v1/object/public/${VOICE_MODELS_BUCKET}/`;
       const idx = fileUrl.indexOf(bucketPath);
@@ -335,11 +335,49 @@ class StorageService {
         .remove([filePath]);
 
       if (error) {
-        logger.error('Failed to delete voice model image:', error);
+        logger.error('Failed to delete voice model file:', error);
       }
     } catch (error) {
-      logger.error('Failed to delete voice model image:', error);
+      logger.error('Failed to delete voice model file:', error);
     }
+  }
+
+  async uploadVoiceModelAudio(
+    audioBuffer: Buffer,
+    originalName: string
+  ): Promise<string> {
+    await this.ensureVoiceModelsBucketExists();
+
+    const uniqueId = uuidv4().slice(0, 8);
+    const ext = originalName.split('.').pop()?.toLowerCase() || 'mp3';
+    const filename = `audio/${Date.now()}_${uniqueId}.${ext}`;
+
+    const contentTypeMap: Record<string, string> = {
+      mp3: 'audio/mpeg',
+      wav: 'audio/wav',
+      m4a: 'audio/mp4',
+    };
+
+    const { error } = await this.supabase
+      .storage
+      .from(VOICE_MODELS_BUCKET)
+      .upload(filename, audioBuffer, {
+        contentType: contentTypeMap[ext] || 'audio/mpeg',
+        upsert: true,
+      });
+
+    if (error) {
+      logger.error('Failed to upload voice model audio:', error);
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+
+    const { data: urlData } = this.supabase
+      .storage
+      .from(VOICE_MODELS_BUCKET)
+      .getPublicUrl(filename);
+
+    logger.info('Voice model audio uploaded successfully', { filename });
+    return urlData.publicUrl;
   }
 }
 
