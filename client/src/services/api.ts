@@ -1498,6 +1498,96 @@ export const api = {
     }
   },
 
+  // Voice Models CRUD
+  async getVoiceModels(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-models`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch voice models");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching voice models:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async createVoiceModel(formData: FormData): Promise<ApiResponse<any>> {
+    try {
+      const token = await getBackendToken();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-models`, {
+        method: "POST",
+        headers: {
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create voice model");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error creating voice model:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateVoiceModel(modelId: string, formData: FormData): Promise<ApiResponse<any>> {
+    try {
+      const token = await getBackendToken();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-models/${modelId}`, {
+        method: "PUT",
+        headers: {
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update voice model");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating voice model:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteVoiceModel(modelId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/voice-models/${modelId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete voice model");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting voice model:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   checkIsAdmin(): boolean {
     try {
       const token = localStorage.getItem("backend_token");

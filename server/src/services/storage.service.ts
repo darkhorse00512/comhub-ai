@@ -4,11 +4,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 const BUCKET_NAME = 'call-recordings';
 const PLAY_AUDIO_BUCKET = 'Play Audio';
+const VOICE_MODELS_BUCKET = 'Voice models';
 
 class StorageService {
   private supabase = getSupabaseClient();
   private bucketInitialized = false;
   private playAudioBucketInitialized = false;
+  private voiceModelsBucketInitialized = false;
 
   async ensureBucketExists(): Promise<void> {
     if (this.bucketInitialized) return;
@@ -239,6 +241,104 @@ class StorageService {
       }
     } catch (error) {
       logger.error('Failed to delete play audio file:', error);
+    }
+  }
+
+  // ===== Voice Models Bucket =====
+
+  async ensureVoiceModelsBucketExists(): Promise<void> {
+    if (this.voiceModelsBucketInitialized) return;
+
+    try {
+      const { data: buckets, error: listError } = await this.supabase
+        .storage
+        .listBuckets();
+
+      if (listError) {
+        throw new Error(`Supabase storage error: ${listError.message}`);
+      }
+
+      const bucketExists = buckets?.some(b => b.name === VOICE_MODELS_BUCKET);
+
+      if (!bucketExists) {
+        const { error: createError } = await this.supabase
+          .storage
+          .createBucket(VOICE_MODELS_BUCKET, {
+            public: true,
+            fileSizeLimit: 5242880, // 5MB
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          });
+
+        if (createError && !createError.message.includes('already exists')) {
+          throw new Error(`Failed to create bucket: ${createError.message}`);
+        }
+      }
+
+      this.voiceModelsBucketInitialized = true;
+    } catch (error) {
+      logger.error('Failed to ensure Voice models bucket exists:', error);
+      throw error;
+    }
+  }
+
+  async uploadVoiceModelImage(
+    imageBuffer: Buffer,
+    originalName: string
+  ): Promise<string> {
+    await this.ensureVoiceModelsBucketExists();
+
+    const uniqueId = uuidv4().slice(0, 8);
+    const ext = originalName.split('.').pop()?.toLowerCase() || 'png';
+    const filename = `${Date.now()}_${uniqueId}.${ext}`;
+
+    const contentTypeMap: Record<string, string> = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+      gif: 'image/gif',
+    };
+
+    const { error } = await this.supabase
+      .storage
+      .from(VOICE_MODELS_BUCKET)
+      .upload(filename, imageBuffer, {
+        contentType: contentTypeMap[ext] || 'image/png',
+        upsert: true,
+      });
+
+    if (error) {
+      logger.error('Failed to upload voice model image:', error);
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+
+    const { data: urlData } = this.supabase
+      .storage
+      .from(VOICE_MODELS_BUCKET)
+      .getPublicUrl(filename);
+
+    logger.info('Voice model image uploaded successfully', { filename });
+    return urlData.publicUrl;
+  }
+
+  async deleteVoiceModelImage(fileUrl: string): Promise<void> {
+    try {
+      const bucketPath = `/storage/v1/object/public/${VOICE_MODELS_BUCKET}/`;
+      const idx = fileUrl.indexOf(bucketPath);
+      if (idx === -1) return;
+
+      const filePath = decodeURIComponent(fileUrl.substring(idx + bucketPath.length));
+
+      const { error } = await this.supabase
+        .storage
+        .from(VOICE_MODELS_BUCKET)
+        .remove([filePath]);
+
+      if (error) {
+        logger.error('Failed to delete voice model image:', error);
+      }
+    } catch (error) {
+      logger.error('Failed to delete voice model image:', error);
     }
   }
 }

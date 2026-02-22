@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
+import storageService from '../services/storage.service';
 
 class AdminController {
   private supabase = getSupabaseClient();
@@ -673,6 +674,191 @@ class AdminController {
     } catch (error) {
       logger.error('Failed to fetch ElevenLabs voices:', error);
       res.status(500).json({ error: 'Failed to fetch voices from ElevenLabs' });
+    }
+  };
+
+  // ===== VOICE MODELS CRUD =====
+
+  getVoiceModels = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { data, error } = await this.supabase
+        .from('voice_models')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Failed to fetch voice models:', error);
+        res.status(500).json({ error: 'Failed to fetch voice models' });
+        return;
+      }
+
+      // Mask API keys
+      const models = (data || []).map((m: any) => ({
+        ...m,
+        elevenlabs_api_key: m.elevenlabs_api_key
+          ? `${m.elevenlabs_api_key.substring(0, 8)}...${m.elevenlabs_api_key.slice(-4)}`
+          : '',
+      }));
+
+      res.status(200).json({ success: true, data: models });
+    } catch (error) {
+      logger.error('Failed to get voice models:', error);
+      res.status(500).json({ error: 'Failed to fetch voice models' });
+    }
+  };
+
+  createVoiceModel = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, category, description } = req.body;
+      const file = (req as any).file;
+
+      if (!name || !elevenlabs_voice_id || !elevenlabs_api_key) {
+        res.status(400).json({ error: 'Name, voice ID, and API key are required' });
+        return;
+      }
+
+      let imageUrl: string | null = null;
+      if (file) {
+        imageUrl = await storageService.uploadVoiceModelImage(file.buffer, file.originalname);
+      }
+
+      const { data, error } = await this.supabase
+        .from('voice_models')
+        .insert({
+          name,
+          elevenlabs_voice_id,
+          elevenlabs_api_key,
+          model: model || 'eleven_multilingual_v2',
+          image_url: imageUrl,
+          category: category || null,
+          description: description || null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to create voice model:', error);
+        res.status(500).json({ error: 'Failed to create voice model' });
+        return;
+      }
+
+      logger.info('Voice model created by admin', { id: data.id, by: req.user?.id });
+
+      // Mask API key in response
+      res.status(201).json({
+        success: true,
+        data: {
+          ...data,
+          elevenlabs_api_key: `${data.elevenlabs_api_key.substring(0, 8)}...${data.elevenlabs_api_key.slice(-4)}`,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to create voice model:', error);
+      res.status(500).json({ error: 'Failed to create voice model' });
+    }
+  };
+
+  updateVoiceModel = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { modelId } = req.params;
+      const { name, elevenlabs_voice_id, elevenlabs_api_key, model, category, description } = req.body;
+      const file = (req as any).file;
+
+      // Get existing model
+      const { data: existing, error: fetchError } = await this.supabase
+        .from('voice_models')
+        .select('*')
+        .eq('id', modelId)
+        .single();
+
+      if (fetchError || !existing) {
+        res.status(404).json({ error: 'Voice model not found' });
+        return;
+      }
+
+      let imageUrl = existing.image_url;
+      if (file) {
+        // Delete old image if exists
+        if (existing.image_url) {
+          await storageService.deleteVoiceModelImage(existing.image_url);
+        }
+        imageUrl = await storageService.uploadVoiceModelImage(file.buffer, file.originalname);
+      }
+
+      const updates: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (name !== undefined) updates.name = name;
+      if (elevenlabs_voice_id !== undefined) updates.elevenlabs_voice_id = elevenlabs_voice_id;
+      if (elevenlabs_api_key && !elevenlabs_api_key.includes('...')) {
+        updates.elevenlabs_api_key = elevenlabs_api_key;
+      }
+      if (model !== undefined) updates.model = model;
+      if (category !== undefined) updates.category = category;
+      if (description !== undefined) updates.description = description;
+      if (imageUrl !== existing.image_url) updates.image_url = imageUrl;
+
+      const { data, error } = await this.supabase
+        .from('voice_models')
+        .update(updates)
+        .eq('id', modelId)
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to update voice model:', error);
+        res.status(500).json({ error: 'Failed to update voice model' });
+        return;
+      }
+
+      logger.info('Voice model updated by admin', { id: modelId, by: req.user?.id });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          ...data,
+          elevenlabs_api_key: data.elevenlabs_api_key
+            ? `${data.elevenlabs_api_key.substring(0, 8)}...${data.elevenlabs_api_key.slice(-4)}`
+            : '',
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to update voice model:', error);
+      res.status(500).json({ error: 'Failed to update voice model' });
+    }
+  };
+
+  deleteVoiceModel = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { modelId } = req.params;
+
+      // Get model to delete its image
+      const { data: existing } = await this.supabase
+        .from('voice_models')
+        .select('image_url')
+        .eq('id', modelId)
+        .single();
+
+      if (existing?.image_url) {
+        await storageService.deleteVoiceModelImage(existing.image_url);
+      }
+
+      const { error } = await this.supabase
+        .from('voice_models')
+        .delete()
+        .eq('id', modelId);
+
+      if (error) {
+        logger.error('Failed to delete voice model:', error);
+        res.status(500).json({ error: 'Failed to delete voice model' });
+        return;
+      }
+
+      logger.info('Voice model deleted by admin', { id: modelId, by: req.user?.id });
+      res.status(200).json({ success: true });
+    } catch (error) {
+      logger.error('Failed to delete voice model:', error);
+      res.status(500).json({ error: 'Failed to delete voice model' });
     }
   };
 }

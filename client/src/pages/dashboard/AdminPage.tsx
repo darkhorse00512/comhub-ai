@@ -56,10 +56,13 @@ import {
   Volume2,
   Key,
   Save,
-  Play,
   Check,
+  Plus,
+  Pencil,
+  ImagePlus,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/services/api";
@@ -871,23 +874,52 @@ const FeedbackTab = () => {
   );
 };
 
-// ===== Voice Tab (ElevenLabs) =====
+// ===== Voice Tab (ElevenLabs Config + Voice Models CRUD) =====
+interface VoiceModel {
+  id: string;
+  name: string;
+  elevenlabs_voice_id: string;
+  elevenlabs_api_key: string;
+  model: string;
+  image_url: string | null;
+  category: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 const VoiceTab = () => {
   const { toast } = useToast();
+
+  // --- ElevenLabs Config state ---
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [defaultVoiceId, setDefaultVoiceId] = useState("");
   const [defaultModel, setDefaultModel] = useState("eleven_multilingual_v2");
-  const [voices, setVoices] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [configLoading, setConfigLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [fetchingVoices, setFetchingVoices] = useState(false);
-  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
-  const [audioRef] = useState<{ current: HTMLAudioElement | null }>({ current: null });
 
-  const loadSettings = useCallback(async () => {
-    setLoading(true);
+  // --- Voice Models state ---
+  const [models, setModels] = useState<VoiceModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelDialog, setModelDialog] = useState<{ mode: "add" | "edit"; model?: VoiceModel } | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<VoiceModel | null>(null);
+  const [modelSaving, setModelSaving] = useState(false);
+
+  // --- Model form state ---
+  const [formName, setFormName] = useState("");
+  const [formVoiceId, setFormVoiceId] = useState("");
+  const [formApiKey, setFormApiKey] = useState("");
+  const [formShowApiKey, setFormShowApiKey] = useState(false);
+  const [formModel, setFormModel] = useState("eleven_multilingual_v2");
+  const [formCategory, setFormCategory] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formImage, setFormImage] = useState<File | null>(null);
+  const [formImagePreview, setFormImagePreview] = useState<string | null>(null);
+
+  const loadConfig = useCallback(async () => {
+    setConfigLoading(true);
     const result = await api.getVoiceSettings();
     if (result.data) {
       setApiKey(result.data.apiKey || "");
@@ -895,18 +927,23 @@ const VoiceTab = () => {
       setDefaultVoiceId(result.data.defaultVoiceId || "");
       setDefaultModel(result.data.defaultModel || "eleven_multilingual_v2");
     }
-    setLoading(false);
+    setConfigLoading(false);
   }, []);
 
-  useEffect(() => { loadSettings(); }, [loadSettings]);
+  const loadModels = useCallback(async () => {
+    setModelsLoading(true);
+    const result = await api.getVoiceModels();
+    if (result.data) {
+      setModels(result.data);
+    }
+    setModelsLoading(false);
+  }, []);
 
-  const handleSave = async () => {
+  useEffect(() => { loadConfig(); loadModels(); }, [loadConfig, loadModels]);
+
+  const handleSaveConfig = async () => {
     setSaving(true);
-    const result = await api.updateVoiceSettings({
-      apiKey: apiKey,
-      defaultVoiceId,
-      defaultModel,
-    });
+    const result = await api.updateVoiceSettings({ apiKey, defaultVoiceId, defaultModel });
     setSaving(false);
     if (result.error) {
       toast({ title: "Error", description: result.error, variant: "destructive" });
@@ -917,35 +954,91 @@ const VoiceTab = () => {
     }
   };
 
-  const handleFetchVoices = async () => {
-    setFetchingVoices(true);
-    const result = await api.fetchElevenLabsVoices();
-    setFetchingVoices(false);
+  const openAddDialog = () => {
+    setFormName("");
+    setFormVoiceId("");
+    setFormApiKey("");
+    setFormShowApiKey(false);
+    setFormModel("eleven_multilingual_v2");
+    setFormCategory("");
+    setFormDescription("");
+    setFormImage(null);
+    setFormImagePreview(null);
+    setModelDialog({ mode: "add" });
+  };
+
+  const openEditDialog = (model: VoiceModel) => {
+    setFormName(model.name);
+    setFormVoiceId(model.elevenlabs_voice_id);
+    setFormApiKey(model.elevenlabs_api_key);
+    setFormShowApiKey(false);
+    setFormModel(model.model);
+    setFormCategory(model.category || "");
+    setFormDescription(model.description || "");
+    setFormImage(null);
+    setFormImagePreview(model.image_url);
+    setModelDialog({ mode: "edit", model });
+  };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFormImage(file);
+      const reader = new FileReader();
+      reader.onload = () => setFormImagePreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSaveModel = async () => {
+    if (!formName.trim() || !formVoiceId.trim()) {
+      toast({ title: "Missing fields", description: "Name and Voice ID are required.", variant: "destructive" });
+      return;
+    }
+    if (modelDialog?.mode === "add" && !formApiKey.trim()) {
+      toast({ title: "Missing fields", description: "API key is required for new voice models.", variant: "destructive" });
+      return;
+    }
+
+    setModelSaving(true);
+    const formData = new FormData();
+    formData.append("name", formName.trim());
+    formData.append("elevenlabs_voice_id", formVoiceId.trim());
+    if (formApiKey.trim()) formData.append("elevenlabs_api_key", formApiKey.trim());
+    formData.append("model", formModel);
+    if (formCategory.trim()) formData.append("category", formCategory.trim());
+    if (formDescription.trim()) formData.append("description", formDescription.trim());
+    if (formImage) formData.append("image", formImage);
+
+    const result = modelDialog?.mode === "add"
+      ? await api.createVoiceModel(formData)
+      : await api.updateVoiceModel(modelDialog!.model!.id, formData);
+
+    setModelSaving(false);
     if (result.error) {
       toast({ title: "Error", description: result.error, variant: "destructive" });
     } else {
-      setVoices(result.data?.voices || []);
-      toast({ title: `${result.data?.voices?.length || 0} voices loaded` });
+      toast({ title: modelDialog?.mode === "add" ? "Voice model created" : "Voice model updated" });
+      setModelDialog(null);
+      loadModels();
     }
   };
 
-  const handlePlayPreview = (voiceId: string, previewUrl: string) => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+  const handleDeleteModel = async () => {
+    if (!deleteDialog) return;
+    setModelSaving(true);
+    const result = await api.deleteVoiceModel(deleteDialog.id);
+    setModelSaving(false);
+    if (result.error) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+    } else {
+      toast({ title: "Voice model deleted" });
+      setDeleteDialog(null);
+      loadModels();
     }
-    if (playingVoice === voiceId) {
-      setPlayingVoice(null);
-      return;
-    }
-    const audio = new Audio(previewUrl);
-    audio.onended = () => setPlayingVoice(null);
-    audio.play();
-    audioRef.current = audio;
-    setPlayingVoice(voiceId);
   };
 
-  if (loading) {
+  if (configLoading) {
     return (
       <div className="flex items-center justify-center py-10">
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -955,7 +1048,7 @@ const VoiceTab = () => {
 
   return (
     <div className="space-y-6">
-      {/* API Key & Model */}
+      {/* ElevenLabs Configuration */}
       <Card className="bg-card/50 backdrop-blur border-border/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -996,9 +1089,7 @@ const VoiceTab = () => {
             <div className="space-y-2">
               <Label>Default Model</Label>
               <Select value={defaultModel} onValueChange={setDefaultModel}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="eleven_multilingual_v2">Multilingual v2</SelectItem>
                   <SelectItem value="eleven_turbo_v2">Turbo v2</SelectItem>
@@ -1008,11 +1099,10 @@ const VoiceTab = () => {
                 </SelectContent>
               </Select>
             </div>
-
             <div className="space-y-2">
               <Label>Default Voice ID</Label>
               <Input
-                placeholder="Select from voices below or enter ID"
+                placeholder="Enter default voice ID"
                 value={defaultVoiceId}
                 onChange={(e) => setDefaultVoiceId(e.target.value)}
               />
@@ -1020,7 +1110,7 @@ const VoiceTab = () => {
           </div>
 
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving} className="gap-2">
+            <Button onClick={handleSaveConfig} disabled={saving} className="gap-2">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               {saving ? "Saving..." : "Save Settings"}
             </Button>
@@ -1028,99 +1118,238 @@ const VoiceTab = () => {
         </CardContent>
       </Card>
 
-      {/* Available Voices */}
+      {/* Voice Models */}
       <Card className="bg-card/50 backdrop-blur border-border/50">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Volume2 className="w-5 h-5 text-primary" />
-                Available Voices
+                Voice Models
               </CardTitle>
               <CardDescription>
-                Fetch and browse voices from your ElevenLabs account
+                Manage voice models available to agents on the platform
               </CardDescription>
             </div>
-            <Button onClick={handleFetchVoices} disabled={fetchingVoices || !hasApiKey} className="gap-2">
-              {fetchingVoices ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              {fetchingVoices ? "Loading..." : "Fetch Voices"}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={loadModels}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh
+              </Button>
+              <Button size="sm" onClick={openAddDialog}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Voice Model
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          {!hasApiKey ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Save your ElevenLabs API key first to fetch available voices.
+          {modelsLoading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
             </div>
-          ) : voices.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Click "Fetch Voices" to load voices from your ElevenLabs account.
+          ) : models.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">
+              <Volume2 className="w-10 h-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm">No voice models yet. Click "Add Voice Model" to create one.</p>
             </div>
           ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Voice ID</TableHead>
-                    <TableHead>Labels</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {voices.map((v: any) => (
-                    <TableRow key={v.voiceId} className={defaultVoiceId === v.voiceId ? "bg-primary/5" : ""}>
-                      <TableCell className="font-medium">
-                        {v.name}
-                        {defaultVoiceId === v.voiceId && (
-                          <Badge variant="default" className="ml-2 text-xs bg-primary">Default</Badge>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {models.map((m) => (
+                <div
+                  key={m.id}
+                  className="rounded-lg border border-border bg-background/50 overflow-hidden hover:border-primary/30 transition-colors"
+                >
+                  {/* Image */}
+                  <div className="h-36 bg-muted/30 flex items-center justify-center overflow-hidden">
+                    {m.image_url ? (
+                      <img
+                        src={m.image_url}
+                        alt={m.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Volume2 className="w-10 h-10 text-muted-foreground/30" />
+                    )}
+                  </div>
+                  {/* Info */}
+                  <div className="p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="font-medium text-sm text-foreground">{m.name}</h4>
+                        {m.category && (
+                          <Badge variant="outline" className="text-[10px] mt-1 capitalize">{m.category}</Badge>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs capitalize">{v.category || "-"}</Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{v.voiceId}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {Object.entries(v.labels || {}).map(([k, val]) => (
-                            <Badge key={k} variant="secondary" className="text-xs">
-                              {String(val)}
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {v.previewUrl && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handlePlayPreview(v.voiceId, v.previewUrl)}
-                              title="Preview voice"
-                            >
-                              <Play className={`w-4 h-4 ${playingVoice === v.voiceId ? "text-primary" : ""}`} />
-                            </Button>
-                          )}
-                          <Button
-                            variant={defaultVoiceId === v.voiceId ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setDefaultVoiceId(v.voiceId)}
-                            title="Set as default"
-                            className="text-xs"
-                          >
-                            {defaultVoiceId === v.voiceId ? "Selected" : "Use"}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDialog(m)}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteDialog(m)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    {m.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{m.description}</p>
+                    )}
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground/60">Voice ID:</span>
+                        <span className="font-mono truncate">{m.elevenlabs_voice_id}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground/60">API Key:</span>
+                        <span className="font-mono">{m.elevenlabs_api_key}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-muted-foreground/60">Model:</span>
+                        <span>{m.model}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Add/Edit Dialog */}
+      <Dialog open={!!modelDialog} onOpenChange={(open) => !open && setModelDialog(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{modelDialog?.mode === "add" ? "Add Voice Model" : "Edit Voice Model"}</DialogTitle>
+            <DialogDescription>
+              {modelDialog?.mode === "add"
+                ? "Create a new voice model with ElevenLabs credentials"
+                : "Update voice model settings"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Image upload */}
+            <div className="space-y-2">
+              <Label>Model Image</Label>
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 rounded-lg border border-dashed border-border bg-muted/30 flex items-center justify-center overflow-hidden shrink-0">
+                  {formImagePreview ? (
+                    <img src={formImagePreview} alt="Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <ImagePlus className="w-6 h-6 text-muted-foreground/40" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={handleImageSelect}
+                    className="text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">JPEG, PNG, WebP, or GIF. Max 5MB.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Name *</Label>
+              <Input
+                placeholder="e.g. Rachel - Professional"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+              />
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>ElevenLabs Voice ID *</Label>
+                <Input
+                  placeholder="Voice ID from ElevenLabs"
+                  value={formVoiceId}
+                  onChange={(e) => setFormVoiceId(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Model</Label>
+                <Select value={formModel} onValueChange={setFormModel}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="eleven_multilingual_v2">Multilingual v2</SelectItem>
+                    <SelectItem value="eleven_turbo_v2">Turbo v2</SelectItem>
+                    <SelectItem value="eleven_turbo_v2_5">Turbo v2.5</SelectItem>
+                    <SelectItem value="eleven_monolingual_v1">Monolingual v1</SelectItem>
+                    <SelectItem value="eleven_flash_v2_5">Flash v2.5</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>ElevenLabs API Key *</Label>
+              <div className="relative">
+                <Input
+                  type={formShowApiKey ? "text" : "password"}
+                  placeholder={modelDialog?.mode === "edit" ? "Leave blank to keep current key" : "Enter API key"}
+                  value={formApiKey}
+                  onChange={(e) => setFormApiKey(e.target.value)}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setFormShowApiKey(!formShowApiKey)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {formShowApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Input
+                placeholder="e.g. Professional, Casual, Character"
+                value={formCategory}
+                onChange={(e) => setFormCategory(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                placeholder="Brief description of this voice model..."
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setModelDialog(null)}>Cancel</Button>
+            <Button onClick={handleSaveModel} disabled={modelSaving} className="gap-2">
+              {modelSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {modelSaving ? "Saving..." : modelDialog?.mode === "add" ? "Create" : "Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteDialog} onOpenChange={(open) => !open && setDeleteDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Voice Model</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{deleteDialog?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteModel} disabled={modelSaving} className="gap-2">
+              {modelSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {modelSaving ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
