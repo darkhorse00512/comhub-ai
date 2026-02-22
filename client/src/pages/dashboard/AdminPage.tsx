@@ -1184,14 +1184,14 @@ const VoiceTab = () => {
               <p className="text-sm">No voice models yet. Click "Add Voice Model" to create one.</p>
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {models.map((m) => (
                 <div
                   key={m.id}
                   className="rounded-lg border border-border bg-background/50 overflow-hidden hover:border-primary/30 transition-colors"
                 >
                   {/* Image */}
-                  <div className="h-36 bg-muted/30 flex items-center justify-center overflow-hidden">
+                  <div className="aspect-square bg-muted/30 flex items-center justify-center overflow-hidden">
                     {m.image_url ? (
                       <img
                         src={m.image_url}
