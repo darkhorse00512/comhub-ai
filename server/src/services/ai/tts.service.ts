@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import axios from 'axios';
 import config from '../../config';
 import logger from '../../utils/logger';
 import fs from 'fs';
@@ -7,6 +8,12 @@ import { Readable } from 'stream';
 import storageService from '../storage.service';
 
 export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+
+export interface ElevenLabsTTSOptions {
+  apiKey: string;
+  voiceId: string;
+  model?: string;
+}
 
 class TTSService {
   private openai: OpenAI;
@@ -112,6 +119,50 @@ class TTSService {
     } catch (error) {
       logger.error('Failed to create text to speech file:', error);
       throw new Error(`TTS file creation failed: ${error}`);
+    }
+  }
+
+  async elevenlabsTextToSpeech(
+    text: string,
+    options: ElevenLabsTTSOptions
+  ): Promise<Buffer> {
+    try {
+      logger.info('Converting text to speech via ElevenLabs', {
+        textLength: text.length,
+        voiceId: options.voiceId,
+        model: options.model || 'eleven_multilingual_v2',
+      });
+
+      const response = await axios.post(
+        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}`,
+        {
+          text,
+          model_id: options.model || 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        },
+        {
+          headers: {
+            'xi-api-key': options.apiKey,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg',
+          },
+          responseType: 'arraybuffer',
+        }
+      );
+
+      const buffer = Buffer.from(response.data);
+
+      logger.info('ElevenLabs TTS completed successfully', {
+        bufferSize: buffer.length,
+      });
+
+      return buffer;
+    } catch (error) {
+      logger.error('Failed to convert text to speech via ElevenLabs:', error);
+      throw new Error(`ElevenLabs TTS conversion failed: ${error}`);
     }
   }
 

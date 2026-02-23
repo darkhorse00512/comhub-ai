@@ -24,6 +24,9 @@ router.use(authMiddleware);
 // Get all agents for the authenticated user
 router.get('/', agentsController.getAgents);
 
+// Get active voice models for voice library (must be before /:id)
+router.get('/voice-models', agentsController.getPublicVoiceModels);
+
 // Get a single agent
 router.get('/:id', agentsController.getAgent);
 

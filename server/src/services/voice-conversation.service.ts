@@ -14,6 +14,14 @@ import axios from 'axios';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
+interface VoiceSettings {
+  ttsProvider: 'openai' | 'elevenlabs' | 'comhubai';
+  openaiVoice?: string;
+  elevenlabsApiKey?: string;
+  elevenlabsVoiceId?: string;
+  elevenlabsModel?: string;
+}
+
 interface ActiveConversation {
   callSid: string;
   callSessionId: string;
@@ -25,6 +33,7 @@ interface ActiveConversation {
   startedAt: Date;
   workflowEngine?: WorkflowEngine;
   agentId?: string;
+  voiceSettings?: VoiceSettings;
 }
 
 class VoiceConversationService {
@@ -41,6 +50,7 @@ class VoiceConversationService {
   private async loadAgentWorkflow(agentId: string, direction: 'inbound' | 'outbound'): Promise<{
     engine: WorkflowEngine;
     initialResult: import('./workflow-engine.service').WorkflowStepResult;
+    voiceSettings?: VoiceSettings;
   } | null> {
     try {
       const { data: agent, error } = await this.supabase
@@ -59,7 +69,44 @@ class VoiceConversationService {
       const engine = new WorkflowEngine(nodes, edges);
       const initialResult = await engine.start(direction);
 
-      return { engine, initialResult };
+      // Load voice settings from agent config
+      let voiceSettings: VoiceSettings | undefined;
+      const agentSettings = agent.config?.settings;
+      if (agentSettings?.ttsProvider) {
+        voiceSettings = {
+          ttsProvider: agentSettings.ttsProvider,
+          openaiVoice: agentSettings.openaiVoice,
+          elevenlabsApiKey: agentSettings.elevenlabsApiKey,
+          elevenlabsVoiceId: agentSettings.elevenlabsVoiceId,
+        };
+
+        // If ComhubAI voice, look up the voice model to get the actual ElevenLabs credentials
+        if (agentSettings.ttsProvider === 'comhubai' && agentSettings.comhubaiVoiceModelId) {
+          const { data: voiceModel } = await this.supabase
+            .from('voice_models')
+            .select('elevenlabs_api_key, elevenlabs_voice_id, model')
+            .eq('id', agentSettings.comhubaiVoiceModelId)
+            .eq('is_active', true)
+            .single();
+
+          if (voiceModel) {
+            voiceSettings.elevenlabsApiKey = voiceModel.elevenlabs_api_key;
+            voiceSettings.elevenlabsVoiceId = voiceModel.elevenlabs_voice_id;
+            voiceSettings.elevenlabsModel = voiceModel.model;
+            logger.info('Loaded ComhubAI voice model for call', {
+              agentId,
+              voiceModelId: agentSettings.comhubaiVoiceModelId,
+            });
+          } else {
+            logger.warn('ComhubAI voice model not found or inactive, falling back to default', {
+              voiceModelId: agentSettings.comhubaiVoiceModelId,
+            });
+            voiceSettings = undefined;
+          }
+        }
+      }
+
+      return { engine, initialResult, voiceSettings };
     } catch (err) {
       logger.error('Failed to load agent workflow', { agentId, error: err });
       return null;
@@ -139,6 +186,7 @@ class VoiceConversationService {
         const workflow = await this.loadAgentWorkflow(agentId, 'inbound');
         if (workflow) {
           conversation.workflowEngine = workflow.engine;
+          conversation.voiceSettings = workflow.voiceSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) {
             greetingText = spokenText;
@@ -148,6 +196,7 @@ class VoiceConversationService {
             agentId,
             waitingForInput: workflow.initialResult.waitingForInput,
             isComplete: workflow.initialResult.isComplete,
+            ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
           });
         }
       }
@@ -159,7 +208,8 @@ class VoiceConversationService {
         greetingAudioUrl = await this.generateAndSaveAudio(
           greetingText,
           callSession.id,
-          'greeting'
+          'greeting',
+          conversation.voiceSettings
         );
         logger.info('Greeting audio generated', { url: greetingAudioUrl });
       } catch (audioError) {
@@ -285,6 +335,7 @@ class VoiceConversationService {
         const workflow = await this.loadAgentWorkflow(agentId, 'outbound');
         if (workflow) {
           conversation.workflowEngine = workflow.engine;
+          conversation.voiceSettings = workflow.voiceSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) {
             greetingText = spokenText;
@@ -294,6 +345,7 @@ class VoiceConversationService {
             agentId,
             waitingForInput: workflow.initialResult.waitingForInput,
             isComplete: workflow.initialResult.isComplete,
+            ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
           });
         }
       }
@@ -303,7 +355,8 @@ class VoiceConversationService {
       const greetingAudioUrl = await this.generateAndSaveAudio(
         greetingText,
         callSession.id,
-        'greeting'
+        'greeting',
+        conversation.voiceSettings
       );
       logger.info('Greeting audio generated', { url: greetingAudioUrl });
 
@@ -351,7 +404,8 @@ class VoiceConversationService {
         const retryAudioPath = await this.generateAndSaveAudio(
           retryMessage,
           conversation.callSessionId,
-          'retry'
+          'retry',
+          conversation.voiceSettings
         );
 
         await this.saveMessage(conversation.callSessionId, 'ai', retryMessage, retryAudioPath);
@@ -388,7 +442,8 @@ class VoiceConversationService {
           const aiAudioPath = await this.generateAndSaveAudio(
             responseText,
             conversation.callSessionId,
-            'response'
+            'response',
+            conversation.voiceSettings
           );
           await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioPath);
           conversation.history.push({ role: 'assistant', content: responseText });
@@ -416,7 +471,8 @@ class VoiceConversationService {
       const aiAudioPath = await this.generateAndSaveAudio(
         responseText,
         conversation.callSessionId,
-        'response'
+        'response',
+        conversation.voiceSettings
       );
 
       // Save AI response
@@ -437,7 +493,8 @@ class VoiceConversationService {
         const errorAudioPath = await this.generateAndSaveAudio(
           errorMessage,
           conversation.callSessionId,
-          'error'
+          'error',
+          conversation.voiceSettings
         );
         return this.generatePlayAndRecordTwiML(errorAudioPath);
       }
@@ -532,11 +589,24 @@ class VoiceConversationService {
   private async generateAndSaveAudio(
     text: string,
     callSessionId: string,
-    type: string
+    type: string,
+    voiceSettings?: VoiceSettings
   ): Promise<string> {
     try {
-      // Generate audio using TTS
-      const audioBuffer = await ttsService.textToSpeech(text);
+      let audioBuffer: Buffer;
+
+      // Use the appropriate TTS provider based on agent settings
+      if (voiceSettings && (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs')
+          && voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
+        audioBuffer = await ttsService.elevenlabsTextToSpeech(text, {
+          apiKey: voiceSettings.elevenlabsApiKey,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+          model: voiceSettings.elevenlabsModel,
+        });
+      } else {
+        const voice = voiceSettings?.openaiVoice as any;
+        audioBuffer = await ttsService.textToSpeech(text, voice || undefined);
+      }
 
       // Upload to Supabase Storage and get public URL
       const publicUrl = await storageService.uploadAudio(audioBuffer, callSessionId, type);
@@ -544,6 +614,7 @@ class VoiceConversationService {
       logger.info('Audio generated and uploaded', {
         callSessionId,
         type,
+        provider: voiceSettings?.ttsProvider || 'openai',
         url: publicUrl,
       });
 

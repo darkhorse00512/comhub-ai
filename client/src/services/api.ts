@@ -823,6 +823,27 @@ export const api = {
     }
   },
 
+  async getPublicVoiceModels(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/voice-models`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch voice models");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching voice models:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   async getAgent(id: string): Promise<ApiResponse<any>> {
     try {
       const headers = await getAuthHeaders();

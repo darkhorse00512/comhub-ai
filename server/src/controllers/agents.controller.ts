@@ -1294,6 +1294,30 @@ export const uploadAudio = async (req: AuthRequest, res: Response): Promise<void
   }
 };
 
+/**
+ * Get active voice models for the voice library (public, no API keys exposed)
+ */
+export const getPublicVoiceModels = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { data, error } = await supabase
+      .from('voice_models')
+      .select('id, name, image_url, preview_audio_url, description, model')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (error) {
+      logger.error('Failed to fetch public voice models:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch voice models' });
+      return;
+    }
+
+    res.status(200).json({ success: true, data: data || [] });
+  } catch (error) {
+    logger.error('Failed to get public voice models:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch voice models' });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -1309,4 +1333,5 @@ export default {
   sendWorkflowMessage,
   endWorkflowCall,
   uploadAudio,
+  getPublicVoiceModels,
 };

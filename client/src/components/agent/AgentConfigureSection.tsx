@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Globe,
   Volume2,
   Save,
@@ -45,6 +51,11 @@ import {
   VolumeX,
   Info,
   Voicemail,
+  Music,
+  Play,
+  Pause,
+  Check,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
@@ -106,9 +117,74 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     // Interruption
     interruptionSensitivity: existingSettings.interruptionSensitivity || "low",
     interruptionWordCountThreshold: existingSettings.interruptionWordCountThreshold?.toString() || "3",
+    // ComhubAI Voice
+    comhubaiVoiceModelId: existingSettings.comhubaiVoiceModelId || "",
   });
 
   const [showApiKey, setShowApiKey] = useState(false);
+
+  // ComhubAI Voice Library
+  const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
+  const [voiceModels, setVoiceModels] = useState<any[]>([]);
+  const [voiceModelsLoading, setVoiceModelsLoading] = useState(false);
+  const [selectedVoiceModel, setSelectedVoiceModel] = useState<any>(null);
+  const [playingModelId, setPlayingModelId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Load selected voice model info on mount if comhubai is selected
+  useEffect(() => {
+    if (settings.ttsProvider === "comhubai" && existingSettings.comhubaiVoiceModelId && !selectedVoiceModel) {
+      (async () => {
+        const result = await api.getPublicVoiceModels();
+        if (result.data) {
+          const model = result.data.find((m: any) => m.id === existingSettings.comhubaiVoiceModelId);
+          if (model) setSelectedVoiceModel(model);
+        }
+      })();
+    }
+  }, []);
+
+  const openVoiceLibrary = async () => {
+    setVoiceLibraryOpen(true);
+    setVoiceModelsLoading(true);
+    const result = await api.getPublicVoiceModels();
+    if (result.data) {
+      setVoiceModels(result.data);
+    }
+    setVoiceModelsLoading(false);
+  };
+
+  const selectVoiceModel = (model: any) => {
+    setSelectedVoiceModel(model);
+    setSettings({ ...settings, comhubaiVoiceModelId: model.id });
+    setVoiceLibraryOpen(false);
+    stopAudio();
+  };
+
+  const handlePlayPreview = (model: any) => {
+    if (!model.preview_audio_url) return;
+
+    if (playingModelId === model.id) {
+      stopAudio();
+      return;
+    }
+
+    stopAudio();
+    const audio = new Audio(model.preview_audio_url);
+    audio.onended = () => setPlayingModelId(null);
+    audio.play();
+    audioRef.current = audio;
+    setPlayingModelId(model.id);
+  };
+
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setPlayingModelId(null);
+  };
 
   const handleSave = async () => {
     if (!agentName.trim()) {
@@ -496,7 +572,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
           {/* ===== VOICE & AUDIO TAB ===== */}
           <TabsContent value="voice" className="mt-6 space-y-6">
-            <div className="max-w-2xl space-y-6">
+            <div>
               {/* Language */}
               <Card className="bg-card/50 backdrop-blur border-border/50">
                 <CardHeader>
@@ -558,17 +634,73 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                     <Label>TTS Provider</Label>
                     <Select
                       value={settings.ttsProvider}
-                      onValueChange={(value) => setSettings({ ...settings, ttsProvider: value })}
+                      onValueChange={(value) => {
+                        setSettings({ ...settings, ttsProvider: value });
+                        if (value !== "comhubai") {
+                          setSelectedVoiceModel(null);
+                        }
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="comhubai">ComhubAI Voices</SelectItem>
                         <SelectItem value="openai">OpenAI</SelectItem>
                         <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {settings.ttsProvider === "comhubai" && (
+                    <div className="space-y-4">
+                      {selectedVoiceModel && (
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                          {selectedVoiceModel.image_url ? (
+                            <img
+                              src={selectedVoiceModel.image_url}
+                              alt={selectedVoiceModel.name}
+                              className="w-12 h-12 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                              <Music className="w-5 h-5 text-primary" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Check className="w-4 h-4 text-green-500" />
+                              <span className="font-medium text-sm">{selectedVoiceModel.name}</span>
+                            </div>
+                            {selectedVoiceModel.description && (
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                {selectedVoiceModel.description}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => {
+                              setSelectedVoiceModel(null);
+                              setSettings({ ...settings, comhubaiVoiceModelId: "" });
+                            }}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      )}
+                      <Button
+                        variant="outline"
+                        className="w-full gap-2"
+                        onClick={openVoiceLibrary}
+                      >
+                        <Music className="w-4 h-4" />
+                        {selectedVoiceModel ? "Change Voice" : "ComhubAI Voice Library"}
+                      </Button>
+                    </div>
+                  )}
 
                   {settings.ttsProvider === "openai" && (
                     <div className="space-y-2">
@@ -681,6 +813,98 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
           </TabsContent>
         </Tabs>
       </motion.div>
+
+      {/* ComhubAI Voice Library Modal */}
+      <Dialog open={voiceLibraryOpen} onOpenChange={(open) => {
+        if (!open) stopAudio();
+        setVoiceLibraryOpen(open);
+      }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Music className="w-5 h-5 text-primary" />
+              ComhubAI Voice Library
+            </DialogTitle>
+          </DialogHeader>
+
+          {voiceModelsLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : voiceModels.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Music className="w-10 h-10 mx-auto mb-3 opacity-50" />
+              <p>No voice models available yet.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-2">
+              {voiceModels.map((model: any) => {
+                const isSelected = selectedVoiceModel?.id === model.id;
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => selectVoiceModel(model)}
+                    className={`relative group text-left rounded-xl border-2 p-3 transition-all hover:shadow-md ${
+                      isSelected
+                        ? "border-primary bg-primary/5 shadow-md"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    {isSelected && (
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
+                        <Check className="w-3 h-3 text-primary-foreground" />
+                      </div>
+                    )}
+                    <div className="flex flex-col items-center text-center gap-2">
+                      {model.image_url ? (
+                        <img
+                          src={model.image_url}
+                          alt={model.name}
+                          className="w-16 h-16 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center">
+                          <Music className="w-6 h-6 text-muted-foreground" />
+                        </div>
+                      )}
+                      <span className="font-medium text-sm">{model.name}</span>
+                      {model.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {model.description}
+                        </p>
+                      )}
+                      {model.preview_audio_url && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 h-7 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlayPreview(model);
+                          }}
+                        >
+                          {playingModelId === model.id ? (
+                            <>
+                              <Pause className="w-3 h-3" />
+                              Pause
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3" />
+                              Preview
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
