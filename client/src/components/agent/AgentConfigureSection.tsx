@@ -775,7 +775,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
           {/* ===== CALL SETTINGS TAB ===== */}
           <TabsContent value="call" className="mt-6 space-y-6">
-            <div className="max-w-2xl">
+            <div>
               <Card className="bg-card/50 backdrop-blur border-border/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-lg">
