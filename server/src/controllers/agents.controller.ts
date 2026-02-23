@@ -7,6 +7,7 @@ import logger from '../utils/logger';
 import { gptService, ChatMessage } from '../services/ai/gpt.service';
 import { WorkflowEngine, WorkflowEngineState } from '../services/workflow-engine.service';
 import storageService from '../services/storage.service';
+import agentVoiceService from '../services/agent-voice.service';
 
 const supabase = getSupabaseClient();
 
@@ -1318,6 +1319,57 @@ export const getPublicVoiceModels = async (req: AuthRequest, res: Response): Pro
   }
 };
 
+/**
+ * Generate TTS audio for text using the agent's configured voice settings.
+ * Returns audio as binary (audio/mpeg) for direct playback.
+ */
+export const generateTTS = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { text } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      res.status(400).json({ success: false, error: 'Text is required' });
+      return;
+    }
+
+    // Verify the agent belongs to the user
+    const { data: agent, error: fetchError } = await supabase
+      .from('agents')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !agent) {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
+    // Resolve voice settings and generate audio
+    const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
+    const audioBuffer = await agentVoiceService.generateTTS(text, voiceSettings);
+
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audioBuffer.length.toString(),
+    });
+    res.send(audioBuffer);
+  } catch (error) {
+    logger.error('Failed to generate TTS:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'TTS generation failed',
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -1334,4 +1386,5 @@ export default {
   endWorkflowCall,
   uploadAudio,
   getPublicVoiceModels,
+  generateTTS,
 };

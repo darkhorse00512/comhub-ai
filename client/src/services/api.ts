@@ -844,6 +844,26 @@ export const api = {
     }
   },
 
+  async generateAgentTTS(agentId: string, text: string): Promise<ArrayBuffer | null> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/${agentId}/generate-tts`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        throw new Error("TTS generation failed");
+      }
+
+      return await response.arrayBuffer();
+    } catch (error) {
+      console.error("Error generating TTS:", error);
+      return null;
+    }
+  },
+
   async getAgent(id: string): Promise<ApiResponse<any>> {
     try {
       const headers = await getAuthHeaders();

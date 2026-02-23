@@ -653,6 +653,10 @@ const AgentStudioPage = () => {
         nodes={nodes}
         edges={edges}
         initialMode={testMode}
+        voiceConfig={{
+          ttsProvider: agent.config?.settings?.ttsProvider,
+          language: agent.config?.settings?.language,
+        }}
       />
 
       <AIWorkflowGenerator

@@ -841,64 +841,74 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               {voiceModels.map((model: any) => {
                 const isSelected = selectedVoiceModel?.id === model.id;
                 return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => selectVoiceModel(model)}
-                    className={`relative group text-left rounded-xl border-2 p-3 transition-all hover:shadow-md ${
-                      isSelected
-                        ? "border-primary bg-primary/5 shadow-md"
-                        : "border-border hover:border-primary/50"
-                    }`}
-                  >
-                    {isSelected && (
-                      <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
-                        <Check className="w-3 h-3 text-primary-foreground" />
-                      </div>
-                    )}
-                    <div className="flex flex-col items-center text-center gap-2">
-                      {model.image_url ? (
-                        <img
-                          src={model.image_url}
-                          alt={model.name}
-                          className="w-16 h-16 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center">
-                          <Music className="w-6 h-6 text-muted-foreground" />
-                        </div>
-                      )}
-                      <span className="font-medium text-sm">{model.name}</span>
-                      {model.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {model.description}
-                        </p>
-                      )}
-                      {model.preview_audio_url && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="gap-1.5 h-7 text-xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePlayPreview(model);
-                          }}
+                  <TooltipProvider key={model.id}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => selectVoiceModel(model)}
+                          className={`relative group text-left rounded-xl border-2 p-3 transition-all hover:shadow-md ${
+                            isSelected
+                              ? "border-primary bg-primary/5 shadow-md"
+                              : "border-border hover:border-primary/50"
+                          }`}
                         >
-                          {playingModelId === model.id ? (
-                            <>
-                              <Pause className="w-3 h-3" />
-                              Pause
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3 h-3" />
-                              Preview
-                            </>
+                          {isSelected && (
+                            <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
+                              <Check className="w-3 h-3 text-primary-foreground" />
+                            </div>
                           )}
-                        </Button>
+                          <div className="flex flex-col items-center text-center gap-2">
+                            {model.image_url ? (
+                              <img
+                                src={model.image_url}
+                                alt={model.name}
+                                className="w-16 h-16 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center">
+                                <Music className="w-6 h-6 text-muted-foreground" />
+                              </div>
+                            )}
+                            <span className="font-medium text-sm">{model.name}</span>
+                            {model.description && (
+                              <p className="text-xs text-muted-foreground line-clamp-2">
+                                {model.description}
+                              </p>
+                            )}
+                            {model.preview_audio_url && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1.5 h-7 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePlayPreview(model);
+                                }}
+                              >
+                                {playingModelId === model.id ? (
+                                  <>
+                                    <Pause className="w-3 h-3" />
+                                    Pause
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-3 h-3" />
+                                    Preview
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </button>
+                      </TooltipTrigger>
+                      {model.description && (
+                        <TooltipContent side="bottom" className="max-w-[250px]">
+                          <p className="text-xs">{model.description}</p>
+                        </TooltipContent>
                       )}
-                    </div>
-                  </button>
+                    </Tooltip>
+                  </TooltipProvider>
                 );
               })}
             </div>

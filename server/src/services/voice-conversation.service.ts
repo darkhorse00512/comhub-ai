@@ -1,26 +1,17 @@
 import twilio from 'twilio';
 import config from '../config';
 import logger from '../utils/logger';
-import ttsService from './ai/tts.service';
 import sttService from './ai/stt.service';
 import gptService, { ChatMessage } from './ai/gpt.service';
 import getSupabaseClient from '../config/supabase';
-import storageService from './storage.service';
 import { WorkflowEngine, WorkflowStepResult, WorkflowMessage } from './workflow-engine.service';
+import agentVoiceService, { ResolvedVoiceSettings } from './agent-voice.service';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
-
-interface VoiceSettings {
-  ttsProvider: 'openai' | 'elevenlabs' | 'comhubai';
-  openaiVoice?: string;
-  elevenlabsApiKey?: string;
-  elevenlabsVoiceId?: string;
-  elevenlabsModel?: string;
-}
 
 interface ActiveConversation {
   callSid: string;
@@ -33,7 +24,7 @@ interface ActiveConversation {
   startedAt: Date;
   workflowEngine?: WorkflowEngine;
   agentId?: string;
-  voiceSettings?: VoiceSettings;
+  voiceSettings?: ResolvedVoiceSettings;
 }
 
 class VoiceConversationService {
@@ -50,7 +41,7 @@ class VoiceConversationService {
   private async loadAgentWorkflow(agentId: string, direction: 'inbound' | 'outbound'): Promise<{
     engine: WorkflowEngine;
     initialResult: import('./workflow-engine.service').WorkflowStepResult;
-    voiceSettings?: VoiceSettings;
+    voiceSettings?: ResolvedVoiceSettings;
   } | null> {
     try {
       const { data: agent, error } = await this.supabase
@@ -69,42 +60,8 @@ class VoiceConversationService {
       const engine = new WorkflowEngine(nodes, edges);
       const initialResult = await engine.start(direction);
 
-      // Load voice settings from agent config
-      let voiceSettings: VoiceSettings | undefined;
-      const agentSettings = agent.config?.settings;
-      if (agentSettings?.ttsProvider) {
-        voiceSettings = {
-          ttsProvider: agentSettings.ttsProvider,
-          openaiVoice: agentSettings.openaiVoice,
-          elevenlabsApiKey: agentSettings.elevenlabsApiKey,
-          elevenlabsVoiceId: agentSettings.elevenlabsVoiceId,
-        };
-
-        // If ComhubAI voice, look up the voice model to get the actual ElevenLabs credentials
-        if (agentSettings.ttsProvider === 'comhubai' && agentSettings.comhubaiVoiceModelId) {
-          const { data: voiceModel } = await this.supabase
-            .from('voice_models')
-            .select('elevenlabs_api_key, elevenlabs_voice_id, model')
-            .eq('id', agentSettings.comhubaiVoiceModelId)
-            .eq('is_active', true)
-            .single();
-
-          if (voiceModel) {
-            voiceSettings.elevenlabsApiKey = voiceModel.elevenlabs_api_key;
-            voiceSettings.elevenlabsVoiceId = voiceModel.elevenlabs_voice_id;
-            voiceSettings.elevenlabsModel = voiceModel.model;
-            logger.info('Loaded ComhubAI voice model for call', {
-              agentId,
-              voiceModelId: agentSettings.comhubaiVoiceModelId,
-            });
-          } else {
-            logger.warn('ComhubAI voice model not found or inactive, falling back to default', {
-              voiceModelId: agentSettings.comhubaiVoiceModelId,
-            });
-            voiceSettings = undefined;
-          }
-        }
-      }
+      // Use shared service to resolve voice settings (including ComhubAI voice model lookup)
+      const voiceSettings = await agentVoiceService.resolveVoiceSettings(agentId) || undefined;
 
       return { engine, initialResult, voiceSettings };
     } catch (err) {
@@ -590,26 +547,12 @@ class VoiceConversationService {
     text: string,
     callSessionId: string,
     type: string,
-    voiceSettings?: VoiceSettings
+    voiceSettings?: ResolvedVoiceSettings
   ): Promise<string> {
     try {
-      let audioBuffer: Buffer;
-
-      // Use the appropriate TTS provider based on agent settings
-      if (voiceSettings && (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs')
-          && voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
-        audioBuffer = await ttsService.elevenlabsTextToSpeech(text, {
-          apiKey: voiceSettings.elevenlabsApiKey,
-          voiceId: voiceSettings.elevenlabsVoiceId,
-          model: voiceSettings.elevenlabsModel,
-        });
-      } else {
-        const voice = voiceSettings?.openaiVoice as any;
-        audioBuffer = await ttsService.textToSpeech(text, voice || undefined);
-      }
-
-      // Upload to Supabase Storage and get public URL
-      const publicUrl = await storageService.uploadAudio(audioBuffer, callSessionId, type);
+      const publicUrl = await agentVoiceService.generateAndUploadTTS(
+        text, callSessionId, type, voiceSettings || null
+      );
 
       logger.info('Audio generated and uploaded', {
         callSessionId,

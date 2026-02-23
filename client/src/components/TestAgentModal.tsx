@@ -79,6 +79,11 @@ interface WorkflowCallResult {
   collectedFields?: Record<string, any>;
 }
 
+interface AgentVoiceConfig {
+  ttsProvider?: string;
+  language?: string;
+}
+
 interface TestAgentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -87,6 +92,7 @@ interface TestAgentModalProps {
   nodes: Node[];
   edges: Edge[];
   initialMode?: CallMode;
+  voiceConfig?: AgentVoiceConfig;
 }
 
 type CallMode = "text" | "audio";
@@ -99,6 +105,7 @@ const TestAgentModal = ({
   nodes,
   edges,
   initialMode,
+  voiceConfig,
 }: TestAgentModalProps) => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"inbound" | "outbound">("inbound");
@@ -238,43 +245,75 @@ const TestAgentModal = ({
   );
 
   // --- Speech ---
-  const speakText = useCallback(async (text: string): Promise<void> => {
+  const serverAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Use browser TTS as fallback only
+  const speakWithBrowser = useCallback((text: string): Promise<void> => {
     return new Promise((resolve) => {
       try {
         if (!("speechSynthesis" in window)) {
           resolve();
           return;
         }
-
-        setIsSpeaking(true);
-        isSpeakingRef.current = true;
         window.speechSynthesis.cancel();
-
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.volume = 1;
-
-        utterance.onend = () => {
-          setIsSpeaking(false);
-          isSpeakingRef.current = false;
-          resolve();
-        };
-
-        utterance.onerror = () => {
-          setIsSpeaking(false);
-          isSpeakingRef.current = false;
-          resolve();
-        };
-
+        if (voiceConfig?.language) {
+          utterance.lang = voiceConfig.language;
+        }
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
         window.speechSynthesis.speak(utterance);
       } catch {
-        setIsSpeaking(false);
-        isSpeakingRef.current = false;
         resolve();
       }
     });
-  }, []);
+  }, [voiceConfig?.language]);
+
+  const speakText = useCallback(async (text: string): Promise<void> => {
+    setIsSpeaking(true);
+    isSpeakingRef.current = true;
+
+    try {
+      // Use server-side TTS for configured voices (ComhubAI, ElevenLabs, OpenAI)
+      const provider = voiceConfig?.ttsProvider;
+      if (provider && provider !== "browser") {
+        const audioBuffer = await api.generateAgentTTS(agentId, text);
+        if (audioBuffer) {
+          await new Promise<void>((resolve) => {
+            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            serverAudioRef.current = audio;
+            audio.onended = () => {
+              URL.revokeObjectURL(url);
+              serverAudioRef.current = null;
+              resolve();
+            };
+            audio.onerror = () => {
+              URL.revokeObjectURL(url);
+              serverAudioRef.current = null;
+              resolve();
+            };
+            audio.play().catch(() => resolve());
+          });
+          setIsSpeaking(false);
+          isSpeakingRef.current = false;
+          return;
+        }
+      }
+
+      // Fallback: browser TTS
+      await speakWithBrowser(text);
+    } catch {
+      // Silent fallback
+    }
+
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+  }, [voiceConfig?.ttsProvider, agentId, speakWithBrowser]);
 
   // Output a message and optionally speak it (audio mode)
   const outputAndSpeak = useCallback(
@@ -308,7 +347,7 @@ const TestAgentModal = ({
 
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = "en-US";
+        recognition.lang = voiceConfig?.language || "en-US";
 
         let finalTranscript = "";
         let interimTranscript = "";
@@ -756,6 +795,12 @@ const TestAgentModal = ({
     }
 
     window.speechSynthesis?.cancel();
+
+    // Stop server-generated audio if playing
+    if (serverAudioRef.current) {
+      serverAudioRef.current.pause();
+      serverAudioRef.current = null;
+    }
 
     if (callSessionId) {
       try {

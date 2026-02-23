@@ -57,6 +57,9 @@ router.get('/:id/versions', agentsController.getAgentVersions);
 // Restore agent to a specific version
 router.post('/:id/versions/:versionId/restore', agentsController.restoreAgentVersion);
 
+// Generate TTS audio using agent's configured voice
+router.post('/:id/generate-tts', agentsController.generateTTS);
+
 // Workflow-based test calls
 router.post('/:id/workflow-call/start', agentsController.startWorkflowCall);
 router.post('/:id/workflow-call/:sessionId/message', agentsController.sendWorkflowMessage);
