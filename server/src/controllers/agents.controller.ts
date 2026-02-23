@@ -1354,6 +1354,14 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
 
     // Resolve voice settings and generate audio
     const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
+
+    logger.info('Generating TTS for agent', {
+      agentId: id,
+      textLength: text.length,
+      provider: voiceSettings?.ttsProvider || 'default-openai',
+      hasElevenLabsCreds: !!(voiceSettings?.elevenlabsApiKey && voiceSettings?.elevenlabsVoiceId),
+    });
+
     const audioBuffer = await agentVoiceService.generateTTS(text, voiceSettings);
 
     res.set({
@@ -1362,7 +1370,11 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
     });
     res.send(audioBuffer);
   } catch (error) {
-    logger.error('Failed to generate TTS:', error);
+    logger.error('Failed to generate TTS:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      agentId: req.params.id,
+    });
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'TTS generation failed',

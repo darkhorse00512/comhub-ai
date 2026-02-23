@@ -130,6 +130,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
   const [selectedVoiceModel, setSelectedVoiceModel] = useState<any>(null);
   const [playingModelId, setPlayingModelId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [hoverTooltip, setHoverTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
 
   // Load selected voice model info on mount if comhubai is selected
   useEffect(() => {
@@ -841,80 +842,91 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               {voiceModels.map((model: any) => {
                 const isSelected = selectedVoiceModel?.id === model.id;
                 return (
-                  <TooltipProvider key={model.id}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={() => selectVoiceModel(model)}
-                          className={`relative group text-left rounded-xl border-2 p-3 transition-all hover:shadow-md ${
-                            isSelected
-                              ? "border-primary bg-primary/5 shadow-md"
-                              : "border-border hover:border-primary/50"
-                          }`}
-                        >
-                          {isSelected && (
-                            <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
-                              <Check className="w-3 h-3 text-primary-foreground" />
-                            </div>
-                          )}
-                          <div className="flex flex-col items-center text-center gap-2">
-                            {model.image_url ? (
-                              <img
-                                src={model.image_url}
-                                alt={model.name}
-                                className="w-16 h-16 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center">
-                                <Music className="w-6 h-6 text-muted-foreground" />
-                              </div>
-                            )}
-                            <span className="font-medium text-sm">{model.name}</span>
-                            {model.description && (
-                              <p className="text-xs text-muted-foreground line-clamp-2">
-                                {model.description}
-                              </p>
-                            )}
-                            {model.preview_audio_url && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="gap-1.5 h-7 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePlayPreview(model);
-                                }}
-                              >
-                                {playingModelId === model.id ? (
-                                  <>
-                                    <Pause className="w-3 h-3" />
-                                    Pause
-                                  </>
-                                ) : (
-                                  <>
-                                    <Play className="w-3 h-3" />
-                                    Preview
-                                  </>
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                        </button>
-                      </TooltipTrigger>
-                      {model.description && (
-                        <TooltipContent side="bottom" className="max-w-[250px]">
-                          <p className="text-xs">{model.description}</p>
-                        </TooltipContent>
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => selectVoiceModel(model)}
+                    onMouseEnter={(e) => {
+                      if (model.description) {
+                        setHoverTooltip({ text: model.description, x: e.clientX, y: e.clientY });
+                      }
+                    }}
+                    onMouseMove={(e) => {
+                      if (model.description && hoverTooltip) {
+                        setHoverTooltip({ text: model.description, x: e.clientX, y: e.clientY });
+                      }
+                    }}
+                    onMouseLeave={() => setHoverTooltip(null)}
+                    className={`relative group text-left rounded-xl border-2 p-3 transition-all hover:shadow-md ${
+                      isSelected
+                        ? "border-primary bg-primary/5 shadow-md"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    {isSelected && (
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
+                        <Check className="w-3 h-3 text-primary-foreground" />
+                      </div>
+                    )}
+                    <div className="flex flex-col items-center text-center gap-2">
+                      {model.image_url ? (
+                        <img
+                          src={model.image_url}
+                          alt={model.name}
+                          className="w-16 h-16 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 rounded-full bg-secondary flex items-center justify-center">
+                          <Music className="w-6 h-6 text-muted-foreground" />
+                        </div>
                       )}
-                    </Tooltip>
-                  </TooltipProvider>
+                      <span className="font-medium text-sm">{model.name}</span>
+                      {model.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {model.description}
+                        </p>
+                      )}
+                      {model.preview_audio_url && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 h-7 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlayPreview(model);
+                          }}
+                        >
+                          {playingModelId === model.id ? (
+                            <>
+                              <Pause className="w-3 h-3" />
+                              Pause
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3" />
+                              Preview
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </button>
                 );
               })}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Mouse-tracking tooltip for voice card descriptions */}
+      {hoverTooltip && (
+        <div
+          className="fixed z-[9999] pointer-events-none px-3 py-2 rounded-md bg-popover text-popover-foreground border shadow-md max-w-[250px]"
+          style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y + 12 }}
+        >
+          <p className="text-xs">{hoverTooltip.text}</p>
+        </div>
+      )}
     </div>
   );
 };

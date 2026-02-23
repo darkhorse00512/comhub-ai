@@ -42,17 +42,37 @@ class AgentVoiceService {
 
       // If ComhubAI voice, look up the voice model to get actual ElevenLabs credentials
       if (resolved.ttsProvider === 'comhubai' && settings.comhubaiVoiceModelId) {
-        const { data: voiceModel } = await this.supabase
+        logger.info('Looking up ComhubAI voice model', {
+          agentId,
+          voiceModelId: settings.comhubaiVoiceModelId,
+        });
+
+        const { data: voiceModel, error: vmError } = await this.supabase
           .from('voice_models')
           .select('elevenlabs_api_key, elevenlabs_voice_id, model')
           .eq('id', settings.comhubaiVoiceModelId)
           .eq('is_active', true)
           .single();
 
+        if (vmError) {
+          logger.warn('Error fetching voice model from DB', {
+            agentId,
+            voiceModelId: settings.comhubaiVoiceModelId,
+            error: vmError.message,
+          });
+        }
+
         if (voiceModel) {
           resolved.elevenlabsApiKey = voiceModel.elevenlabs_api_key;
           resolved.elevenlabsVoiceId = voiceModel.elevenlabs_voice_id;
           resolved.elevenlabsModel = voiceModel.model;
+          logger.info('Voice model credentials resolved', {
+            agentId,
+            voiceModelId: settings.comhubaiVoiceModelId,
+            hasApiKey: !!voiceModel.elevenlabs_api_key,
+            voiceId: voiceModel.elevenlabs_voice_id,
+            model: voiceModel.model,
+          });
         } else {
           logger.warn('ComhubAI voice model not found or inactive, falling back to default OpenAI', {
             agentId,
@@ -77,14 +97,29 @@ class AgentVoiceService {
     if (voiceSettings &&
         (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs') &&
         voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
-      return ttsService.elevenlabsTextToSpeech(text, {
-        apiKey: voiceSettings.elevenlabsApiKey,
-        voiceId: voiceSettings.elevenlabsVoiceId,
-        model: voiceSettings.elevenlabsModel,
-      });
+      try {
+        logger.info('Generating TTS via ElevenLabs', {
+          provider: voiceSettings.ttsProvider,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+          model: voiceSettings.elevenlabsModel,
+          textLength: text.length,
+        });
+        return await ttsService.elevenlabsTextToSpeech(text, {
+          apiKey: voiceSettings.elevenlabsApiKey,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+          model: voiceSettings.elevenlabsModel,
+        });
+      } catch (err) {
+        logger.error('ElevenLabs TTS failed, falling back to OpenAI', {
+          error: err instanceof Error ? err.message : err,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+          model: voiceSettings.elevenlabsModel,
+        });
+        // Fall through to OpenAI TTS
+      }
     }
 
-    // Default: OpenAI TTS
+    // Default / Fallback: OpenAI TTS
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
     return ttsService.textToSpeech(text, voice);
   }

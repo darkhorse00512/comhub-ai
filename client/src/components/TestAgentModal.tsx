@@ -280,28 +280,32 @@ const TestAgentModal = ({
       // Use server-side TTS for configured voices (ComhubAI, ElevenLabs, OpenAI)
       const provider = voiceConfig?.ttsProvider;
       if (provider && provider !== "browser") {
-        const audioBuffer = await api.generateAgentTTS(agentId, text);
-        if (audioBuffer) {
-          await new Promise<void>((resolve) => {
-            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            serverAudioRef.current = audio;
-            audio.onended = () => {
-              URL.revokeObjectURL(url);
-              serverAudioRef.current = null;
-              resolve();
-            };
-            audio.onerror = () => {
-              URL.revokeObjectURL(url);
-              serverAudioRef.current = null;
-              resolve();
-            };
-            audio.play().catch(() => resolve());
-          });
-          setIsSpeaking(false);
-          isSpeakingRef.current = false;
-          return;
+        try {
+          const audioBuffer = await api.generateAgentTTS(agentId, text);
+          if (audioBuffer && audioBuffer.byteLength > 0) {
+            await new Promise<void>((resolve) => {
+              const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              serverAudioRef.current = audio;
+              audio.onended = () => {
+                URL.revokeObjectURL(url);
+                serverAudioRef.current = null;
+                resolve();
+              };
+              audio.onerror = () => {
+                URL.revokeObjectURL(url);
+                serverAudioRef.current = null;
+                resolve();
+              };
+              audio.play().catch(() => resolve());
+            });
+            setIsSpeaking(false);
+            isSpeakingRef.current = false;
+            return;
+          }
+        } catch (serverErr) {
+          console.warn("Server TTS failed, falling back to browser TTS:", serverErr);
         }
       }
 
@@ -855,7 +859,7 @@ const TestAgentModal = ({
 
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.lang = "en-US";
+      recognition.lang = voiceConfig?.language || "en-US";
 
       recognition.onresult = async (event: any) => {
         const transcript = event.results[0][0].transcript;
