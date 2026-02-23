@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
+import FeedbackModal from "@/components/FeedbackModal";
 import { useAuth } from "@/hooks/useAuth";
 import {
   Sidebar,
@@ -40,12 +41,12 @@ const navItems = [
   { title: "Usage", icon: BarChart3, path: "/dashboard/usage" },
   { title: "Groups", icon: Users, path: "/dashboard/groups" },
   { title: "Settings", icon: Settings, path: "/dashboard/settings" },
-  { title: "Feedback", icon: MessageSquare, path: "/dashboard/feedback" },
   { title: "Tutorial", icon: BookOpen, path: "/dashboard/tutorial" },
 ];
 
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const { user, loading, signOut, isAdmin } = useAuth();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -117,6 +118,17 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                   </SidebarMenuItem>
                 );
               })}
+              {/* Feedback - opens modal instead of navigating */}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Feedback"
+                  size="lg"
+                  onClick={() => setFeedbackOpen(true)}
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  <span className="group-data-[collapsible=icon]:hidden">Feedback</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarContent>
 
@@ -187,6 +199,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
           </main>
         </SidebarInset>
       </div>
+
+      <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </SidebarProvider>
   );
 };

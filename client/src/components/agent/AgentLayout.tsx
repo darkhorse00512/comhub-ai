@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
+import FeedbackModal from "@/components/FeedbackModal";
 
 export interface Agent {
   id: string;
@@ -36,7 +37,6 @@ const menuItems = [
   { id: "calls", label: "Calls", icon: Phone, path: "calls" },
   { id: "chats", label: "Chats", icon: MessageCircle, path: "chats" },
   { id: "analytics", label: "Analytics", icon: BarChart3, path: "analytics" },
-  { id: "feedback", label: "Feedback", icon: MessageSquare, path: "feedback" },
 ];
 
 const AgentLayout = () => {
@@ -47,6 +47,7 @@ const AgentLayout = () => {
 
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // Determine active menu item from URL
   const pathSegments = location.pathname.split("/");
@@ -115,6 +116,14 @@ const AgentLayout = () => {
             </button>
           );
         })}
+        {/* Feedback - opens modal instead of navigating */}
+        <button
+          onClick={() => setFeedbackOpen(true)}
+          className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors text-muted-foreground hover:bg-secondary-foreground/10"
+          title="Feedback"
+        >
+          <MessageSquare className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Main Content */}
@@ -155,6 +164,8 @@ const AgentLayout = () => {
           <Outlet context={{ agent, setAgent } satisfies AgentContextType} />
         </div>
       </div>
+
+      <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </div>
   );
 };
