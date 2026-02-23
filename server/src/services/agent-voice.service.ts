@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
 import ttsService, { TTSVoice } from './ai/tts.service';
@@ -12,14 +13,29 @@ export interface ResolvedVoiceSettings {
   language?: string;
 }
 
+interface CachedVoiceSettings {
+  settings: ResolvedVoiceSettings | null;
+  expiresAt: number;
+}
+
 class AgentVoiceService {
   private supabase = getSupabaseClient();
 
+  /** TTL cache for resolved voice settings (avoids repeated DB queries during a call) */
+  private voiceSettingsCache = new Map<string, CachedVoiceSettings>();
+  private readonly CACHE_TTL_MS = 60_000; // 60 seconds
+
   /**
    * Resolve the voice settings for an agent, including looking up ComhubAI voice model credentials.
-   * Reusable across test calls, production calls, and any future TTS needs.
+   * Results are cached for 60s to avoid repeated DB queries during test calls.
    */
   async resolveVoiceSettings(agentId: string): Promise<ResolvedVoiceSettings | null> {
+    // Check cache first
+    const cached = this.voiceSettingsCache.get(agentId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.settings;
+    }
+
     try {
       const { data: agent, error } = await this.supabase
         .from('agents')
@@ -82,6 +98,12 @@ class AgentVoiceService {
         }
       }
 
+      // Cache the resolved settings
+      this.voiceSettingsCache.set(agentId, {
+        settings: resolved,
+        expiresAt: Date.now() + this.CACHE_TTL_MS,
+      });
+
       return resolved;
     } catch (err) {
       logger.error('Failed to resolve agent voice settings', { agentId, error: err });
@@ -91,7 +113,7 @@ class AgentVoiceService {
 
   /**
    * Generate TTS audio buffer for the given text using the agent's configured voice.
-   * Returns an audio Buffer (MP3 format).
+   * Returns an audio Buffer (MP3 format). Used by production calls that need to upload.
    */
   async generateTTS(text: string, voiceSettings: ResolvedVoiceSettings | null): Promise<Buffer> {
     if (voiceSettings &&
@@ -122,6 +144,34 @@ class AgentVoiceService {
     // Default / Fallback: OpenAI TTS
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
     return ttsService.textToSpeech(text, voice);
+  }
+
+  /**
+   * Generate TTS as a streaming Readable. Used by the test-call endpoint
+   * to pipe audio to the client for low-latency playback.
+   * ElevenLabs streaming sends chunks as they're generated (much faster first byte).
+   */
+  async generateTTSStream(text: string, voiceSettings: ResolvedVoiceSettings | null): Promise<Readable> {
+    if (voiceSettings &&
+        (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs') &&
+        voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
+      try {
+        return await ttsService.elevenlabsTextToSpeechStream(text, {
+          apiKey: voiceSettings.elevenlabsApiKey,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+          model: voiceSettings.elevenlabsModel,
+        });
+      } catch (err) {
+        logger.error('ElevenLabs TTS stream failed, falling back to OpenAI stream', {
+          error: err instanceof Error ? err.message : err,
+          voiceId: voiceSettings.elevenlabsVoiceId,
+        });
+        // Fall through to OpenAI
+      }
+    }
+
+    const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
+    return ttsService.textToSpeechStream(text, voice);
   }
 
   /**

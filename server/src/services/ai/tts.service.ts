@@ -166,6 +166,49 @@ class TTSService {
     }
   }
 
+  /**
+   * ElevenLabs streaming TTS - returns a readable stream for low-latency piping.
+   * Uses /stream endpoint which sends audio chunks as they're generated.
+   */
+  async elevenlabsTextToSpeechStream(
+    text: string,
+    options: ElevenLabsTTSOptions
+  ): Promise<Readable> {
+    try {
+      logger.info('Streaming text to speech via ElevenLabs', {
+        textLength: text.length,
+        voiceId: options.voiceId,
+        model: options.model || 'eleven_multilingual_v2',
+      });
+
+      const response = await axios.post(
+        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}/stream`,
+        {
+          text,
+          model_id: options.model || 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        },
+        {
+          headers: {
+            'xi-api-key': options.apiKey,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg',
+          },
+          responseType: 'stream',
+        }
+      );
+
+      logger.info('ElevenLabs TTS stream started');
+      return response.data as Readable;
+    } catch (error) {
+      logger.error('Failed to stream text to speech via ElevenLabs:', error);
+      throw new Error(`ElevenLabs TTS streaming failed: ${error}`);
+    }
+  }
+
   async generateAudioForCall(text: string, callId: string): Promise<string> {
     try {
       // Generate audio buffer

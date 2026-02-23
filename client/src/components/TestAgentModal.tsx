@@ -244,8 +244,11 @@ const TestAgentModal = ({
     []
   );
 
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
+
   // --- Speech ---
   const serverAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAbortRef = useRef<AbortController | null>(null);
 
   // Use browser TTS as fallback only
   const speakWithBrowser = useCallback((text: string): Promise<void> => {
@@ -272,6 +275,116 @@ const TestAgentModal = ({
     });
   }, [voiceConfig?.language]);
 
+  // Play audio from a Blob (non-streaming fallback)
+  const playBlobAudio = useCallback((blob: Blob): Promise<void> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      serverAudioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        serverAudioRef.current = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        serverAudioRef.current = null;
+        resolve();
+      };
+      audio.play().catch(() => resolve());
+    });
+  }, []);
+
+  // Streaming audio playback via MediaSource API (plays audio as chunks arrive)
+  const playStreamingAudio = useCallback((stream: ReadableStream<Uint8Array>): Promise<void> => {
+    return new Promise((resolve) => {
+      const mediaSource = new MediaSource();
+      const audio = new Audio();
+      serverAudioRef.current = audio;
+      const objectUrl = URL.createObjectURL(mediaSource);
+      audio.src = objectUrl;
+
+      const cleanup = () => {
+        URL.revokeObjectURL(objectUrl);
+        serverAudioRef.current = null;
+        resolve();
+      };
+
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+
+      mediaSource.addEventListener("sourceopen", async () => {
+        let sourceBuffer: SourceBuffer;
+        try {
+          sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+        } catch {
+          // Codec not supported - abort streaming, caller will use blob fallback
+          cleanup();
+          return;
+        }
+
+        const reader = stream.getReader();
+        let started = false;
+
+        const pump = async (): Promise<void> => {
+          try {
+            // Abort if call ended
+            if (!isCallActiveRef.current) {
+              reader.cancel();
+              if (mediaSource.readyState === "open") {
+                try { mediaSource.endOfStream(); } catch {}
+              }
+              cleanup();
+              return;
+            }
+
+            const { done, value } = await reader.read();
+            if (done) {
+              // Wait for any pending appends to finish before ending stream
+              if (sourceBuffer.updating) {
+                await new Promise<void>((r) =>
+                  sourceBuffer.addEventListener("updateend", () => r(), { once: true })
+                );
+              }
+              if (mediaSource.readyState === "open") {
+                mediaSource.endOfStream();
+              }
+              return;
+            }
+
+            // Wait for previous append to complete
+            if (sourceBuffer.updating) {
+              await new Promise<void>((r) =>
+                sourceBuffer.addEventListener("updateend", () => r(), { once: true })
+              );
+            }
+
+            sourceBuffer.appendBuffer(value as unknown as ArrayBuffer);
+
+            // Start playback as soon as we have the first chunk
+            if (!started) {
+              started = true;
+              audio.play().catch(() => {});
+            }
+
+            await new Promise<void>((r) =>
+              sourceBuffer.addEventListener("updateend", () => r(), { once: true })
+            );
+
+            return pump();
+          } catch {
+            if (mediaSource.readyState === "open") {
+              try { mediaSource.endOfStream(); } catch {}
+            }
+            cleanup();
+          }
+        };
+
+        await pump();
+      });
+    });
+  }, []);
+
   const speakText = useCallback(async (text: string): Promise<void> => {
     setIsSpeaking(true);
     isSpeakingRef.current = true;
@@ -281,31 +394,50 @@ const TestAgentModal = ({
       const provider = voiceConfig?.ttsProvider;
       if (provider && provider !== "browser") {
         try {
-          const audioBuffer = await api.generateAgentTTS(agentId, text);
-          if (audioBuffer && audioBuffer.byteLength > 0) {
-            await new Promise<void>((resolve) => {
-              const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-              const url = URL.createObjectURL(blob);
-              const audio = new Audio(url);
-              serverAudioRef.current = audio;
-              audio.onended = () => {
-                URL.revokeObjectURL(url);
-                serverAudioRef.current = null;
-                resolve();
-              };
-              audio.onerror = () => {
-                URL.revokeObjectURL(url);
-                serverAudioRef.current = null;
-                resolve();
-              };
-              audio.play().catch(() => resolve());
-            });
+          const abortController = new AbortController();
+          ttsAbortRef.current = abortController;
+
+          const token = localStorage.getItem("backend_token");
+          const response = await fetch(
+            `${apiBaseUrl}/agents/${agentId}/generate-tts`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(token && { Authorization: `Bearer ${token}` }),
+              },
+              body: JSON.stringify({ text }),
+              signal: abortController.signal,
+            }
+          );
+
+          ttsAbortRef.current = null;
+
+          if (response.ok) {
+            // Try streaming playback (MediaSource) for instant audio start
+            const canStream = response.body
+              && typeof MediaSource !== "undefined"
+              && MediaSource.isTypeSupported("audio/mpeg");
+
+            if (canStream) {
+              await playStreamingAudio(response.body!);
+            } else {
+              // Fallback: buffer full response then play
+              const blob = await response.blob();
+              if (blob.size > 0) {
+                await playBlobAudio(blob);
+              }
+            }
+
             setIsSpeaking(false);
             isSpeakingRef.current = false;
             return;
           }
         } catch (serverErr) {
-          console.warn("Server TTS failed, falling back to browser TTS:", serverErr);
+          if ((serverErr as Error).name !== "AbortError") {
+            console.warn("Server TTS failed, falling back to browser TTS:", serverErr);
+          }
+          ttsAbortRef.current = null;
         }
       }
 
@@ -317,7 +449,7 @@ const TestAgentModal = ({
 
     setIsSpeaking(false);
     isSpeakingRef.current = false;
-  }, [voiceConfig?.ttsProvider, agentId, speakWithBrowser]);
+  }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl, speakWithBrowser, playStreamingAudio, playBlobAudio]);
 
   // Output a message and optionally speak it (audio mode)
   const outputAndSpeak = useCallback(
@@ -449,8 +581,6 @@ const TestAgentModal = ({
     }
     return headers;
   }, []);
-
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
 
   const startWorkflowCallAPI = useCallback(
     async (direction: "inbound" | "outbound"): Promise<WorkflowCallResult | null> => {
@@ -799,6 +929,12 @@ const TestAgentModal = ({
     }
 
     window.speechSynthesis?.cancel();
+
+    // Abort any in-flight TTS request
+    if (ttsAbortRef.current) {
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
+    }
 
     // Stop server-generated audio if playing
     if (serverAudioRef.current) {

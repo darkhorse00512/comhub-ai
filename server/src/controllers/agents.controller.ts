@@ -1352,33 +1352,46 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Resolve voice settings and generate audio
+    // Resolve voice settings and stream audio for low-latency playback
     const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
 
-    logger.info('Generating TTS for agent', {
+    logger.info('Generating TTS stream for agent', {
       agentId: id,
       textLength: text.length,
       provider: voiceSettings?.ttsProvider || 'default-openai',
       hasElevenLabsCreds: !!(voiceSettings?.elevenlabsApiKey && voiceSettings?.elevenlabsVoiceId),
     });
 
-    const audioBuffer = await agentVoiceService.generateTTS(text, voiceSettings);
+    const audioStream = await agentVoiceService.generateTTSStream(text, voiceSettings);
 
     res.set({
       'Content-Type': 'audio/mpeg',
-      'Content-Length': audioBuffer.length.toString(),
+      'Transfer-Encoding': 'chunked',
+      'Cache-Control': 'no-cache',
     });
-    res.send(audioBuffer);
+
+    audioStream.pipe(res);
+
+    audioStream.on('error', (err) => {
+      logger.error('TTS stream error:', { error: err instanceof Error ? err.message : err });
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: 'TTS stream failed' });
+      } else {
+        res.end();
+      }
+    });
   } catch (error) {
     logger.error('Failed to generate TTS:', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
       agentId: req.params.id,
     });
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'TTS generation failed',
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'TTS generation failed',
+      });
+    }
   }
 };
 
