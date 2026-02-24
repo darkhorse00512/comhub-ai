@@ -79,8 +79,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
         {/* Sidebar */}
         <Sidebar variant="floating" collapsible="icon">
-          <SidebarHeader className="p-4">
-            <Link to="/" className="flex items-center gap-3">
+          <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:items-center">
+            <Link to="/" className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
               <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-glow shrink-0">
                 <Phone className="w-5 h-5 text-primary-foreground" />
               </div>
@@ -92,7 +92,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
           <SidebarSeparator />
 
-          <SidebarContent className="px-2">
+          <SidebarContent className="px-2 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
             <SidebarMenu>
               {navItems.map((item) => {
                 const isActive = location.pathname === item.path ||
@@ -133,7 +133,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
           <SidebarSeparator />
 
           {isAdmin && (
-            <SidebarMenu>
+            <SidebarMenu className="group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-0 px-2">
               <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild
@@ -161,9 +161,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             )
           }
 
-          <SidebarFooter className="p-4">
+          <SidebarFooter className="p-4 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:items-center">
             <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                 <span className="text-sm font-medium text-primary">
                   {user?.email?.charAt(0).toUpperCase() || "U"}
                 </span>
@@ -176,11 +176,11 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             </div>
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={handleSignOut}
-              className="w-full justify-start gap-3 mt-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2"
+              className="group-data-[collapsible=icon]:w-10 group-data-[collapsible=icon]:h-10 w-full justify-start gap-3 mt-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-5 h-5 shrink-0" />
               <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
             </Button>
           </SidebarFooter>
