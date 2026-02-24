@@ -68,6 +68,15 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 
 // ===== Types =====
 interface AdminUser {
@@ -138,40 +147,221 @@ const OverviewTab = ({ stats, loading }: { stats: AdminStats | null; loading: bo
   if (!stats) return null;
 
   const cards = [
-    { label: "Total Users", value: stats.totalUsers, icon: Users, color: "blue" },
-    { label: "Total Agents", value: stats.totalAgents, icon: Bot, color: "purple" },
-    { label: "Total Calls", value: stats.totalCalls, icon: Phone, color: "green" },
-    { label: "Active Calls", value: stats.activeCalls, icon: Activity, color: "amber" },
-    { label: "Phone Numbers", value: stats.totalPhoneNumbers, icon: PhoneCall, color: "teal" },
-    { label: "Feedback", value: stats.totalFeedback, icon: MessageSquare, color: "rose" },
+    { label: "Total Users", value: stats.totalUsers, icon: Users, iconBg: "bg-blue-500/10", iconColor: "text-blue-500" },
+    { label: "Total Agents", value: stats.totalAgents, icon: Bot, iconBg: "bg-purple-500/10", iconColor: "text-purple-500" },
+    { label: "Total Calls", value: stats.totalCalls, icon: Phone, iconBg: "bg-green-500/10", iconColor: "text-green-500" },
+    { label: "Active Calls", value: stats.activeCalls, icon: Activity, iconBg: "bg-amber-500/10", iconColor: "text-amber-500" },
+    { label: "Phone Numbers", value: stats.totalPhoneNumbers, icon: PhoneCall, iconBg: "bg-teal-500/10", iconColor: "text-teal-500" },
+    { label: "Feedback", value: stats.totalFeedback, icon: MessageSquare, iconBg: "bg-rose-500/10", iconColor: "text-rose-500" },
   ];
 
-  const colorMap: Record<string, string> = {
-    blue: "bg-blue-100 text-blue-700",
-    purple: "bg-purple-100 text-purple-700",
-    green: "bg-green-100 text-green-700",
-    amber: "bg-amber-100 text-amber-700",
-    teal: "bg-teal-100 text-teal-700",
-    rose: "bg-rose-100 text-rose-700",
+  // Bar chart data
+  const barData = [
+    { name: "Users", value: stats.totalUsers, fill: "hsl(217, 91%, 60%)" },
+    { name: "Agents", value: stats.totalAgents, fill: "hsl(271, 91%, 65%)" },
+    { name: "Calls", value: stats.totalCalls, fill: "hsl(142, 71%, 45%)" },
+    { name: "Active", value: stats.activeCalls, fill: "hsl(38, 92%, 50%)" },
+    { name: "Phones", value: stats.totalPhoneNumbers, fill: "hsl(172, 66%, 50%)" },
+    { name: "Feedback", value: stats.totalFeedback, fill: "hsl(350, 89%, 60%)" },
+  ];
+
+  const barChartConfig: ChartConfig = {
+    value: { label: "Count" },
+  };
+
+  // Distribution donut data
+  const distributionData = [
+    { name: "Users", value: stats.totalUsers, fill: "hsl(217, 91%, 60%)" },
+    { name: "Agents", value: stats.totalAgents, fill: "hsl(271, 91%, 65%)" },
+    { name: "Phone Numbers", value: stats.totalPhoneNumbers, fill: "hsl(172, 66%, 50%)" },
+    { name: "Feedback", value: stats.totalFeedback, fill: "hsl(350, 89%, 60%)" },
+  ].filter((d) => d.value > 0);
+
+  const distributionConfig: ChartConfig = {
+    Users: { label: "Users", color: "hsl(217, 91%, 60%)" },
+    Agents: { label: "Agents", color: "hsl(271, 91%, 65%)" },
+    "Phone Numbers": { label: "Phone Numbers", color: "hsl(172, 66%, 50%)" },
+    Feedback: { label: "Feedback", color: "hsl(350, 89%, 60%)" },
+  };
+
+  // Call activity donut
+  const callActivityData = [
+    { name: "Active", value: stats.activeCalls || 0, fill: "hsl(38, 92%, 50%)" },
+    { name: "Completed", value: Math.max(0, stats.totalCalls - stats.activeCalls), fill: "hsl(142, 71%, 45%)" },
+  ].filter((d) => d.value > 0);
+
+  const callActivityConfig: ChartConfig = {
+    Active: { label: "Active Calls", color: "hsl(38, 92%, 50%)" },
+    Completed: { label: "Completed", color: "hsl(142, 71%, 45%)" },
   };
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-      {cards.map((c) => (
-        <Card key={c.label} className="bg-card/50 backdrop-blur border-border/50">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorMap[c.color]?.split(" ")[0]}`}>
-                <c.icon className={`w-5 h-5 ${colorMap[c.color]?.split(" ")[1]}`} />
+    <div className="space-y-6">
+      {/* Stat Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {cards.map((c) => (
+          <Card key={c.label} className="bg-card/50 backdrop-blur border-border/50">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className={`p-2.5 rounded-xl ${c.iconBg}`}>
+                  <c.icon className={`w-5 h-5 ${c.iconColor}`} />
+                </div>
               </div>
-              <div>
-                <p className="text-2xl font-bold">{c.value}</p>
-                <p className="text-xs text-muted-foreground">{c.label}</p>
+              <p className="text-3xl font-bold text-foreground">{c.value.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{c.label}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid lg:grid-cols-3 gap-6">
+        {/* Bar Chart - Platform Metrics */}
+        <Card className="bg-card/50 backdrop-blur border-border/50 lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-lg">Platform Metrics</CardTitle>
+            <CardDescription>Overview of key platform statistics</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={barChartConfig} className="h-[300px] w-full">
+              <BarChart data={barData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border/30" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} className="text-muted-foreground" />
+                <YAxis tick={{ fontSize: 12 }} className="text-muted-foreground" allowDecimals={false} />
+                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                <Bar dataKey="value" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        {/* Donut Chart - Resource Distribution */}
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader>
+            <CardTitle className="text-lg">Resource Distribution</CardTitle>
+            <CardDescription>Users, Agents, Phones & Feedback</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {distributionData.length > 0 ? (
+              <ChartContainer config={distributionConfig} className="h-[300px] w-full">
+                <PieChart>
+                  <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
+                  <Pie
+                    data={distributionData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={3}
+                    strokeWidth={0}
+                  />
+                  <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                </PieChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground text-sm">
+                No data to display
               </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Second Charts Row */}
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* Call Activity Donut */}
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader>
+            <CardTitle className="text-lg">Call Activity</CardTitle>
+            <CardDescription>Active vs Completed calls</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {stats.totalCalls > 0 ? (
+              <ChartContainer config={callActivityConfig} className="h-[250px] w-full">
+                <PieChart>
+                  <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
+                  <Pie
+                    data={callActivityData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={85}
+                    paddingAngle={3}
+                    strokeWidth={0}
+                  >
+                    {callActivityData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                </PieChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[250px] flex items-center justify-center text-muted-foreground text-sm">
+                No calls recorded yet
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Quick Summary Cards */}
+        <Card className="bg-card/50 backdrop-blur border-border/50">
+          <CardHeader>
+            <CardTitle className="text-lg">Quick Summary</CardTitle>
+            <CardDescription>Key ratios and insights</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-purple-500/10">
+                  <Bot className="w-5 h-5 text-purple-500" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Agents per User</p>
+                  <p className="text-sm text-muted-foreground">Average agents created</p>
+                </div>
+              </div>
+              <p className="text-2xl font-bold text-foreground">
+                {stats.totalUsers > 0 ? (stats.totalAgents / stats.totalUsers).toFixed(1) : "0"}
+              </p>
+            </div>
+            <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-green-500/10">
+                  <Phone className="w-5 h-5 text-green-500" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Calls per User</p>
+                  <p className="text-sm text-muted-foreground">Average calls made</p>
+                </div>
+              </div>
+              <p className="text-2xl font-bold text-foreground">
+                {stats.totalUsers > 0 ? (stats.totalCalls / stats.totalUsers).toFixed(1) : "0"}
+              </p>
+            </div>
+            <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-500/10">
+                  <Activity className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <p className="font-medium text-foreground">Active Rate</p>
+                  <p className="text-sm text-muted-foreground">Currently active calls</p>
+                </div>
+              </div>
+              <p className="text-2xl font-bold text-foreground">
+                {stats.totalCalls > 0
+                  ? `${((stats.activeCalls / stats.totalCalls) * 100).toFixed(1)}%`
+                  : "0%"}
+              </p>
             </div>
           </CardContent>
         </Card>
-      ))}
+      </div>
     </div>
   );
 };

@@ -8,10 +8,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  BarChart3,
   Phone,
   Clock,
-  TrendingUp,
   PhoneIncoming,
   PhoneOutgoing,
   CheckCircle2,
@@ -20,6 +18,15 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
+import { PieChart, Pie, Cell } from "recharts";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 
 interface UsageStats {
   totalCalls: number;
@@ -198,7 +205,7 @@ const UsagePage = () => {
         </motion.div>
       </div>
 
-      {/* Call Breakdown */}
+      {/* Charts Row */}
       <div className="grid lg:grid-cols-2 gap-6 mb-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -216,75 +223,67 @@ const UsagePage = () => {
                   <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
                   <p className="text-sm text-muted-foreground">Loading data...</p>
                 </div>
-              ) : (
+              ) : stats.totalCalls > 0 ? (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
-                    <div className="flex items-center gap-3">
+                  <ChartContainer
+                    config={{
+                      Inbound: { label: "Inbound", color: "hsl(142, 71%, 45%)" },
+                      Outbound: { label: "Outbound", color: "hsl(217, 91%, 60%)" },
+                    } satisfies ChartConfig}
+                    className="h-[220px] w-full"
+                  >
+                    <PieChart>
+                      <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
+                      <Pie
+                        data={[
+                          { name: "Inbound", value: stats.inboundCalls, fill: "hsl(142, 71%, 45%)" },
+                          { name: "Outbound", value: stats.outboundCalls, fill: "hsl(217, 91%, 60%)" },
+                        ]}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={3}
+                        strokeWidth={0}
+                      >
+                        <Cell fill="hsl(142, 71%, 45%)" />
+                        <Cell fill="hsl(217, 91%, 60%)" />
+                      </Pie>
+                      <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                    </PieChart>
+                  </ChartContainer>
+
+                  {/* Detail rows */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
                       <div className="p-2 rounded-lg bg-green-500/10">
-                        <PhoneIncoming className="w-5 h-5 text-green-500" />
+                        <PhoneIncoming className="w-4 h-4 text-green-500" />
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">Inbound Calls</p>
-                        <p className="text-sm text-muted-foreground">Received calls</p>
+                        <p className="text-lg font-bold text-foreground">{stats.inboundCalls}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Inbound ({stats.totalCalls > 0 ? Math.round((stats.inboundCalls / stats.totalCalls) * 100) : 0}%)
+                        </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-foreground">
-                        {stats.inboundCalls}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {Math.round((stats.inboundCalls / stats.totalCalls) * 100)}%
-                      </p>
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
+                      <div className="p-2 rounded-lg bg-blue-500/10">
+                        <PhoneOutgoing className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold text-foreground">{stats.outboundCalls}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Outbound ({stats.totalCalls > 0 ? Math.round((stats.outboundCalls / stats.totalCalls) * 100) : 0}%)
+                        </p>
+                      </div>
                     </div>
-                  </div>
-
-                <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-blue-500/10">
-                      <PhoneOutgoing className="w-5 h-5 text-blue-500" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Outbound Calls</p>
-                      <p className="text-sm text-muted-foreground">Made calls</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-foreground">
-                      {stats.outboundCalls}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {Math.round((stats.outboundCalls / stats.totalCalls) * 100)}%
-                    </p>
                   </div>
                 </div>
-
-                {/* Progress Bar */}
-                <div className="pt-2">
-                  <div className="flex h-3 rounded-full overflow-auto bg-secondary">
-                    <div
-                      className="bg-green-500 transition-all"
-                      style={{
-                        width: `${(stats.inboundCalls / stats.totalCalls) * 100}%`,
-                      }}
-                    />
-                    <div
-                      className="bg-blue-500 transition-all"
-                      style={{
-                        width: `${(stats.outboundCalls / stats.totalCalls) * 100}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-green-500" />
-                      Inbound
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-blue-500" />
-                      Outbound
-                    </span>
-                  </div>
-                </div>
+              ) : (
+                <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">
+                  No calls recorded yet
                 </div>
               )}
             </CardContent>
@@ -307,69 +306,63 @@ const UsagePage = () => {
                   <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
                   <p className="text-sm text-muted-foreground">Loading data...</p>
                 </div>
-              ) : (
+              ) : stats.totalCalls > 0 ? (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
-                    <div className="flex items-center gap-3">
+                  <ChartContainer
+                    config={{
+                      Successful: { label: "Successful", color: "hsl(142, 71%, 45%)" },
+                      Failed: { label: "Failed", color: "hsl(0, 84%, 60%)" },
+                    } satisfies ChartConfig}
+                    className="h-[220px] w-full"
+                  >
+                    <PieChart>
+                      <ChartTooltip content={<ChartTooltipContent nameKey="name" />} />
+                      <Pie
+                        data={[
+                          { name: "Successful", value: stats.successfulCalls, fill: "hsl(142, 71%, 45%)" },
+                          { name: "Failed", value: stats.failedCalls, fill: "hsl(0, 84%, 60%)" },
+                        ]}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={3}
+                        strokeWidth={0}
+                      >
+                        <Cell fill="hsl(142, 71%, 45%)" />
+                        <Cell fill="hsl(0, 84%, 60%)" />
+                      </Pie>
+                      <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                    </PieChart>
+                  </ChartContainer>
+
+                  {/* Detail rows */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
                       <div className="p-2 rounded-lg bg-green-500/10">
-                        <CheckCircle2 className="w-5 h-5 text-green-500" />
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">Successful</p>
-                        <p className="text-sm text-muted-foreground">Completed calls</p>
+                        <p className="text-lg font-bold text-foreground">{stats.successfulCalls}</p>
+                        <p className="text-xs text-muted-foreground">Successful</p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-foreground">
-                        {stats.successfulCalls}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/30">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/30">
                       <div className="p-2 rounded-lg bg-red-500/10">
-                        <XCircle className="w-5 h-5 text-red-500" />
+                        <XCircle className="w-4 h-4 text-red-500" />
                       </div>
                       <div>
-                        <p className="font-medium text-foreground">Failed</p>
-                        <p className="text-sm text-muted-foreground">Unsuccessful calls</p>
+                        <p className="text-lg font-bold text-foreground">{stats.failedCalls}</p>
+                        <p className="text-xs text-muted-foreground">Failed</p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-foreground">
-                        {stats.failedCalls}
-                      </p>
-                    </div>
                   </div>
-
-                  {/* Progress Bar */}
-                  <div className="pt-2">
-                    <div className="flex h-3 rounded-full overflow-auto bg-secondary">
-                      <div
-                        className="bg-green-500 transition-all"
-                        style={{
-                          width: `${stats.totalCalls > 0 ? (stats.successfulCalls / stats.totalCalls) * 100 : 0}%`,
-                        }}
-                      />
-                      <div
-                        className="bg-red-500 transition-all"
-                        style={{
-                          width: `${stats.totalCalls > 0 ? (stats.failedCalls / stats.totalCalls) * 100 : 0}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        Success
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-red-500" />
-                        Failed
-                      </span>
-                    </div>
-                  </div>
+                </div>
+              ) : (
+                <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">
+                  No calls recorded yet
                 </div>
               )}
             </CardContent>
