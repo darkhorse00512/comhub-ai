@@ -1035,33 +1035,60 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         }
 
         case 'end_call': {
-          // Speak closing message if configured
-          const endMessage = node.data?.endMessage;
-          if (endMessage) {
-            messages.push({
-              type: 'scripted',
-              text: endMessage,
-              nodeLabel: node.data?.label,
-            });
-            this.state.conversationContext.push({
-              role: 'agent',
-              text: endMessage,
-              nodeLabel: node.data?.label,
-            });
+          // Generate summary if summaryPrompt is configured
+          const summaryPrompt = node.data?.summaryPrompt;
+          if (summaryPrompt) {
+            try {
+              const conversationText = this.state.conversationContext
+                .map((e) => `${e.role}: ${e.text}`)
+                .join('\n');
+              const summaryResult = await gptService.generateWithCustomPrompt(
+                `Here is the conversation:\n${conversationText}\n\nPlease provide the summary.`,
+                summaryPrompt,
+              );
+              if (summaryResult.text) {
+                this.state.fields['_summary'] = summaryResult.text;
+                logger.info('WorkflowEngine: End node generated summary', { summary: summaryResult.text.substring(0, 200) });
+              }
+            } catch (err) {
+              logger.error('WorkflowEngine: Failed to generate summary', { error: err });
+            }
           }
 
-          // Extract specified fields into the result
-          const extractFieldsStr: string = node.data?.extractFields || '';
-          if (extractFieldsStr.trim()) {
-            const fieldNames = extractFieldsStr.split(',').map((f: string) => f.trim()).filter(Boolean);
+          // Extract results based on configured result definitions
+          const resultDefs: Array<{ name: string; type: string; description?: string; enumValues?: string }> = node.data?.results || [];
+          if (resultDefs.length > 0) {
             const extracted: Record<string, any> = {};
-            for (const fieldName of fieldNames) {
-              extracted[fieldName] = this.state.fields[fieldName] ?? null;
+            for (const def of resultDefs) {
+              if (!def.name) continue;
+              let value = this.state.fields[def.name] ?? null;
+              // Type coercion
+              if (value !== null && def.type) {
+                switch (def.type) {
+                  case 'integer':
+                    value = parseInt(String(value), 10) || 0;
+                    break;
+                  case 'real':
+                    value = parseFloat(String(value)) || 0;
+                    break;
+                  case 'boolean':
+                    value = value === true || value === 'true' || value === '1';
+                    break;
+                  case 'enum': {
+                    const allowed = (def.enumValues || '').split(',').map((v: string) => v.trim()).filter(Boolean);
+                    if (allowed.length > 0 && !allowed.includes(String(value))) {
+                      value = null;
+                    }
+                    break;
+                  }
+                }
+              }
+              extracted[def.name] = value;
             }
-            logger.info('WorkflowEngine: End node extracting fields', { extracted });
+            logger.info('WorkflowEngine: End node extracting results', { extracted });
             messages.push({
               type: 'system',
-              text: `Extracted fields: ${JSON.stringify(extracted)}`,
+              text: `Extracted results: ${JSON.stringify(extracted)}`,
             });
           }
 

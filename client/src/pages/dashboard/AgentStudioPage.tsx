@@ -22,7 +22,6 @@ import {
   Plus,
   Voicemail,
   Volume2,
-  FlagTriangleRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -62,7 +61,6 @@ const nodeCategories = [
   { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
   { type: "fallback", label: "Fallback", icon: AlertCircle, color: "bg-gray-100 text-gray-600", borderColor: "border-gray-400" },
   { type: "voicemail", label: "Voicemail", icon: Voicemail, color: "bg-amber-50 text-amber-600", borderColor: "border-amber-300" },
-  { type: "end_call", label: "End Call", icon: FlagTriangleRight, color: "bg-red-100 text-red-600", borderColor: "border-red-400" },
 ];
 
 const AgentStudioPage = () => {
@@ -168,10 +166,10 @@ const AgentStudioPage = () => {
       const nodeToDelete = currentNodes.find((n) => n.id === nodeId);
       if (!nodeToDelete) return currentNodes;
 
-      if (nodeToDelete.id === "agent-setup") {
+      if (nodeToDelete.id === "agent-setup" || nodeToDelete.id === "end-call") {
         toast({
           title: "Cannot delete",
-          description: "Agent Setup node cannot be deleted",
+          description: `${nodeToDelete.data.label} node cannot be deleted`,
           variant: "destructive",
         });
         return currentNodes;
@@ -291,9 +289,7 @@ const AgentStudioPage = () => {
     voicemail: (props: any) => (
       <VoicemailNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
-    end_call: (props: any) => (
-      <EndNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
-    ),
+    end_call: EndNode,
     default: () => <div>Unknown Node</div>,
   };
 
@@ -315,6 +311,16 @@ const AgentStudioPage = () => {
         data: {
           label: "Start",
           direction: "inbound",
+        },
+      },
+      {
+        id: "end-call",
+        type: "end_call",
+        position: { x: 1150, y: 100 },
+        data: {
+          label: "End Call",
+          summaryPrompt: "",
+          results: [],
         },
       },
     ];

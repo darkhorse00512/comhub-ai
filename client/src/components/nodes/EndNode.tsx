@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, FlagTriangleRight, HelpCircle } from "lucide-react";
+import { FlagTriangleRight, Pencil, HelpCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,140 +13,143 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
 
-interface EndNodeProps {
-  id: string;
-  data: any;
-  isConnectable?: boolean;
-  onClone?: (nodeId: string) => void;
-  onDelete?: (nodeId: string) => void;
-  onUpdate?: (nodeId: string, data: any) => void;
+interface ResultField {
+  name: string;
+  type: string;
+  description: string;
+  enumValues: string;
 }
 
-const EndNode = ({ id, data, onClone, onDelete, onUpdate }: EndNodeProps) => {
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editedName, setEditedName] = useState(data.label || "");
-  const [editedMessage, setEditedMessage] = useState(data.endMessage || "");
-  const [editedExtractFields, setEditedExtractFields] = useState(
-    data.extractFields || ""
-  );
+interface EndNodeProps {
+  data: any;
+  isConnectable?: boolean;
+}
 
-  const handleClone = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (onClone) onClone(id);
+const RESULT_TYPES = [
+  { value: "text", label: "Text" },
+  { value: "integer", label: "Integer" },
+  { value: "boolean", label: "Boolean" },
+  { value: "real", label: "Real" },
+  { value: "enum", label: "Enum" },
+];
+
+const EndNode = ({ data }: EndNodeProps) => {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [summaryPrompt, setSummaryPrompt] = useState(data.summaryPrompt || "");
+  const [results, setResults] = useState<ResultField[]>(data.results || []);
+
+  // Temp state for editing
+  const [tempSummaryPrompt, setTempSummaryPrompt] = useState(summaryPrompt);
+  const [tempResults, setTempResults] = useState<ResultField[]>(results);
+
+  const handleOpenModal = () => {
+    setTempSummaryPrompt(summaryPrompt);
+    setTempResults(results.map((r) => ({ ...r })));
+    setIsModalOpen(true);
   };
 
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (onDelete) onDelete(id);
-  };
-
-  const handleEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEditedName(data.label || "");
-    setEditedMessage(data.endMessage || "");
-    setEditedExtractFields(data.extractFields || "");
-    setIsEditModalOpen(true);
-  };
-
-  const handleSaveEdit = () => {
-    if (onUpdate) {
-      onUpdate(id, {
-        ...data,
-        label: editedName,
-        endMessage: editedMessage,
-        extractFields: editedExtractFields,
-      });
-    }
-    setIsEditModalOpen(false);
+  const handleSave = () => {
+    setSummaryPrompt(tempSummaryPrompt);
+    setResults(tempResults);
+    data.summaryPrompt = tempSummaryPrompt;
+    data.results = tempResults;
+    setIsModalOpen(false);
   };
 
   const handleCancel = () => {
-    setEditedName(data.label || "");
-    setEditedMessage(data.endMessage || "");
-    setEditedExtractFields(data.extractFields || "");
-    setIsEditModalOpen(false);
+    setTempSummaryPrompt(summaryPrompt);
+    setTempResults(results.map((r) => ({ ...r })));
+    setIsModalOpen(false);
   };
 
-  // Parse extract fields for preview
-  const fieldList = (data.extractFields || "")
-    .split(",")
-    .map((f: string) => f.trim())
-    .filter(Boolean);
+  const addResult = () => {
+    setTempResults([
+      ...tempResults,
+      { name: "", type: "", description: "", enumValues: "" },
+    ]);
+  };
+
+  const removeResult = (index: number) => {
+    setTempResults(tempResults.filter((_, i) => i !== index));
+  };
+
+  const updateResult = (index: number, field: keyof ResultField, value: string) => {
+    const updated = tempResults.map((r, i) =>
+      i === index ? { ...r, [field]: value } : r
+    );
+    setTempResults(updated);
+  };
+
+  const configuredResults = results.filter((r) => r.name);
 
   return (
     <>
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-auto">
-        {/* Header */}
-        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-100">
-            <FlagTriangleRight className="w-4 h-4 text-red-700" />
-            <span className="text-sm font-medium text-red-700">End</span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <HelpCircle className="w-3.5 h-3.5 opacity-60 hover:opacity-100 cursor-help ml-1 text-red-600" />
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-xs">
-                  <p className="font-medium mb-1">
-                    {nodeDescriptions.end_call?.tooltip || "Ends the workflow and optionally extracts collected field values."}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-
-          <div className="flex items-center gap-0.5">
+      <div className="bg-red-50 border-2 border-red-400 rounded-xl shadow-lg min-w-[300px] max-w-[600px] relative">
+        <div className="p-4">
+          {/* Header with Edit Button */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <FlagTriangleRight className="w-5 h-5 text-red-600" />
+              <span className="font-semibold text-red-900">End Call</span>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="w-4 h-4 opacity-60 hover:opacity-100 cursor-help ml-1 text-red-600" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs">
+                    <p className="font-medium">
+                      {nodeDescriptions.end_call?.tooltip ||
+                        "Ends the workflow. Configure summary prompt and results extraction."}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             <button
-              onClick={handleClone}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
-              title="Clone"
+              onClick={handleOpenModal}
+              className="p-1.5 rounded-lg hover:bg-red-200 transition-colors"
+              title="Edit End Node"
             >
-              <Copy className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleEdit}
-              className="p-1.5 rounded-lg hover:bg-blue-50 transition-colors text-blue-500 hover:text-blue-700"
-              title="Edit"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleDelete}
-              className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-red-500 hover:text-red-700"
-              title="Delete"
-            >
-              <Trash2 className="w-4 h-4" />
+              <Pencil className="w-4 h-4 text-red-600" />
             </button>
           </div>
-        </div>
 
-        {/* Node Content */}
-        <div className="px-4 py-3">
-          <h3 className="font-semibold text-gray-900 text-base mb-2">
-            {data.label || "End Call"}
-          </h3>
-
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[50px]">
-            {data.endMessage ? (
-              <p className="text-xs text-gray-700 line-clamp-2 leading-relaxed mb-2">
-                {data.endMessage}
-              </p>
+          {/* Preview Content */}
+          <div className="space-y-2">
+            {summaryPrompt ? (
+              <div className="bg-gray-100 rounded-lg p-3 text-sm text-gray-700 line-clamp-3">
+                {summaryPrompt}
+              </div>
             ) : (
-              <p className="text-xs text-gray-400 mb-2">No closing message</p>
+              <div className="bg-gray-100 rounded-lg p-3 text-sm text-gray-400">
+                No summary prompt configured
+              </div>
             )}
 
-            {fieldList.length > 0 && (
-              <div className="border-t border-gray-200 pt-2 mt-1">
-                <p className="text-xs font-medium text-gray-600 mb-1">Extract Fields:</p>
+            {configuredResults.length > 0 && (
+              <div className="bg-gray-100 rounded-lg p-3">
+                <p className="text-xs font-medium text-gray-600 mb-1.5">
+                  Results Extraction ({configuredResults.length})
+                </p>
                 <div className="flex flex-wrap gap-1">
-                  {fieldList.map((f: string, i: number) => (
+                  {configuredResults.map((r, i) => (
                     <span
                       key={i}
-                      className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-xs font-medium border border-red-200"
+                      className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium border border-red-200"
                     >
-                      {f}
+                      {r.name}
+                      {r.type && (
+                        <span className="text-red-400 ml-1">({r.type})</span>
+                      )}
                     </span>
                   ))}
                 </div>
@@ -157,51 +160,135 @@ const EndNode = ({ id, data, onClone, onDelete, onUpdate }: EndNodeProps) => {
       </div>
 
       {/* Edit Modal */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-[650px] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>End Node Configuration</DialogTitle>
+            <DialogTitle>End Call Configuration</DialogTitle>
             <DialogDescription>
-              Configure the workflow end point. Optionally specify a closing message and which fields to extract as output.
+              Configure the summary prompt and define the results to extract when the call ends.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-6 py-4">
+            {/* Summary Prompt */}
             <div className="grid gap-2">
-              <Label htmlFor="nodeName">Name</Label>
-              <Input
-                id="nodeName"
-                value={editedName}
-                onChange={(e) => setEditedName(e.target.value)}
-                placeholder="e.g. End Call"
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="endMessage">Closing Message (optional)</Label>
+              <Label htmlFor="summaryPrompt">Summary Prompt</Label>
               <Textarea
-                id="endMessage"
-                value={editedMessage}
-                onChange={(e) => setEditedMessage(e.target.value)}
-                placeholder="Thank you for calling. Goodbye!"
-                className="min-h-[80px] resize-none"
+                id="summaryPrompt"
+                value={tempSummaryPrompt}
+                onChange={(e) => setTempSummaryPrompt(e.target.value)}
+                placeholder="Configure summary prompt..."
+                className="min-h-[100px] resize-none"
               />
               <p className="text-xs text-muted-foreground">
-                Message the agent speaks before ending the call.
+                Instructions for generating a conversation summary when the call ends.
               </p>
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="extractFields">Extract Fields (comma-separated)</Label>
-              <Input
-                id="extractFields"
-                value={editedExtractFields}
-                onChange={(e) => setEditedExtractFields(e.target.value)}
-                placeholder="customer_name, order_id, issue_type"
-              />
-              <p className="text-xs text-muted-foreground">
-                List field names to include in the call result output. These should match fields set by Field Setter nodes or collected during dialogue.
-              </p>
+            {/* Results Extraction */}
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between">
+                <Label>Results Extraction</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addResult}
+                  className="h-8"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Result
+                </Button>
+              </div>
+
+              {tempResults.length === 0 && (
+                <p className="text-sm text-muted-foreground py-4 text-center border border-dashed border-border rounded-lg">
+                  No results configured. Click "Add Result" to define fields to extract.
+                </p>
+              )}
+
+              <div className="space-y-4">
+                {tempResults.map((result, index) => (
+                  <div
+                    key={index}
+                    className="border border-border rounded-lg p-4 relative bg-secondary/20"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => removeResult(index)}
+                      className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-red-100 text-red-500 hover:text-red-700 transition-colors"
+                      title="Remove result"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+
+                    <div className="grid gap-3 pr-8">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs">Name</Label>
+                          <Input
+                            value={result.name}
+                            onChange={(e) =>
+                              updateResult(index, "name", e.target.value)
+                            }
+                            placeholder="e.g. customer_name"
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs">Type</Label>
+                          <Select
+                            value={result.type}
+                            onValueChange={(value) =>
+                              updateResult(index, "type", value)
+                            }
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue placeholder="Select type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {RESULT_TYPES.map((t) => (
+                                <SelectItem key={t.value} value={t.value}>
+                                  {t.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs">Description</Label>
+                        <Textarea
+                          value={result.description}
+                          onChange={(e) =>
+                            updateResult(index, "description", e.target.value)
+                          }
+                          placeholder="Enter a description for this result..."
+                          className="min-h-[60px] resize-none text-sm"
+                          rows={2}
+                        />
+                      </div>
+
+                      {result.type === "enum" && (
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs">
+                            Values (comma separated)
+                          </Label>
+                          <Input
+                            value={result.enumValues}
+                            onChange={(e) =>
+                              updateResult(index, "enumValues", e.target.value)
+                            }
+                            placeholder="value1, value2, value3"
+                            className="h-9"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -209,7 +296,7 @@ const EndNode = ({ id, data, onClone, onDelete, onUpdate }: EndNodeProps) => {
             <Button variant="outline" onClick={handleCancel}>
               Cancel
             </Button>
-            <Button onClick={handleSaveEdit} className="bg-red-600 hover:bg-red-700">
+            <Button onClick={handleSave} className="bg-red-600 hover:bg-red-700">
               Save Changes
             </Button>
           </DialogFooter>
