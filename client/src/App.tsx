@@ -7,7 +7,6 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import DashboardLayout from "./components/layout/DashboardLayout";
-import HomePage from "./pages/dashboard/HomePage";
 import AgentsPage from "./pages/dashboard/AgentsPage";
 import AgentLayout from "./components/agent/AgentLayout";
 import AgentStudioPage from "./pages/dashboard/AgentStudioPage";
@@ -40,10 +39,9 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
-            <Route path="/dashboard" element={<DashboardLayout><HomePage /></DashboardLayout>} />
-            <Route path="/dashboard/agents" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
+            <Route path="/dashboard" element={<DashboardLayout><AgentsPage /></DashboardLayout>} />
             {/* Agent pages - nested under AgentLayout so sidebar stays mounted */}
-            <Route path="/dashboard/agents/:agentId" element={<AgentLayout />}>
+            <Route path="/agents/:agentId" element={<AgentLayout />}>
               <Route path="studio" element={<AgentStudioPage />} />
               <Route path="configure" element={<AgentConfigurePage />} />
               <Route path="outbound" element={<AgentOutboundPage />} />

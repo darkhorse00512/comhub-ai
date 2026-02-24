@@ -371,10 +371,10 @@ const AgentStudioPage = () => {
 
   const handleBackClick = () => {
     if (hasUnsavedChanges()) {
-      setPendingNavigation("/dashboard/agents");
+      setPendingNavigation("/dashboard");
       setShowUnsavedModal(true);
     } else {
-      navigate("/dashboard/agents");
+      navigate("/dashboard");
     }
   };
 

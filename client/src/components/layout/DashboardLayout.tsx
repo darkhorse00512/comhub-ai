@@ -25,7 +25,6 @@ import {
   MessageSquare,
   LogOut,
   ChevronRight,
-  Bot,
   BookOpen,
   Shield,
 } from "lucide-react";
@@ -36,7 +35,6 @@ interface DashboardLayoutProps {
 
 const navItems = [
   { title: "Home", icon: Home, path: "/dashboard" },
-  { title: "Agents", icon: Bot, path: "/dashboard/agents" },
   { title: "Telephony", icon: Phone, path: "/dashboard/telephony" },
   { title: "Usage", icon: BarChart3, path: "/dashboard/usage" },
   { title: "Groups", icon: Users, path: "/dashboard/groups" },

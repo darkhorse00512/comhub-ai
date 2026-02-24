@@ -486,7 +486,7 @@ const AgentsPage = () => {
               <div className="flex items-start justify-between mb-4">
                 <div
                   className="flex items-center gap-3 cursor-pointer flex-1"
-                  onClick={() => navigate(`/dashboard/agents/${agent.id}/studio`)}
+                  onClick={() => navigate(`/agents/${agent.id}/studio`)}
                 >
                   <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shadow-glow shrink-0">
                     <span className="text-xl font-bold text-primary-foreground">

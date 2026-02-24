@@ -71,7 +71,7 @@ const AgentLayout = () => {
         description: response.error,
         variant: "destructive",
       });
-      navigate("/dashboard/agents");
+      navigate("/dashboard");
     } else {
       setAgent(response.data);
     }
@@ -79,7 +79,7 @@ const AgentLayout = () => {
   };
 
   const handleMenuItemClick = (itemPath: string) => {
-    navigate(`/dashboard/agents/${agentId}/${itemPath}`);
+    navigate(`/agents/${agentId}/${itemPath}`);
   };
 
   if (loading) {
@@ -135,7 +135,7 @@ const AgentLayout = () => {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => navigate("/dashboard/agents")}
+                onClick={() => navigate("/dashboard")}
                 className="mr-2"
               >
                 <svg width="24" height="20" viewBox="0 0 24 20" fill="none" xmlns="http://www.w3.org/2000/svg">
