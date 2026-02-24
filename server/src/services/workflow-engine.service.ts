@@ -193,6 +193,23 @@ export class WorkflowEngine {
   private getNextNodeId(currentNodeId: string): string | null {
     const outEdges = this.edges.filter((e) => e.source === currentNodeId);
     if (outEdges.length === 0) return null;
+
+    // Prefer the "default" handle edge (the standard "Next" output)
+    const defaultEdge = outEdges.find((e) => e.sourceHandle === 'default' || !e.sourceHandle);
+    if (defaultEdge) return defaultEdge.target;
+
+    // Fallback: pick the edge whose target node has the lowest Y position (visually "next")
+    if (outEdges.length > 1) {
+      const sorted = outEdges
+        .map((e) => ({
+          edge: e,
+          targetNode: this.nodes.find((n) => n.id === e.target),
+        }))
+        .filter((item) => item.targetNode)
+        .sort((a, b) => (a.targetNode!.position.y - b.targetNode!.position.y));
+      if (sorted.length > 0) return sorted[0].edge.target;
+    }
+
     return outEdges[0].target;
   }
 
@@ -244,10 +261,14 @@ export class WorkflowEngine {
       if (matched) {
         const handleId = matched.id || `t-${matched.name}`;
         const matchEdge = outEdges.find((e) => e.sourceHandle === handleId);
-        return matchEdge?.target || outEdges[0]?.target || null;
+        if (matchEdge) return matchEdge.target;
+        // If no edge matches the handle, try default/non-handle edge
+        const defaultEdge = outEdges.find((e) => e.sourceHandle === 'default' || !e.sourceHandle);
+        return defaultEdge?.target || null;
       }
     }
 
+    // No specific transition — use default handle or positional fallback
     return this.getNextNodeId(node.id);
   }
 
@@ -1011,6 +1032,48 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           });
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
+        }
+
+        case 'end_call': {
+          // Speak closing message if configured
+          const endMessage = node.data?.endMessage;
+          if (endMessage) {
+            messages.push({
+              type: 'scripted',
+              text: endMessage,
+              nodeLabel: node.data?.label,
+            });
+            this.state.conversationContext.push({
+              role: 'agent',
+              text: endMessage,
+              nodeLabel: node.data?.label,
+            });
+          }
+
+          // Extract specified fields into the result
+          const extractFieldsStr: string = node.data?.extractFields || '';
+          if (extractFieldsStr.trim()) {
+            const fieldNames = extractFieldsStr.split(',').map((f: string) => f.trim()).filter(Boolean);
+            const extracted: Record<string, any> = {};
+            for (const fieldName of fieldNames) {
+              extracted[fieldName] = this.state.fields[fieldName] ?? null;
+            }
+            logger.info('WorkflowEngine: End node extracting fields', { extracted });
+            messages.push({
+              type: 'system',
+              text: `Extracted fields: ${JSON.stringify(extracted)}`,
+            });
+          }
+
+          // Mark workflow as complete — no further nodes to process
+          this.state.isComplete = true;
+          this.state.currentNodeId = null;
+          return {
+            messages,
+            waitingForInput: false,
+            isComplete: true,
+            currentStage: node.data?.label || 'Call Ended',
+          };
         }
 
         case 'function': {

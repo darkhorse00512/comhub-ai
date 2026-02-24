@@ -76,6 +76,11 @@ function getNodeOutputHandles(node: Node): OutputHandle[] {
     return handles;
   }
 
+  // End node has no outputs (terminal node)
+  if (nodeType === "end_call") {
+    return [];
+  }
+
   // Default: single output
   return [{ id: "default", label: "Next" }];
 }
@@ -90,8 +95,8 @@ function getButtonLayoutForNode(node: Node): {
 } {
   const nodeType = node.data?.type || node.type;
 
-  // AgentSetup and CallDirection have no bottom transition buttons
-  if (nodeType === "agentSetup" || nodeType === "callDirection") {
+  // AgentSetup, CallDirection, and End have no bottom transition buttons
+  if (nodeType === "agentSetup" || nodeType === "callDirection" || nodeType === "end_call") {
     return { buttonHeight: 0, buttonGap: 0, bottomPad: 0, hasBottomButtons: false, moreTextOffset: 0 };
   }
 

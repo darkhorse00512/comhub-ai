@@ -191,5 +191,19 @@ export const nodeDescriptions: NodeDescriptions = {
       notifyEmail: "Email address to notify when voicemail received",
       saveRecording: "Keep audio file for playback"
     }
+  },
+
+  end_call: {
+    title: "End Call",
+    tooltip: "Explicitly ends the workflow. Optionally speaks a closing message and extracts collected field values as structured output.",
+    examples: [
+      "End call with goodbye message",
+      "Extract customer name and order ID after data collection",
+      "Finish workflow and output survey results"
+    ],
+    fields: {
+      endMessage: "Optional closing message the agent speaks before ending the call",
+      extractFields: "Comma-separated list of field names to include in the call result output"
+    }
   }
 };

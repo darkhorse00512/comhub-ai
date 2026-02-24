@@ -22,6 +22,7 @@ import {
   Plus,
   Voicemail,
   Volume2,
+  FlagTriangleRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -40,6 +41,7 @@ import TimeLimitNode from "@/components/nodes/TimeLimitNode";
 import ReconfigureNode from "@/components/nodes/ReconfigureNode";
 import FallbackNode from "@/components/nodes/FallbackNode";
 import VoicemailNode from "@/components/nodes/VoicemailNode";
+import EndNode from "@/components/nodes/EndNode";
 import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 import HistoryPanel from "@/components/HistoryPanel";
@@ -60,6 +62,7 @@ const nodeCategories = [
   { type: "reconfigure", label: "Reconfigure", icon: Wrench, color: "bg-indigo-100 text-indigo-600", borderColor: "border-indigo-400" },
   { type: "fallback", label: "Fallback", icon: AlertCircle, color: "bg-gray-100 text-gray-600", borderColor: "border-gray-400" },
   { type: "voicemail", label: "Voicemail", icon: Voicemail, color: "bg-amber-50 text-amber-600", borderColor: "border-amber-300" },
+  { type: "end_call", label: "End Call", icon: FlagTriangleRight, color: "bg-red-100 text-red-600", borderColor: "border-red-400" },
 ];
 
 const AgentStudioPage = () => {
@@ -287,6 +290,9 @@ const AgentStudioPage = () => {
     ),
     voicemail: (props: any) => (
       <VoicemailNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
+    ),
+    end_call: (props: any) => (
+      <EndNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     default: () => <div>Unknown Node</div>,
   };
