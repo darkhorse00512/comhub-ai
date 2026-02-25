@@ -3,13 +3,19 @@ import { User, Session } from "@supabase/supabase-js";
 import { useState, useEffect, createContext, useContext, ReactNode, useCallback } from "react";
 import { ensureBackendToken } from "@/services/api";
 
+interface AuthResult {
+  error: Error | null;
+  session: Session | null;
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
   isAdmin: boolean;
-  signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string) => Promise<AuthResult>;
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshAdminStatus: () => void;
 }
@@ -71,20 +77,64 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/`;
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: redirectUrl
       }
     });
-    return { error: error as Error | null };
+
+    if (error) {
+      return { error: error as Error, session: null };
+    }
+
+    // If Supabase returned a session (auto-confirm enabled), ensure backend token is ready
+    if (data?.session) {
+      setSession(data.session);
+      setUser(data.session.user);
+      try {
+        const admin = await ensureBackendToken();
+        setIsAdmin(admin);
+      } catch (e) {
+        console.error("[AUTH] Failed to ensure backend token after signup:", e);
+      }
+    }
+
+    return { error: null, session: data?.session ?? null };
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
+    });
+
+    if (error) {
+      return { error: error as Error, session: null };
+    }
+
+    // Ensure backend token is ready before returning
+    if (data?.session) {
+      setSession(data.session);
+      setUser(data.session.user);
+      try {
+        const admin = await ensureBackendToken();
+        setIsAdmin(admin);
+      } catch (e) {
+        console.error("[AUTH] Failed to ensure backend token after signin:", e);
+      }
+    }
+
+    return { error: null, session: data?.session ?? null };
+  };
+
+  const signInWithGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      },
     });
     return { error: error as Error | null };
   };
@@ -96,7 +146,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, signUp, signIn, signOut, refreshAdminStatus }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, signUp, signIn, signInWithGoogle, signOut, refreshAdminStatus }}>
       {children}
     </AuthContext.Provider>
   );
