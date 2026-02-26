@@ -105,7 +105,7 @@ const config: Config = {
   },
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',
-    fromEmail: process.env.RESEND_FROM_EMAIL || 'auth@comhubai.com',
+    fromEmail: process.env.RESEND_FROM_EMAIL || 'auth@voipmail.comhubai.com',
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info',
