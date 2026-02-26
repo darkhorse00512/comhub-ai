@@ -2,7 +2,17 @@ import { Resend } from 'resend';
 import config from '../config';
 import logger from '../utils/logger';
 
-const resend = new Resend(config.resend.apiKey);
+let resend: Resend | null = null;
+
+function getResend(): Resend {
+  if (!resend) {
+    if (!config.resend.apiKey) {
+      throw new Error('RESEND_API_KEY is not configured');
+    }
+    resend = new Resend(config.resend.apiKey);
+  }
+  return resend;
+}
 
 export class EmailService {
   async sendOTP(email: string, code: string, type: 'signup' | 'reset'): Promise<boolean> {
@@ -50,7 +60,7 @@ export class EmailService {
 </html>`;
 
     try {
-      const { error } = await resend.emails.send({
+      const { error } = await getResend().emails.send({
         from: `ComhubAI <${config.resend.fromEmail}>`,
         to: [email],
         subject,
