@@ -15,4 +15,12 @@ router.get('/profile', authMiddleware, authController.getProfile);
 
 router.delete('/account', authMiddleware, authController.deleteAccount);
 
+// OTP-based signup flow
+router.post('/signup/send-otp', authController.sendSignupOTP);
+router.post('/signup/verify-otp', authController.verifySignupOTP);
+
+// OTP-based password reset flow
+router.post('/reset/send-otp', authController.sendResetOTP);
+router.post('/reset/verify-otp', authController.verifyResetOTP);
+
 export default router;

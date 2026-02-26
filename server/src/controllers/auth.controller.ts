@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import getSupabaseClient, { Database } from "../config/supabase";
 import AuthUtils from "../utils/auth";
 import logger from "../utils/logger";
+import otpService from "../services/otp.service";
+import emailService from "../services/email.service";
 
 type UserRow = Database['public']['Tables']['users']['Row'];
 
@@ -341,6 +343,216 @@ export class AuthController {
         error: "Failed to get profile",
         details: error instanceof Error ? error.message : "Unknown error",
       });
+    }
+  }
+  async sendSignupOTP(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        res.status(400).json({ error: "Email and password are required" });
+        return;
+      }
+
+      if (password.length < 6) {
+        res.status(400).json({ error: "Password must be at least 6 characters" });
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+
+      // Check if user already exists in Supabase Auth
+      const { data: existingUsers } = await supabase.auth.admin.listUsers();
+      const userExists = existingUsers?.users?.some(
+        (u) => u.email?.toLowerCase() === email.toLowerCase()
+      );
+
+      if (userExists) {
+        res.status(409).json({ error: "This email is already registered. Please sign in instead." });
+        return;
+      }
+
+      // Rate limit check
+      if (!otpService.canSendOTP(email)) {
+        res.status(429).json({ error: "Too many requests. Please try again later." });
+        return;
+      }
+
+      const code = otpService.generateOTP(email, 'signup', password);
+      const sent = await emailService.sendOTP(email, code, 'signup');
+
+      if (!sent) {
+        res.status(500).json({ error: "Failed to send verification email. Please try again." });
+        return;
+      }
+
+      res.status(200).json({ success: true, message: "Verification code sent to your email." });
+    } catch (error) {
+      logger.error("sendSignupOTP failed:", error);
+      res.status(500).json({ error: "Failed to send verification code" });
+    }
+  }
+
+  async verifySignupOTP(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, code } = req.body;
+
+      if (!email || !code) {
+        res.status(400).json({ error: "Email and code are required" });
+        return;
+      }
+
+      const result = otpService.verifyOTP(email, code, 'signup');
+
+      if (!result.valid) {
+        res.status(400).json({ error: result.error });
+        return;
+      }
+
+      const password = result.password;
+      if (!password) {
+        res.status(500).json({ error: "Internal error: password not found" });
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+
+      // Create user in Supabase Auth with email confirmed
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+
+      if (authError || !authData.user) {
+        logger.error("Failed to create Supabase Auth user:", authError);
+        res.status(500).json({ error: "Failed to create account. Please try again." });
+        return;
+      }
+
+      // Insert into users table
+      const { data: newUser, error: insertError } = await supabase
+        .from("users")
+        .insert({ id: authData.user.id, email })
+        .select()
+        .single();
+
+      if (insertError) {
+        logger.error("Failed to insert user row:", insertError);
+        // User was created in Auth but row insert failed — still return token
+      }
+
+      const userId = newUser?.id || authData.user.id;
+      const token = AuthUtils.generateToken({
+        userId,
+        email,
+        is_admin: false,
+      });
+
+      logger.info("User signup verified via OTP", { userId, email });
+
+      res.status(201).json({
+        success: true,
+        user: { id: userId, email, is_admin: false },
+        token,
+      });
+    } catch (error) {
+      logger.error("verifySignupOTP failed:", error);
+      res.status(500).json({ error: "Verification failed" });
+    }
+  }
+
+  async sendResetOTP(req: Request, res: Response): Promise<void> {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        res.status(400).json({ error: "Email is required" });
+        return;
+      }
+
+      // Always return success to prevent email enumeration
+      if (!otpService.canSendOTP(email)) {
+        res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+
+      // Check if user exists
+      const { data: existingUsers } = await supabase.auth.admin.listUsers();
+      const userExists = existingUsers?.users?.some(
+        (u) => u.email?.toLowerCase() === email.toLowerCase()
+      );
+
+      if (!userExists) {
+        // Don't reveal that the user doesn't exist
+        res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
+        return;
+      }
+
+      const code = otpService.generateOTP(email, 'reset');
+      await emailService.sendOTP(email, code, 'reset');
+
+      res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
+    } catch (error) {
+      logger.error("sendResetOTP failed:", error);
+      res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
+    }
+  }
+
+  async verifyResetOTP(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, code, newPassword } = req.body;
+
+      if (!email || !code || !newPassword) {
+        res.status(400).json({ error: "Email, code, and new password are required" });
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        res.status(400).json({ error: "Password must be at least 6 characters" });
+        return;
+      }
+
+      const result = otpService.verifyOTP(email, code, 'reset');
+
+      if (!result.valid) {
+        res.status(400).json({ error: result.error });
+        return;
+      }
+
+      const supabase = getSupabaseClient();
+
+      // Find the user in Supabase Auth
+      const { data: users } = await supabase.auth.admin.listUsers();
+      const authUser = users?.users?.find(
+        (u) => u.email?.toLowerCase() === email.toLowerCase()
+      );
+
+      if (!authUser) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      // Update password
+      const { error: updateError } = await supabase.auth.admin.updateUserById(
+        authUser.id,
+        { password: newPassword }
+      );
+
+      if (updateError) {
+        logger.error("Failed to update password:", updateError);
+        res.status(500).json({ error: "Failed to reset password. Please try again." });
+        return;
+      }
+
+      logger.info("Password reset via OTP", { email });
+
+      res.status(200).json({ success: true, message: "Password has been reset successfully." });
+    } catch (error) {
+      logger.error("verifyResetOTP failed:", error);
+      res.status(500).json({ error: "Password reset failed" });
     }
   }
 }

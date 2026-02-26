@@ -48,6 +48,10 @@ interface Config {
     rateLimitWindowMs: number;
     rateLimitMaxRequests: number;
   };
+  resend: {
+    apiKey: string;
+    fromEmail: string;
+  };
   logging: {
     level: string;
     filePath: string;
@@ -98,6 +102,10 @@ const config: Config = {
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
     rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
     rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
+  },
+  resend: {
+    apiKey: process.env.RESEND_API_KEY || '',
+    fromEmail: process.env.RESEND_FROM_EMAIL || 'auth@comhubai.com',
   },
   logging: {
     level: process.env.LOG_LEVEL || 'info',

@@ -16,6 +16,7 @@ interface AuthContextType {
   signUp: (email: string, password: string) => Promise<AuthResult>;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signInWithGoogle: () => Promise<{ error: Error | null }>;
+  signUpComplete: (email: string, password: string, backendToken: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
   refreshAdminStatus: () => void;
 }
@@ -129,6 +130,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return { error: null, session: data?.session ?? null };
   };
 
+  const signUpComplete = async (email: string, password: string, backendToken: string) => {
+    // Store backend JWT from the OTP verification response
+    localStorage.setItem("backend_token", backendToken);
+
+    // Now sign in with Supabase to establish session
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      return { error: error as Error, session: null };
+    }
+
+    if (data?.session) {
+      setSession(data.session);
+      setUser(data.session.user);
+      setIsAdmin(checkAdminFromToken());
+    }
+
+    return { error: null, session: data?.session ?? null };
+  };
+
   const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -146,7 +170,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, signUp, signIn, signInWithGoogle, signOut, refreshAdminStatus }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, signUp, signIn, signInWithGoogle, signUpComplete, signOut, refreshAdminStatus }}>
       {children}
     </AuthContext.Provider>
   );

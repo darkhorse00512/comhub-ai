@@ -216,6 +216,77 @@ export const ensureBackendToken = async (): Promise<boolean> => {
   }
 };
 
+// OTP Auth API methods (no auth token needed)
+export const otpApi = {
+  async sendSignupOTP(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/signup/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || "Failed to send verification code" };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+
+  async verifySignupOTP(email: string, code: string): Promise<{ success: boolean; token?: string; error?: string }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/signup/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || "Verification failed" };
+      }
+      return { success: true, token: data.token };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+
+  async sendResetOTP(email: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/reset/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || "Failed to send reset code" };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+
+  async verifyResetOTP(email: string, code: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/reset/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code, newPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.error || "Password reset failed" };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+};
+
 export const api = {
   async getCallHistory(): Promise<ApiResponse<CallHistoryItem[]>> {
     try {
