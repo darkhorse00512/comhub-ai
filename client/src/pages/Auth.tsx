@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, memo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,8 @@ const Divider = () => (
   </div>
 );
 
-const OTPInputField = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+// Memoized so cooldown timer re-renders don't kill input-otp focus
+const OTPInputField = memo(({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
   <div className="flex justify-center">
     <InputOTP maxLength={6} value={value} onChange={onChange} autoFocus>
       <InputOTPGroup>
@@ -49,19 +50,35 @@ const OTPInputField = ({ value, onChange }: { value: string; onChange: (v: strin
       </InputOTPGroup>
     </InputOTP>
   </div>
-);
+));
 
-const ResendLink = ({ cooldown, loading, onResend }: { cooldown: number; loading: boolean; onResend: () => void }) => (
-  <div className="text-center text-sm text-muted-foreground">
-    {cooldown > 0 ? (
-      <span>Resend code in {cooldown}s</span>
-    ) : (
-      <button type="button" onClick={onResend} className="text-primary hover:underline" disabled={loading}>
-        Resend code
-      </button>
-    )}
-  </div>
-);
+// Self-contained timer — doesn't cause parent re-renders
+const ResendLink = ({ loading, onResend }: { loading: boolean; onResend: () => void }) => {
+  const [cooldown, setCooldown] = useState(60);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  const handleResend = () => {
+    onResend();
+    setCooldown(60);
+  };
+
+  return (
+    <div className="text-center text-sm text-muted-foreground">
+      {cooldown > 0 ? (
+        <span>Resend code in {cooldown}s</span>
+      ) : (
+        <button type="button" onClick={handleResend} className="text-primary hover:underline" disabled={loading}>
+          Resend code
+        </button>
+      )}
+    </div>
+  );
+};
 
 const GoogleButton = ({ loading, googleLoading, onClick }: { loading: boolean; googleLoading: boolean; onClick: () => void }) => (
   <Button
@@ -96,20 +113,11 @@ const Auth = () => {
   const [otpCode, setOtpCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendKey, setResendKey] = useState(0); // increment to remount ResendLink timer
 
   const { signIn, signInWithGoogle, signUpComplete } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-
-  // Cooldown timer for resend button
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const timer = setTimeout(() => setResendCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [resendCooldown]);
-
-  const startCooldown = useCallback(() => setResendCooldown(60), []);
 
   // Sign In handler
   const handleSignIn = async (e: React.FormEvent) => {
@@ -150,7 +158,7 @@ const Auth = () => {
       } else {
         setOtpCode("");
         setView("signup-otp");
-        startCooldown();
+        setResendKey((k) => k + 1);
         toast({ title: "Code sent!", description: "Check your email for the 6-digit verification code." });
       }
     } catch {
@@ -190,14 +198,12 @@ const Auth = () => {
     }
   };
 
-  // Resend signup OTP
+  // Resend signup OTP (cooldown is handled by ResendLink internally)
   const handleResendSignupOTP = async () => {
-    if (resendCooldown > 0) return;
     setLoading(true);
     try {
       const result = await otpApi.sendSignupOTP(email, password);
       if (result.success) {
-        startCooldown();
         setOtpCode("");
         toast({ title: "Code resent!", description: "Check your email for the new code." });
       } else {
@@ -220,7 +226,7 @@ const Auth = () => {
       setOtpCode("");
       setNewPassword("");
       setView("reset-otp");
-      startCooldown();
+      setResendKey((k) => k + 1);
       toast({ title: "Code sent!", description: "If an account exists, a reset code has been sent to your email." });
     } catch {
       toast({ title: "Error", description: "An unexpected error occurred", variant: "destructive" });
@@ -254,13 +260,11 @@ const Auth = () => {
     }
   };
 
-  // Resend reset OTP
+  // Resend reset OTP (cooldown is handled by ResendLink internally)
   const handleResendResetOTP = async () => {
-    if (resendCooldown > 0) return;
     setLoading(true);
     try {
       await otpApi.sendResetOTP(email);
-      startCooldown();
       setOtpCode("");
       toast({ title: "Code resent!", description: "Check your email for the new code." });
     } finally {
@@ -390,7 +394,7 @@ const Auth = () => {
               <Button type="submit" variant="gradient" size="lg" className="w-full" disabled={loading || otpCode.length !== 6}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Verify & Create Account</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
-              <ResendLink cooldown={resendCooldown} loading={loading} onResend={handleResendSignupOTP} />
+              <ResendLink key={resendKey} loading={loading} onResend={handleResendSignupOTP} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("signup"); setOtpCode(""); }}
@@ -456,7 +460,7 @@ const Auth = () => {
               <Button type="submit" variant="gradient" size="lg" className="w-full" disabled={loading || otpCode.length !== 6}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Reset Password</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
-              <ResendLink cooldown={resendCooldown} loading={loading} onResend={handleResendResetOTP} />
+              <ResendLink key={resendKey} loading={loading} onResend={handleResendResetOTP} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("forgot"); setOtpCode(""); setNewPassword(""); }}
