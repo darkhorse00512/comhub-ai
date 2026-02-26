@@ -373,12 +373,12 @@ export class AuthController {
       }
 
       // Rate limit check
-      if (!otpService.canSendOTP(email)) {
+      if (!(await otpService.canSendOTP(email))) {
         res.status(429).json({ error: "Too many requests. Please try again later." });
         return;
       }
 
-      const code = otpService.generateOTP(email, 'signup', password);
+      const code = await otpService.generateOTP(email, 'signup');
       const sent = await emailService.sendOTP(email, code, 'signup');
 
       if (!sent) {
@@ -395,23 +395,17 @@ export class AuthController {
 
   async verifySignupOTP(req: Request, res: Response): Promise<void> {
     try {
-      const { email, code } = req.body;
+      const { email, code, password } = req.body;
 
-      if (!email || !code) {
-        res.status(400).json({ error: "Email and code are required" });
+      if (!email || !code || !password) {
+        res.status(400).json({ error: "Email, code, and password are required" });
         return;
       }
 
-      const result = otpService.verifyOTP(email, code, 'signup');
+      const result = await otpService.verifyOTP(email, code, 'signup');
 
       if (!result.valid) {
         res.status(400).json({ error: result.error });
-        return;
-      }
-
-      const password = result.password;
-      if (!password) {
-        res.status(500).json({ error: "Internal error: password not found" });
         return;
       }
 
@@ -472,7 +466,7 @@ export class AuthController {
       }
 
       // Always return success to prevent email enumeration
-      if (!otpService.canSendOTP(email)) {
+      if (!(await otpService.canSendOTP(email))) {
         res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
         return;
       }
@@ -491,7 +485,7 @@ export class AuthController {
         return;
       }
 
-      const code = otpService.generateOTP(email, 'reset');
+      const code = await otpService.generateOTP(email, 'reset');
       await emailService.sendOTP(email, code, 'reset');
 
       res.status(200).json({ success: true, message: "If an account exists, a reset code has been sent." });
@@ -515,7 +509,7 @@ export class AuthController {
         return;
       }
 
-      const result = otpService.verifyOTP(email, code, 'reset');
+      const result = await otpService.verifyOTP(email, code, 'reset');
 
       if (!result.valid) {
         res.status(400).json({ error: result.error });

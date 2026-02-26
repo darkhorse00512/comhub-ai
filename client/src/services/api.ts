@@ -235,12 +235,12 @@ export const otpApi = {
     }
   },
 
-  async verifySignupOTP(email: string, code: string): Promise<{ success: boolean; token?: string; error?: string }> {
+  async verifySignupOTP(email: string, code: string, password: string): Promise<{ success: boolean; token?: string; error?: string }> {
     try {
       const response = await fetch(`${API_BASE_URL}/auth/signup/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ email, code, password }),
       });
       const data = await response.json();
       if (!response.ok) {

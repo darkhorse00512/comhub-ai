@@ -103,7 +103,7 @@ const Auth = () => {
 
     setLoading(true);
     try {
-      const result = await otpApi.verifySignupOTP(email, otpCode);
+      const result = await otpApi.verifySignupOTP(email, otpCode, password);
       if (!result.success) {
         toast({ title: "Verification failed", description: result.error || "Invalid code", variant: "destructive" });
       } else if (result.token) {

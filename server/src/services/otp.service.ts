@@ -1,126 +1,100 @@
+import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
 
-interface OTPRecord {
-  code: string;
-  email: string;
-  type: 'signup' | 'reset';
-  password?: string; // stored temporarily for signup flow
-  expiresAt: number;
-  attempts: number;
-}
-
-interface RateLimitRecord {
-  count: number;
-  windowStart: number;
-}
-
-const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_ATTEMPTS = 5;
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MAX_SENDS = 3;
-const CLEANUP_INTERVAL_MS = 60 * 1000; // 60 seconds
+const OTP_TTL_MINUTES = 5;
+const RATE_LIMIT_COOLDOWN_SECONDS = 60;
 
 class OTPService {
-  private store = new Map<string, OTPRecord>();
-  private rateLimits = new Map<string, RateLimitRecord>();
-
-  constructor() {
-    setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
-  }
-
-  private makeKey(email: string, type: string): string {
-    return `${type}:${email.toLowerCase()}`;
-  }
-
   private generateCode(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  canSendOTP(email: string): boolean {
-    const key = email.toLowerCase();
-    const record = this.rateLimits.get(key);
-    const now = Date.now();
+  async canSendOTP(email: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    const cooldownStart = new Date(Date.now() - RATE_LIMIT_COOLDOWN_SECONDS * 1000).toISOString();
 
-    if (!record || now - record.windowStart > RATE_LIMIT_WINDOW_MS) {
-      return true;
-    }
+    const { data } = await supabase
+      .from('otp_codes')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .gt('created_at', cooldownStart)
+      .limit(1);
 
-    return record.count < RATE_LIMIT_MAX_SENDS;
+    return !data || data.length === 0;
   }
 
-  private trackSend(email: string): void {
-    const key = email.toLowerCase();
-    const now = Date.now();
-    const record = this.rateLimits.get(key);
-
-    if (!record || now - record.windowStart > RATE_LIMIT_WINDOW_MS) {
-      this.rateLimits.set(key, { count: 1, windowStart: now });
-    } else {
-      record.count++;
-    }
-  }
-
-  generateOTP(email: string, type: 'signup' | 'reset', password?: string): string {
-    const key = this.makeKey(email, type);
+  async generateOTP(email: string, type: 'signup' | 'reset'): Promise<string> {
+    const supabase = getSupabaseClient();
     const code = this.generateCode();
+    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000).toISOString();
+    const normalizedEmail = email.toLowerCase();
 
-    this.store.set(key, {
-      code,
-      email: email.toLowerCase(),
-      type,
-      password,
-      expiresAt: Date.now() + OTP_TTL_MS,
-      attempts: 0,
-    });
+    // Delete any existing OTPs for this email+type
+    await supabase
+      .from('otp_codes')
+      .delete()
+      .eq('email', normalizedEmail)
+      .eq('type', type);
 
-    this.trackSend(email);
+    // Insert new OTP
+    const { error } = await supabase
+      .from('otp_codes')
+      .insert({
+        email: normalizedEmail,
+        code,
+        type,
+        attempts: 0,
+        expires_at: expiresAt,
+      });
+
+    if (error) {
+      logger.error('Failed to store OTP:', error);
+      throw new Error('Failed to generate verification code');
+    }
 
     logger.info(`OTP generated for ${email} (type: ${type})`);
     return code;
   }
 
-  verifyOTP(email: string, code: string, type: 'signup' | 'reset'): { valid: boolean; password?: string; error?: string } {
-    const key = this.makeKey(email, type);
-    const record = this.store.get(key);
+  async verifyOTP(email: string, code: string, type: 'signup' | 'reset'): Promise<{ valid: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    const normalizedEmail = email.toLowerCase();
 
-    if (!record) {
+    // Find the latest OTP for this email+type
+    const { data: otp, error } = await supabase
+      .from('otp_codes')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .eq('type', type)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error || !otp) {
       return { valid: false, error: 'No verification code found. Please request a new one.' };
     }
 
-    if (Date.now() > record.expiresAt) {
-      this.store.delete(key);
-      return { valid: false, error: 'Verification code has expired. Please request a new one.' };
-    }
-
-    if (record.attempts >= MAX_ATTEMPTS) {
-      this.store.delete(key);
+    if (otp.attempts >= MAX_ATTEMPTS) {
+      await supabase.from('otp_codes').delete().eq('id', otp.id);
       return { valid: false, error: 'Too many attempts. Please request a new code.' };
     }
 
-    record.attempts++;
+    if (otp.code !== code) {
+      // Increment attempts
+      await supabase
+        .from('otp_codes')
+        .update({ attempts: otp.attempts + 1 })
+        .eq('id', otp.id);
 
-    if (record.code !== code) {
-      return { valid: false, error: `Invalid code. ${MAX_ATTEMPTS - record.attempts} attempts remaining.` };
+      const remaining = MAX_ATTEMPTS - otp.attempts - 1;
+      return { valid: false, error: `Invalid code. ${remaining} attempts remaining.` };
     }
 
     // Valid — consume the OTP
-    const password = record.password;
-    this.store.delete(key);
-    return { valid: true, password };
-  }
-
-  private cleanup(): void {
-    const now = Date.now();
-    for (const [key, record] of this.store) {
-      if (now > record.expiresAt) {
-        this.store.delete(key);
-      }
-    }
-    for (const [key, record] of this.rateLimits) {
-      if (now - record.windowStart > RATE_LIMIT_WINDOW_MS) {
-        this.rateLimits.delete(key);
-      }
-    }
+    await supabase.from('otp_codes').delete().eq('id', otp.id);
+    return { valid: true };
   }
 }
 
