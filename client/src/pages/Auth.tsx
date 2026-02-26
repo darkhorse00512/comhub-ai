@@ -21,6 +21,73 @@ type AuthView = "signin" | "signup" | "signup-otp" | "forgot" | "reset-otp" | "r
 const emailSchema = z.string().email("Please enter a valid email");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
 
+// Defined outside Auth to prevent remounting on every render (which kills focus)
+const Divider = () => (
+  <div className="relative">
+    <div className="absolute inset-0 flex items-center">
+      <div className="w-full border-t border-border" />
+    </div>
+    <div className="relative flex justify-center text-xs uppercase">
+      <span className="bg-transparent px-2 text-muted-foreground backdrop-blur-sm">or</span>
+    </div>
+  </div>
+);
+
+const OTPInputField = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+  <div className="flex justify-center">
+    <InputOTP maxLength={6} value={value} onChange={onChange} autoFocus>
+      <InputOTPGroup>
+        <InputOTPSlot index={0} className="w-12 h-14 text-lg bg-secondary border-border" />
+        <InputOTPSlot index={1} className="w-12 h-14 text-lg bg-secondary border-border" />
+        <InputOTPSlot index={2} className="w-12 h-14 text-lg bg-secondary border-border" />
+      </InputOTPGroup>
+      <InputOTPSeparator />
+      <InputOTPGroup>
+        <InputOTPSlot index={3} className="w-12 h-14 text-lg bg-secondary border-border" />
+        <InputOTPSlot index={4} className="w-12 h-14 text-lg bg-secondary border-border" />
+        <InputOTPSlot index={5} className="w-12 h-14 text-lg bg-secondary border-border" />
+      </InputOTPGroup>
+    </InputOTP>
+  </div>
+);
+
+const ResendLink = ({ cooldown, loading, onResend }: { cooldown: number; loading: boolean; onResend: () => void }) => (
+  <div className="text-center text-sm text-muted-foreground">
+    {cooldown > 0 ? (
+      <span>Resend code in {cooldown}s</span>
+    ) : (
+      <button type="button" onClick={onResend} className="text-primary hover:underline" disabled={loading}>
+        Resend code
+      </button>
+    )}
+  </div>
+);
+
+const GoogleButton = ({ loading, googleLoading, onClick }: { loading: boolean; googleLoading: boolean; onClick: () => void }) => (
+  <Button
+    type="button"
+    variant="outline"
+    size="lg"
+    className="w-full h-12"
+    disabled={loading || googleLoading}
+    onClick={onClick}
+  >
+    {googleLoading ? (
+      <Loader2 className="w-5 h-5 animate-spin" />
+    ) : (
+      <>
+        <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+        </svg>
+        Continue with Google
+      </>
+    )}
+  </Button>
+);
+
 const Auth = () => {
   const [view, setView] = useState<AuthView>("signin");
   const [email, setEmail] = useState("");
@@ -216,72 +283,6 @@ const Auth = () => {
     }
   };
 
-  const GoogleButton = () => (
-    <Button
-      type="button"
-      variant="outline"
-      size="lg"
-      className="w-full h-12"
-      disabled={loading || googleLoading}
-      onClick={handleGoogleSignIn}
-    >
-      {googleLoading ? (
-        <Loader2 className="w-5 h-5 animate-spin" />
-      ) : (
-        <>
-          <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-          </svg>
-          Continue with Google
-        </>
-      )}
-    </Button>
-  );
-
-  const Divider = () => (
-    <div className="relative">
-      <div className="absolute inset-0 flex items-center">
-        <div className="w-full border-t border-border" />
-      </div>
-      <div className="relative flex justify-center text-xs uppercase">
-        <span className="bg-transparent px-2 text-muted-foreground backdrop-blur-sm">or</span>
-      </div>
-    </div>
-  );
-
-  const OTPInput = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <div className="flex justify-center">
-      <InputOTP maxLength={6} value={value} onChange={onChange}>
-        <InputOTPGroup>
-          <InputOTPSlot index={0} className="w-12 h-14 text-lg bg-secondary border-border" />
-          <InputOTPSlot index={1} className="w-12 h-14 text-lg bg-secondary border-border" />
-          <InputOTPSlot index={2} className="w-12 h-14 text-lg bg-secondary border-border" />
-        </InputOTPGroup>
-        <InputOTPSeparator />
-        <InputOTPGroup>
-          <InputOTPSlot index={3} className="w-12 h-14 text-lg bg-secondary border-border" />
-          <InputOTPSlot index={4} className="w-12 h-14 text-lg bg-secondary border-border" />
-          <InputOTPSlot index={5} className="w-12 h-14 text-lg bg-secondary border-border" />
-        </InputOTPGroup>
-      </InputOTP>
-    </div>
-  );
-
-  const ResendLink = ({ onResend }: { onResend: () => void }) => (
-    <div className="text-center text-sm text-muted-foreground">
-      {resendCooldown > 0 ? (
-        <span>Resend code in {resendCooldown}s</span>
-      ) : (
-        <button type="button" onClick={onResend} className="text-primary hover:underline" disabled={loading}>
-          Resend code
-        </button>
-      )}
-    </div>
-  );
-
   const renderView = () => {
     switch (view) {
       // ─── SIGN IN ───
@@ -321,7 +322,7 @@ const Auth = () => {
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Sign in</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
               <Divider />
-              <GoogleButton />
+              <GoogleButton loading={loading} googleLoading={googleLoading} onClick={handleGoogleSignIn} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("signup"); setPassword(""); }}
@@ -363,7 +364,7 @@ const Auth = () => {
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Create account</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
               <Divider />
-              <GoogleButton />
+              <GoogleButton loading={loading} googleLoading={googleLoading} onClick={handleGoogleSignIn} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("signin"); setPassword(""); }}
@@ -385,11 +386,11 @@ const Auth = () => {
               </p>
             </div>
             <form onSubmit={handleSignupVerifyOTP} className="space-y-6">
-              <OTPInput value={otpCode} onChange={setOtpCode} />
+              <OTPInputField value={otpCode} onChange={setOtpCode} />
               <Button type="submit" variant="gradient" size="lg" className="w-full" disabled={loading || otpCode.length !== 6}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Verify & Create Account</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
-              <ResendLink onResend={handleResendSignupOTP} />
+              <ResendLink cooldown={resendCooldown} loading={loading} onResend={handleResendSignupOTP} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("signup"); setOtpCode(""); }}
@@ -442,7 +443,7 @@ const Auth = () => {
               </p>
             </div>
             <form onSubmit={handleResetVerifyOTP} className="space-y-6">
-              <OTPInput value={otpCode} onChange={setOtpCode} />
+              <OTPInputField value={otpCode} onChange={setOtpCode} />
               <div className="space-y-2">
                 <Label htmlFor="newPassword" className="text-foreground">New Password</Label>
                 <div className="relative">
@@ -455,7 +456,7 @@ const Auth = () => {
               <Button type="submit" variant="gradient" size="lg" className="w-full" disabled={loading || otpCode.length !== 6}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><span>Reset Password</span><ArrowRight className="w-5 h-5" /></>}
               </Button>
-              <ResendLink onResend={handleResendResetOTP} />
+              <ResendLink cooldown={resendCooldown} loading={loading} onResend={handleResendResetOTP} />
             </form>
             <div className="mt-6 text-center">
               <button type="button" onClick={() => { setView("forgot"); setOtpCode(""); setNewPassword(""); }}
