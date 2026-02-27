@@ -19,11 +19,8 @@ const Index = () => {
       {/* Header */}
       <header className="relative z-10 border-b border-border/30">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
-              <Phone className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <span className="text-xl font-bold text-foreground">VoiceAI</span>
+          <div className="flex items-center">
+            <img src="/logo.png" alt="ComHub AI" className="h-10" />
           </div>
 
           <div className="flex items-center gap-4">
@@ -290,7 +287,7 @@ const Index = () => {
             className="text-center mb-16"
           >
             <h2 className="text-3xl lg:text-4xl font-bold text-foreground mb-4">
-              Why Choose VoiceAI?
+              Why Choose ComHub AI?
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
               Cutting-edge technology meets intuitive design for an unparalleled
@@ -378,11 +375,8 @@ const Index = () => {
         <div className="container mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-                  <Phone className="w-4 h-4 text-primary-foreground" />
-                </div>
-                <span className="font-semibold text-foreground">VoiceAI</span>
+              <div className="flex items-center">
+                <img src="/logo.png" alt="ComHub AI" className="h-8" />
               </div>
               <Link to="/dashboard/tutorial" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-2">
                 <BookOpen className="w-4 h-4" />
@@ -390,7 +384,7 @@ const Index = () => {
               </Link>
             </div>
             <p className="text-sm text-muted-foreground">
-              © 2024 VoiceAI. All rights reserved.
+              © 2024 ComHub AI. All rights reserved.
             </p>
           </div>
         </div>

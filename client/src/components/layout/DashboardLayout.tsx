@@ -79,14 +79,10 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
         {/* Sidebar */}
         <Sidebar variant="floating" collapsible="icon">
-          <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:items-center">
-            <Link to="/" className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
-              <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-glow shrink-0">
-                <Phone className="w-5 h-5 text-primary-foreground" />
-              </div>
-              <span className="text-xl font-bold text-foreground group-data-[collapsible=icon]:hidden">
-                ComHub AI
-              </span>
+          <SidebarHeader className="p-4 group-data-[collapsible=icon]:p-3 group-data-[collapsible=icon]:items-center">
+            <Link to="/" className="flex items-center group-data-[collapsible=icon]:justify-center">
+              <img src="/logo.png" alt="ComHub AI" className="flex justify-center mx-auto h-9 group-data-[collapsible=icon]:hidden" />
+              <img src="/logo_col.png" alt="ComHub AI" className="h-8 w-8 hidden group-data-[collapsible=icon]:block" />
             </Link>
           </SidebarHeader>
 

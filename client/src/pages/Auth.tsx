@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, Mail, Lock, ArrowRight, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Mail, Lock, ArrowRight, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { z } from "zod";
 import { otpApi } from "@/services/api";
 import {
@@ -509,12 +509,9 @@ const Auth = () => {
         className="w-full max-w-md relative z-10"
       >
         {/* Logo */}
-        <div className="text-center mb-8">
-          <Link to="/" className="inline-flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
-              <Phone className="w-6 h-6 text-primary-foreground" />
-            </div>
-            <span className="text-2xl font-bold text-foreground">VoiceAI</span>
+        <div className="text-center mb-8 flex justify-center">
+          <Link to="/">
+            <img src="/logo.png" alt="ComHub AI" className="h-12" />
           </Link>
         </div>
 
