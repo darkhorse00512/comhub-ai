@@ -1636,6 +1636,156 @@ export const api = {
     }
   },
 
+  // Admin Groups APIs
+  async getAdminGroups(): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/groups`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch groups");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching admin groups:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async createAdminGroup(name: string, description?: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/groups`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name, description }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create group");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error creating group:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async deleteAdminGroup(groupId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/admin/groups/${groupId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete group");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error deleting group:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  // Group Members APIs
+  async getGroupMembers(groupId: string): Promise<ApiResponse<any[]>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${groupId}/members`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to fetch members");
+      }
+
+      const data = await response.json();
+      return { data: data.data || [], error: null };
+    } catch (error) {
+      console.error("Error fetching group members:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async addGroupMember(groupId: string, userEmail: string, role: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${groupId}/members`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userEmail, role }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to add member");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error adding group member:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async updateGroupMemberRole(groupId: string, userId: string, role: string): Promise<ApiResponse<any>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${groupId}/members/${userId}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ role }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update member role");
+      }
+
+      const data = await response.json();
+      return { data: data.data, error: null };
+    } catch (error) {
+      console.error("Error updating member role:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
+  async removeGroupMember(groupId: string, userId: string): Promise<ApiResponse<void>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/groups/${groupId}/members/${userId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to remove member");
+      }
+
+      return { data: undefined, error: null };
+    } catch (error) {
+      console.error("Error removing group member:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   checkIsAdmin(): boolean {
     try {
       const token = localStorage.getItem("backend_token");

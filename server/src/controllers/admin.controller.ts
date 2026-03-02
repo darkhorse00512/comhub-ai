@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import getSupabaseClient from '../config/supabase';
 import logger from '../utils/logger';
 import storageService from '../services/storage.service';
+import crypto from 'crypto';
 
 class AdminController {
   private supabase = getSupabaseClient();
@@ -742,6 +743,118 @@ class AdminController {
     } catch (error) {
       logger.error('Failed to delete voice model:', error);
       res.status(500).json({ error: 'Failed to delete voice model' });
+    }
+  };
+
+  // ===== GROUPS =====
+
+  getGroups = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { data: groups, error } = await this.supabase
+        .from('groups')
+        .select(`
+          id,
+          name,
+          description,
+          created_at,
+          user_id,
+          phone_numbers:phone_numbers(count),
+          members:group_members(count)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Failed to fetch groups:', error);
+        res.status(500).json({ error: 'Failed to fetch groups' });
+        return;
+      }
+
+      const formatted = (groups || []).map((g: any) => ({
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        created_at: g.created_at,
+        user_id: g.user_id,
+        phone_count: g.phone_numbers?.[0]?.count || 0,
+        member_count: g.members?.[0]?.count || 0,
+      }));
+
+      res.status(200).json({ success: true, data: formatted });
+    } catch (error) {
+      logger.error('Failed to get groups:', error);
+      res.status(500).json({ error: 'Failed to fetch groups' });
+    }
+  };
+
+  createGroup = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const adminUserId = req.user?.id;
+      const { name, description } = req.body;
+
+      if (!name?.trim()) {
+        res.status(400).json({ error: 'Group name is required' });
+        return;
+      }
+
+      const sipPassword = `sip_${crypto.randomBytes(16).toString('hex')}`;
+
+      // Create group
+      const { data: newGroup, error } = await this.supabase
+        .from('groups')
+        .insert({
+          user_id: adminUserId,
+          name: name.trim(),
+          description: description?.trim() || null,
+          sip_password: sipPassword,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to create group:', error);
+        res.status(500).json({ error: 'Failed to create group' });
+        return;
+      }
+
+      // Seed admin as superadmin member
+      await this.supabase
+        .from('group_members')
+        .insert({
+          group_id: newGroup.id,
+          user_id: adminUserId,
+          role: 'superadmin',
+        });
+
+      logger.info('Group created by admin', { groupId: newGroup.id, by: adminUserId });
+
+      res.status(201).json({ success: true, data: newGroup });
+    } catch (error) {
+      logger.error('Failed to create group:', error);
+      res.status(500).json({ error: 'Failed to create group' });
+    }
+  };
+
+  deleteGroup = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const { groupId } = req.params;
+
+      const { error } = await this.supabase
+        .from('groups')
+        .delete()
+        .eq('id', groupId);
+
+      if (error) {
+        logger.error('Failed to delete group:', error);
+        res.status(500).json({ error: 'Failed to delete group' });
+        return;
+      }
+
+      logger.info('Group deleted by admin', { groupId, by: req.user?.id });
+
+      res.status(200).json({ success: true, message: 'Group deleted' });
+    } catch (error) {
+      logger.error('Failed to delete group:', error);
+      res.status(500).json({ error: 'Failed to delete group' });
     }
   };
 }

@@ -48,4 +48,8 @@ router.post('/voice-models', voiceModelFields, adminController.createVoiceModel)
 router.put('/voice-models/:modelId', voiceModelFields, adminController.updateVoiceModel);
 router.delete('/voice-models/:modelId', adminController.deleteVoiceModel);
 
+router.get('/groups', adminController.getGroups);
+router.post('/groups', adminController.createGroup);
+router.delete('/groups/:groupId', adminController.deleteGroup);
+
 export default router;

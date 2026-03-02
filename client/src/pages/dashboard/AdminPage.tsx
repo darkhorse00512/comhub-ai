@@ -1487,6 +1487,193 @@ const VoiceTab = () => {
   );
 };
 
+// ===== Groups Tab =====
+const GroupsTab = () => {
+  const { toast } = useToast();
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({ name: "", description: "" });
+
+  const fetchGroups = useCallback(async () => {
+    setLoading(true);
+    const result = await api.getAdminGroups();
+    if (result.data) setGroups(result.data);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchGroups();
+  }, [fetchGroups]);
+
+  const handleCreate = async () => {
+    if (!formData.name.trim()) return;
+    setSaving(true);
+    try {
+      const result = await api.createAdminGroup(formData.name, formData.description);
+      if (result.error) {
+        toast({ title: "Error", description: result.error, variant: "destructive" });
+      } else {
+        toast({ title: "Success", description: "Group created successfully" });
+        setFormData({ name: "", description: "" });
+        setShowCreateDialog(false);
+        await fetchGroups();
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to create group", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    try {
+      const result = await api.deleteAdminGroup(deleteConfirm);
+      if (result.error) {
+        toast({ title: "Error", description: result.error, variant: "destructive" });
+      } else {
+        toast({ title: "Success", description: "Group deleted" });
+        setGroups(groups.filter((g) => g.id !== deleteConfirm));
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to delete group", variant: "destructive" });
+    } finally {
+      setDeleteConfirm(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Groups</CardTitle>
+            <CardDescription>Manage all platform groups</CardDescription>
+          </div>
+          <Button className="gap-2" onClick={() => setShowCreateDialog(true)}>
+            <Plus className="w-4 h-4" />
+            Create Group
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="text-center py-8">
+              <Loader2 className="w-8 h-8 text-muted-foreground mx-auto animate-spin" />
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>No groups yet. Create one to get started.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-center">Members</TableHead>
+                  <TableHead className="text-center">Phones</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-16">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {groups.map((group) => (
+                  <TableRow key={group.id}>
+                    <TableCell className="font-medium">{group.name}</TableCell>
+                    <TableCell className="text-muted-foreground max-w-[200px] truncate">
+                      {group.description || "—"}
+                    </TableCell>
+                    <TableCell className="text-center">{group.member_count || 0}</TableCell>
+                    <TableCell className="text-center">{group.phone_count || 0}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {format(new Date(group.created_at), "MMM d, yyyy")}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setDeleteConfirm(group.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create Group Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Group</DialogTitle>
+            <DialogDescription>
+              Create a group and become its superadmin
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="group-name">Group Name</Label>
+              <Input
+                id="group-name"
+                placeholder="e.g., Sales Team"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="group-description">Description</Label>
+              <Textarea
+                id="group-description"
+                placeholder="Describe the purpose of this group..."
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              />
+            </div>
+            <Button onClick={handleCreate} className="w-full" disabled={saving || !formData.name.trim()}>
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                "Create Group"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Group</DialogTitle>
+            <DialogDescription>
+              This will permanently delete this group and remove all members. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDelete} className="gap-2">
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
 // ===== Main AdminPage =====
 const AdminPage = () => {
   const { isAdmin } = useAuth();
@@ -1523,9 +1710,10 @@ const AdminPage = () => {
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="groups">Groups</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="calls">Calls</TabsTrigger>
           <TabsTrigger value="phones">Phones</TabsTrigger>
@@ -1539,6 +1727,10 @@ const AdminPage = () => {
 
         <TabsContent value="users">
           <UsersTab />
+        </TabsContent>
+
+        <TabsContent value="groups">
+          <GroupsTab />
         </TabsContent>
 
         <TabsContent value="agents">
