@@ -252,10 +252,11 @@ const TestAgentModal = ({
   const ttsAbortRef = useRef<AbortController | null>(null);
 
   // Use browser TTS as fallback only
-  const speakWithBrowser = useCallback((text: string): Promise<void> => {
+  const speakWithBrowser = useCallback((text: string, onStart?: () => void): Promise<void> => {
     return new Promise((resolve) => {
       try {
         if (!("speechSynthesis" in window)) {
+          onStart?.();
           resolve();
           return;
         }
@@ -267,6 +268,7 @@ const TestAgentModal = ({
         if (voiceConfig?.language) {
           utterance.lang = voiceConfig.language;
         }
+        utterance.onstart = () => onStart?.();
         utterance.onend = () => resolve();
         utterance.onerror = () => resolve();
         window.speechSynthesis.speak(utterance);
@@ -277,11 +279,12 @@ const TestAgentModal = ({
   }, [voiceConfig?.language]);
 
   // Play audio from a Blob (non-streaming fallback)
-  const playBlobAudio = useCallback((blob: Blob): Promise<void> => {
+  const playBlobAudio = useCallback((blob: Blob, onStart?: () => void): Promise<void> => {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       serverAudioRef.current = audio;
+      audio.onplay = () => onStart?.();
       audio.onended = () => {
         URL.revokeObjectURL(url);
         serverAudioRef.current = null;
@@ -297,7 +300,7 @@ const TestAgentModal = ({
   }, []);
 
   // Streaming audio playback via MediaSource API (plays audio as chunks arrive)
-  const playStreamingAudio = useCallback((stream: ReadableStream<Uint8Array>): Promise<void> => {
+  const playStreamingAudio = useCallback((stream: ReadableStream<Uint8Array>, onStart?: () => void): Promise<void> => {
     return new Promise((resolve) => {
       const mediaSource = new MediaSource();
       const audio = new Audio();
@@ -311,6 +314,7 @@ const TestAgentModal = ({
         resolve();
       };
 
+      audio.onplay = () => onStart?.();
       audio.onended = cleanup;
       audio.onerror = cleanup;
 
@@ -386,9 +390,18 @@ const TestAgentModal = ({
     });
   }, []);
 
-  const speakText = useCallback(async (text: string): Promise<void> => {
+  const speakText = useCallback(async (text: string, onAudioStart?: () => void): Promise<void> => {
     setIsSpeaking(true);
     isSpeakingRef.current = true;
+
+    // Ensure onAudioStart fires at most once
+    let startFired = false;
+    const fireStart = () => {
+      if (!startFired) {
+        startFired = true;
+        onAudioStart?.();
+      }
+    };
 
     try {
       // Use server-side TTS for configured voices (ComhubAI, ElevenLabs, OpenAI)
@@ -421,14 +434,17 @@ const TestAgentModal = ({
               && MediaSource.isTypeSupported("audio/mpeg");
 
             if (canStream) {
-              await playStreamingAudio(response.body!);
+              await playStreamingAudio(response.body!, fireStart);
             } else {
               // Fallback: buffer full response then play
               const blob = await response.blob();
               if (blob.size > 0) {
-                await playBlobAudio(blob);
+                await playBlobAudio(blob, fireStart);
               }
             }
+
+            // If audio never started (e.g. empty response), still show the message
+            fireStart();
 
             setIsSpeaking(false);
             isSpeakingRef.current = false;
@@ -443,16 +459,20 @@ const TestAgentModal = ({
       }
 
       // Fallback: browser TTS
-      await speakWithBrowser(text);
+      await speakWithBrowser(text, fireStart);
     } catch {
       // Silent fallback
     }
+
+    // Safety net: always ensure message is shown even if all audio paths fail
+    fireStart();
 
     setIsSpeaking(false);
     isSpeakingRef.current = false;
   }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl, speakWithBrowser, playStreamingAudio, playBlobAudio]);
 
   // Output a message and optionally speak it (audio mode)
+  // In audio mode: text appears only when audio starts playing
   const outputAndSpeak = useCallback(
     async (text: string, nodeLabel?: string) => {
       const msgId = crypto.randomUUID();
@@ -463,17 +483,22 @@ const TestAgentModal = ({
         timestamp: new Date(),
         nodeLabel,
       };
-      setMessages((prev) => [...prev, msg]);
 
-      // Save to call history
-      if (callSessionIdRef.current) {
-        saveMessageToHistory(callSessionIdRef.current, "ai", text);
-      }
+      const showMessage = () => {
+        setMessages((prev) => [...prev, msg]);
+        if (callSessionIdRef.current) {
+          saveMessageToHistory(callSessionIdRef.current, "ai", text);
+        }
+      };
 
       if (callModeRef.current === "audio") {
+        // Defer showing text until audio actually starts playing
         setSpeakingMessageId(msgId);
-        await speakText(text);
+        await speakText(text, showMessage);
         setSpeakingMessageId(null);
+      } else {
+        // Text mode: show immediately
+        showMessage();
       }
     },
     [speakText]
