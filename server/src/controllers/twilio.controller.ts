@@ -229,6 +229,40 @@ export class TwilioController {
     }
   }
 
+  // Handle <Gather input="speech"> result — real-time STT from Twilio
+  async handleSpeech(req: Request, res: Response): Promise<void> {
+    try {
+      const { CallSid, SpeechResult, Confidence } = req.body;
+
+      logger.info('Speech result received', {
+        callSid: CallSid,
+        speechResult: SpeechResult?.substring(0, 100),
+        confidence: Confidence,
+      });
+
+      const twiml = await voiceConversationService.processSpeechResult(
+        CallSid,
+        SpeechResult || '',
+        parseFloat(Confidence) || 0
+      );
+
+      res.type('text/xml');
+      res.send(twiml);
+    } catch (error) {
+      logger.error('Failed to handle speech result:', error);
+      res.type('text/xml');
+      res.send(`
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice">Sorry, I had trouble processing that. Let me try again.</Say>
+          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" language="en-US"/>
+          <Say voice="alice">Thank you for calling. Goodbye.</Say>
+          <Hangup/>
+        </Response>
+      `);
+    }
+  }
+
   async handleSIPForward(req: Request, res: Response): Promise<void> {
     try {
       const { CallSid, From } = req.body;

@@ -38,11 +38,13 @@ Remember you are in a real-time voice conversation, so keep responses conversati
 
   async generateResponse(
     userMessage: string,
-    conversationHistory: ChatMessage[] = []
+    conversationHistory: ChatMessage[] = [],
+    options?: { voiceMode?: boolean }
   ): Promise<AIResponse> {
     try {
       logger.info('Generating AI response', {
         userMessage: userMessage.substring(0, 100),
+        voiceMode: options?.voiceMode,
       });
 
       const messages: ChatMessage[] = [
@@ -51,11 +53,15 @@ Remember you are in a real-time voice conversation, so keep responses conversati
         { role: 'user', content: userMessage },
       ];
 
+      // Voice mode: use faster model + shorter responses for real-time conversation
+      const model = options?.voiceMode ? 'gpt-4o-mini' : config.openai.model;
+      const maxTokens = options?.voiceMode ? 150 : 500;
+
       const completion = await this.openai.chat.completions.create({
-        model: config.openai.model,
+        model,
         messages,
         temperature: 0.7,
-        max_tokens: 500,
+        max_tokens: maxTokens,
       });
 
       const aiMessage = completion.choices[0]?.message?.content || '';

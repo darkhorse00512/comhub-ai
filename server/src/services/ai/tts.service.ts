@@ -130,14 +130,14 @@ class TTSService {
       logger.info('Converting text to speech via ElevenLabs', {
         textLength: text.length,
         voiceId: options.voiceId,
-        model: options.model || 'eleven_multilingual_v2',
+        model: options.model || 'eleven_turbo_v2_5',
       });
 
       const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}?optimize_streaming_latency=4&output_format=mp3_22050_32`,
         {
           text,
-          model_id: options.model || 'eleven_multilingual_v2',
+          model_id: options.model || 'eleven_turbo_v2_5',
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
@@ -178,14 +178,14 @@ class TTSService {
       logger.info('Streaming text to speech via ElevenLabs', {
         textLength: text.length,
         voiceId: options.voiceId,
-        model: options.model || 'eleven_multilingual_v2',
+        model: options.model || 'eleven_turbo_v2_5',
       });
 
       const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}/stream`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${options.voiceId}/stream?optimize_streaming_latency=4&output_format=mp3_22050_32`,
         {
           text,
-          model_id: options.model || 'eleven_multilingual_v2',
+          model_id: options.model || 'eleven_turbo_v2_5',
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,

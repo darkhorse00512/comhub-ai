@@ -1,15 +1,11 @@
 import twilio from 'twilio';
 import config from '../config';
 import logger from '../utils/logger';
-import sttService from './ai/stt.service';
 import gptService, { ChatMessage } from './ai/gpt.service';
 import getSupabaseClient from '../config/supabase';
 import { WorkflowEngine, WorkflowStepResult, WorkflowMessage } from './workflow-engine.service';
 import agentVoiceService, { ResolvedVoiceSettings } from './agent-voice.service';
-import path from 'path';
-import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import axios from 'axios';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
@@ -32,8 +28,8 @@ class VoiceConversationService {
   private supabase = getSupabaseClient();
 
   private readonly DEFAULT_GREETING = "Hey there! Here is ComHub AI. What can I help you with today?";
-  private readonly SILENCE_TIMEOUT = 2; // seconds
-  private readonly MAX_RECORDING_LENGTH = 30; // seconds
+  private readonly SPEECH_TIMEOUT = 'auto'; // Twilio auto-detects end of speech
+  private readonly MAX_SPEECH_TIME = 30; // seconds
 
   /**
    * Load an agent's workflow from the database and create a WorkflowEngine.
@@ -60,7 +56,6 @@ class VoiceConversationService {
       const engine = new WorkflowEngine(nodes, edges);
       const initialResult = await engine.start(direction);
 
-      // Use shared service to resolve voice settings (including ComhubAI voice model lookup)
       const voiceSettings = await agentVoiceService.resolveVoiceSettings(agentId) || undefined;
 
       return { engine, initialResult, voiceSettings };
@@ -89,19 +84,14 @@ class VoiceConversationService {
     try {
       logger.info('=== STARTING INBOUND CONVERSATION ===', { callSid, callerNumber, calleeNumber });
 
-      // Get or create default user for inbound calls
       let userId: string;
       try {
         userId = await this.getDefaultUserId();
-        logger.info('Got default user ID', { userId });
       } catch (userError) {
         logger.error('Failed to get default user ID:', userError);
-        // Fallback: create call without user tracking
         throw new Error('Failed to get system user for inbound call');
       }
 
-      // Create call session in database
-      logger.info('Creating call session in database...');
       const { data: callSession, error } = await this.supabase
         .from('call_sessions')
         .insert({
@@ -119,9 +109,7 @@ class VoiceConversationService {
         logger.error('Failed to create call session:', error);
         throw error;
       }
-      logger.info('Call session created', { callSessionId: callSession.id });
 
-      // Initialize conversation state
       const conversation: ActiveConversation = {
         callSid,
         callSessionId: callSession.id,
@@ -136,7 +124,6 @@ class VoiceConversationService {
 
       this.activeConversations.set(callSid, conversation);
 
-      // Determine greeting: use workflow engine if agent is provided, else default
       let greetingText = this.DEFAULT_GREETING;
 
       if (agentId) {
@@ -145,59 +132,34 @@ class VoiceConversationService {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
-          if (spokenText) {
-            greetingText = spokenText;
-          }
+          if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for inbound call', {
-            callSid,
-            agentId,
-            waitingForInput: workflow.initialResult.waitingForInput,
-            isComplete: workflow.initialResult.isComplete,
+            callSid, agentId,
             ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
           });
         }
       }
 
-      // Generate greeting audio
-      logger.info('Generating greeting audio...', { greeting: greetingText.substring(0, 100) });
       let greetingAudioUrl: string;
       try {
         greetingAudioUrl = await this.generateAndSaveAudio(
-          greetingText,
-          callSession.id,
-          'greeting',
-          conversation.voiceSettings
+          greetingText, callSession.id, 'greeting', conversation.voiceSettings
         );
-        logger.info('Greeting audio generated', { url: greetingAudioUrl });
       } catch (audioError) {
         logger.error('Failed to generate greeting audio:', audioError);
         const response = new VoiceResponse();
-        response.say({ voice: 'alice' }, greetingText);
-        response.record({
-          action: `${config.server.apiBaseUrl}/api/twilio/handle-recording`,
-          method: 'POST',
-          maxLength: this.MAX_RECORDING_LENGTH,
-          timeout: this.SILENCE_TIMEOUT,
-          playBeep: false,
-          trim: 'trim-silence',
-        });
-        response.say('Goodbye!');
-        response.hangup();
+        response.say({ voice: 'Polly.Joanna' }, greetingText);
+        this.appendGather(response);
         return response.toString();
       }
 
-      // Save greeting message to database
       await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: greetingText });
 
-      // Generate TwiML for greeting + recording
-      const twiml = this.generateGreetingTwiML(greetingAudioUrl);
+      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl);
 
       logger.info('Inbound conversation started successfully', {
-        callSid,
-        callSessionId: callSession.id,
-        callerNumber,
-        audioUrl: greetingAudioUrl,
+        callSid, callSessionId: callSession.id,
       });
 
       return twiml;
@@ -215,11 +177,10 @@ class VoiceConversationService {
     agentId?: string
   ): Promise<string> {
     try {
-      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId, existingSessionId, agentId });
+      logger.info('=== STARTING OUTBOUND CONVERSATION ===', { callSid, calleeNumber, userId });
 
       let callSession: any;
 
-      // Try to use existing session if provided
       if (existingSessionId) {
         const { data: existingSession, error: fetchError } = await this.supabase
           .from('call_sessions')
@@ -228,25 +189,17 @@ class VoiceConversationService {
           .single();
 
         if (existingSession && !fetchError) {
-          // Update the existing session with callSid and set status to active
           const { data: updatedSession, error: updateError } = await this.supabase
             .from('call_sessions')
-            .update({
-              channel_id: callSid,
-              status: 'active',
-            })
+            .update({ channel_id: callSid, status: 'active' })
             .eq('id', existingSessionId)
             .select()
             .single();
 
-          if (updatedSession && !updateError) {
-            callSession = updatedSession;
-            logger.info('Using existing call session', { callSessionId: callSession.id, userId: callSession.user_id });
-          }
+          if (updatedSession && !updateError) callSession = updatedSession;
         }
       }
 
-      // If no existing session found/used, create new one
       if (!callSession) {
         const { data: newSession, error } = await this.supabase
           .from('call_sessions')
@@ -265,12 +218,9 @@ class VoiceConversationService {
           logger.error('Failed to create call session in database:', error);
           throw error;
         }
-
         callSession = newSession;
-        logger.info('Created new call session in database', { callSessionId: callSession.id });
       }
 
-      // Initialize conversation state
       const conversation: ActiveConversation = {
         callSid,
         callSessionId: callSession.id,
@@ -285,7 +235,6 @@ class VoiceConversationService {
 
       this.activeConversations.set(callSid, conversation);
 
-      // Determine greeting: use workflow engine if agent is provided, else default
       let greetingText = this.DEFAULT_GREETING;
 
       if (agentId) {
@@ -294,41 +243,25 @@ class VoiceConversationService {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
-          if (spokenText) {
-            greetingText = spokenText;
-          }
+          if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for outbound call', {
-            callSid,
-            agentId,
-            waitingForInput: workflow.initialResult.waitingForInput,
-            isComplete: workflow.initialResult.isComplete,
+            callSid, agentId,
             ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
           });
         }
       }
 
-      // Generate greeting audio and upload to Supabase
-      logger.info('Generating greeting audio...', { greeting: greetingText.substring(0, 100) });
       const greetingAudioUrl = await this.generateAndSaveAudio(
-        greetingText,
-        callSession.id,
-        'greeting',
-        conversation.voiceSettings
+        greetingText, callSession.id, 'greeting', conversation.voiceSettings
       );
-      logger.info('Greeting audio generated', { url: greetingAudioUrl });
 
-      // Save greeting message to database
       await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: greetingText });
 
-      // Generate TwiML for greeting + recording
-      const twiml = this.generateGreetingTwiML(greetingAudioUrl);
+      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl);
 
       logger.info('Outbound conversation started successfully', {
-        callSid,
-        callSessionId: callSession.id,
-        calleeNumber,
-        audioUrl: greetingAudioUrl,
+        callSid, callSessionId: callSession.id,
       });
 
       return twiml;
@@ -338,10 +271,15 @@ class VoiceConversationService {
     }
   }
 
-  async processRecording(
+  /**
+   * Process speech result from Twilio <Gather input="speech">.
+   * This replaces the old Record → Download → Whisper flow.
+   * Twilio does real-time STT and returns text directly — saves 3-5 seconds per turn.
+   */
+  async processSpeechResult(
     callSid: string,
-    recordingUrl: string,
-    recordingSid: string
+    speechResult: string,
+    confidence: number
   ): Promise<string> {
     try {
       const conversation = this.activeConversations.get(callSid);
@@ -350,42 +288,29 @@ class VoiceConversationService {
         return this.generateEndCallTwiML("Sorry, we lost track of our conversation. Goodbye!");
       }
 
-      logger.info('Processing recording', { callSid, recordingSid });
+      logger.info('Processing speech result', { callSid, text: speechResult, confidence });
 
-      // Download and transcribe the recording
-      const transcribedText = await this.downloadAndTranscribe(recordingUrl);
-
-      if (!transcribedText || transcribedText.trim().length === 0) {
-        // No speech detected, ask them to speak again
+      if (!speechResult || speechResult.trim().length === 0) {
         const retryMessage = "I didn't catch that. Could you please repeat?";
-        const retryAudioPath = await this.generateAndSaveAudio(
-          retryMessage,
-          conversation.callSessionId,
-          'retry',
-          conversation.voiceSettings
+        const retryAudioUrl = await this.generateAndSaveAudio(
+          retryMessage, conversation.callSessionId, 'retry', conversation.voiceSettings
         );
-
-        await this.saveMessage(conversation.callSessionId, 'ai', retryMessage, retryAudioPath);
-
-        return this.generatePlayAndRecordTwiML(retryAudioPath);
+        await this.saveMessage(conversation.callSessionId, 'ai', retryMessage, retryAudioUrl);
+        return this.generatePlayAndGatherTwiML(retryAudioUrl);
       }
 
-      // Save user message
-      await this.saveMessage(conversation.callSessionId, 'user', transcribedText);
-      conversation.history.push({ role: 'user', content: transcribedText });
+      await this.saveMessage(conversation.callSessionId, 'user', speechResult);
+      conversation.history.push({ role: 'user', content: speechResult });
 
-      logger.info('User said', { callSid, text: transcribedText });
+      logger.info('User said', { callSid, text: speechResult });
 
       let responseText: string;
 
-      // Use workflow engine if available, otherwise fall back to simple AI chat
       if (conversation.workflowEngine && conversation.workflowEngine.isWaitingForInput()) {
-        const result = await conversation.workflowEngine.processMessage(transcribedText);
+        const result = await conversation.workflowEngine.processMessage(speechResult);
         responseText = this.combineMessages(result.messages);
 
-        if (!responseText) {
-          responseText = 'Thank you for calling. Goodbye!';
-        }
+        if (!responseText) responseText = 'Thank you for calling. Goodbye!';
 
         logger.info('Workflow engine processed message', {
           callSid,
@@ -394,68 +319,84 @@ class VoiceConversationService {
           currentStage: result.currentStage,
         });
 
-        // If workflow is complete or call needs to transfer, handle terminal states
         if (result.isComplete) {
-          const aiAudioPath = await this.generateAndSaveAudio(
-            responseText,
-            conversation.callSessionId,
-            'response',
-            conversation.voiceSettings
+          const aiAudioUrl = await this.generateAndSaveAudio(
+            responseText, conversation.callSessionId, 'response', conversation.voiceSettings
           );
-          await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioPath);
+          await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioUrl);
           conversation.history.push({ role: 'assistant', content: responseText });
 
           if (result.transferTo) {
-            // Handle call transfer
-            logger.info('Call transfer requested', { callSid, transferTo: result.transferTo });
             const response = new VoiceResponse();
-            response.play(aiAudioPath);
+            response.play(aiAudioUrl);
             const dial = response.dial();
             dial.number(result.transferTo);
             return response.toString();
           }
 
-          // Workflow done - end call gracefully
-          return this.generateEndCallTwiML(responseText);
+          const response = new VoiceResponse();
+          response.play(aiAudioUrl);
+          response.hangup();
+          return response.toString();
         }
       } else {
-        // Fall back to simple AI chat (no workflow)
-        const aiResponse = await gptService.generateResponse(transcribedText, conversation.history);
+        const aiResponse = await gptService.generateResponse(speechResult, conversation.history, { voiceMode: true });
         responseText = aiResponse.text;
       }
 
-      // Generate audio for response
-      const aiAudioPath = await this.generateAndSaveAudio(
-        responseText,
-        conversation.callSessionId,
-        'response',
-        conversation.voiceSettings
+      const aiAudioUrl = await this.generateAndSaveAudio(
+        responseText, conversation.callSessionId, 'response', conversation.voiceSettings
       );
 
-      // Save AI response
-      await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioPath);
+      await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioUrl);
       conversation.history.push({ role: 'assistant', content: responseText });
 
       logger.info('AI responded', { callSid, text: responseText.substring(0, 100) });
 
-      // Continue conversation
-      return this.generatePlayAndRecordTwiML(aiAudioPath);
+      return this.generatePlayAndGatherTwiML(aiAudioUrl);
     } catch (error) {
-      logger.error('Failed to process recording:', error);
+      logger.error('Failed to process speech result:', error);
 
       const errorMessage = "I'm sorry, I encountered an error. Let me try again.";
       const conversation = this.activeConversations.get(callSid);
 
       if (conversation) {
-        const errorAudioPath = await this.generateAndSaveAudio(
-          errorMessage,
-          conversation.callSessionId,
-          'error',
-          conversation.voiceSettings
-        );
-        return this.generatePlayAndRecordTwiML(errorAudioPath);
+        try {
+          const errorAudioUrl = await this.generateAndSaveAudio(
+            errorMessage, conversation.callSessionId, 'error', conversation.voiceSettings
+          );
+          return this.generatePlayAndGatherTwiML(errorAudioUrl);
+        } catch {
+          // Fall through to Twilio Say
+        }
       }
 
+      const response = new VoiceResponse();
+      response.say({ voice: 'Polly.Joanna' }, errorMessage);
+      this.appendGather(response);
+      return response.toString();
+    }
+  }
+
+  /**
+   * Legacy: Process recording (kept for backward compatibility).
+   */
+  async processRecording(
+    callSid: string,
+    recordingUrl: string,
+    recordingSid: string
+  ): Promise<string> {
+    try {
+      const conversation = this.activeConversations.get(callSid);
+      if (!conversation) {
+        return this.generateEndCallTwiML("Sorry, we lost track of our conversation. Goodbye!");
+      }
+
+      logger.info('Processing recording (legacy path)', { callSid, recordingSid });
+      const transcribedText = await this.downloadAndTranscribe(recordingUrl);
+      return this.processSpeechResult(callSid, transcribedText, 1.0);
+    } catch (error) {
+      logger.error('Failed to process recording:', error);
       return this.generateEndCallTwiML("Sorry, something went wrong. Please try again later.");
     }
   }
@@ -465,13 +406,9 @@ class VoiceConversationService {
       const conversation = this.activeConversations.get(callSid);
       if (!conversation) return;
 
-      // Update call session status in database
       await this.supabase
         .from('call_sessions')
-        .update({
-          status: 'ended',
-          ended_at: new Date().toISOString(),
-        })
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
         .eq('channel_id', callSid);
 
       this.activeConversations.delete(callSid);
@@ -490,58 +427,48 @@ class VoiceConversationService {
     return this.activeConversations.get(callSid);
   }
 
-  private generateGreetingTwiML(audioUrl: string): string {
-    const response = new VoiceResponse();
+  // ===== TwiML Generation =====
 
-    // Play greeting (audioUrl is now a public Supabase URL)
-    response.play(audioUrl);
-
-    // Record user response with silence detection
-    response.record({
-      action: `${config.server.apiBaseUrl}/api/twilio/handle-recording`,
+  /**
+   * Append <Gather input="speech"> for real-time speech recognition.
+   * Uses Twilio's built-in STT — eliminates Record → Download → Whisper latency.
+   *
+   * Key settings for natural conversation:
+   * - speechModel: "experimental_conversations" — optimized for back-and-forth dialogue
+   * - speechTimeout: "auto" — Twilio auto-detects natural pauses
+   * - enhanced: true — higher accuracy speech recognition
+   */
+  private appendGather(response: twilio.twiml.VoiceResponse): void {
+    response.gather({
+      input: ['speech'],
+      action: `${config.server.apiBaseUrl}/api/twilio/handle-speech`,
       method: 'POST',
-      maxLength: this.MAX_RECORDING_LENGTH,
-      timeout: this.SILENCE_TIMEOUT,
-      playBeep: false,
-      trim: 'trim-silence',
-    });
+      speechTimeout: this.SPEECH_TIMEOUT,
+      speechModel: 'experimental_conversations',
+      enhanced: true,
+      language: 'en-US',
+    } as any);
 
-    // Fallback if no recording (user hangs up during greeting)
-    response.say('Goodbye!');
+    // Fallback if no speech detected
+    response.say({ voice: 'Polly.Joanna' }, 'Thank you for calling. Goodbye!');
     response.hangup();
-
-    return response.toString();
   }
 
-  private generatePlayAndRecordTwiML(audioUrl: string): string {
+  private generatePlayAndGatherTwiML(audioUrl: string): string {
     const response = new VoiceResponse();
-
-    // Play AI response (audioUrl is now a public Supabase URL)
     response.play(audioUrl);
-
-    // Record next user response
-    response.record({
-      action: `${config.server.apiBaseUrl}/api/twilio/handle-recording`,
-      method: 'POST',
-      maxLength: this.MAX_RECORDING_LENGTH,
-      timeout: this.SILENCE_TIMEOUT,
-      playBeep: false,
-      trim: 'trim-silence',
-    });
-
-    // If recording times out completely, end call
-    response.say('Thank you for calling. Goodbye!');
-    response.hangup();
-
+    this.appendGather(response);
     return response.toString();
   }
 
   private generateEndCallTwiML(message: string): string {
     const response = new VoiceResponse();
-    response.say({ voice: 'alice' }, message);
+    response.say({ voice: 'Polly.Joanna' }, message);
     response.hangup();
     return response.toString();
   }
+
+  // ===== Audio Generation =====
 
   private async generateAndSaveAudio(
     text: string,
@@ -553,14 +480,6 @@ class VoiceConversationService {
       const publicUrl = await agentVoiceService.generateAndUploadTTS(
         text, callSessionId, type, voiceSettings || null
       );
-
-      logger.info('Audio generated and uploaded', {
-        callSessionId,
-        type,
-        provider: voiceSettings?.ttsProvider || 'openai',
-        url: publicUrl,
-      });
-
       return publicUrl;
     } catch (error) {
       logger.error('Failed to generate and save audio:', error);
@@ -568,33 +487,28 @@ class VoiceConversationService {
     }
   }
 
+  /**
+   * Legacy: Download and transcribe recording.
+   */
   private async downloadAndTranscribe(recordingUrl: string): Promise<string> {
     try {
-      // Add .wav extension and wait for Twilio to finalize recording
-      const audioUrl = `${recordingUrl}.wav`;
+      const axios = (await import('axios')).default;
+      const path = await import('path');
+      const fs = await import('fs');
+      const sttService = (await import('./ai/stt.service')).default;
 
-      // Download the recording from Twilio
+      const audioUrl = `${recordingUrl}.wav`;
       const response = await axios.get(audioUrl, {
         responseType: 'arraybuffer',
-        auth: {
-          username: config.twilio.accountSid,
-          password: config.twilio.authToken,
-        },
+        auth: { username: config.twilio.accountSid, password: config.twilio.authToken },
       });
 
-      // Save temporarily for transcription
       const tempPath = path.join(__dirname, '../../recordings/temp', `${uuidv4()}.wav`);
       const tempDir = path.dirname(tempPath);
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-      }
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
       fs.writeFileSync(tempPath, Buffer.from(response.data));
-
-      // Transcribe using OpenAI Whisper
       const transcription = await sttService.transcribeAudio(tempPath);
-
-      // Clean up temp file
       fs.unlinkSync(tempPath);
 
       return transcription;
@@ -604,6 +518,8 @@ class VoiceConversationService {
     }
   }
 
+  // ===== Database =====
+
   private async saveMessage(
     callSessionId: string,
     role: 'user' | 'ai',
@@ -611,14 +527,9 @@ class VoiceConversationService {
     audioUrl?: string
   ): Promise<void> {
     try {
-      await this.supabase
-        .from('call_messages')
-        .insert({
-          call_session_id: callSessionId,
-          role,
-          content,
-          audio_url: audioUrl || null, // audioUrl is already a public URL
-        });
+      await this.supabase.from('call_messages').insert({
+        call_session_id: callSessionId, role, content, audio_url: audioUrl || null,
+      });
     } catch (error) {
       logger.error('Failed to save message:', error);
     }
@@ -626,44 +537,21 @@ class VoiceConversationService {
 
   private async getDefaultUserId(): Promise<string> {
     try {
-      // Get or create a default system user for inbound calls
-      logger.info('Looking for system user...');
-      const { data: user, error } = await this.supabase
-        .from('users')
-        .select('id')
-        .eq('email', 'system@comhubai.com')
-        .single();
+      const { data: user } = await this.supabase
+        .from('users').select('id').eq('email', 'system@comhubai.com').single();
+      if (user) return user.id;
 
-      if (user) {
-        logger.info('Found existing system user', { userId: user.id });
-        return user.id;
-      }
-
-      // User not found - try to create
-      logger.info('System user not found, creating...');
       const { data: newUser, error: createError } = await this.supabase
-        .from('users')
-        .insert({ email: 'system@comhubai.com' })
-        .select()
-        .single();
+        .from('users').insert({ email: 'system@comhubai.com' }).select().single();
 
       if (createError) {
-        // Check if it's a duplicate key error (user was created by another request)
         if (createError.code === '23505' || createError.message?.includes('duplicate')) {
-          logger.info('User already exists (race condition), fetching again...');
           const { data: existingUser } = await this.supabase
-            .from('users')
-            .select('id')
-            .eq('email', 'system@comhubai.com')
-            .single();
-
+            .from('users').select('id').eq('email', 'system@comhubai.com').single();
           if (existingUser) return existingUser.id;
         }
-        logger.error('Failed to create system user:', createError);
         throw createError;
       }
-
-      logger.info('Created new system user', { userId: newUser.id });
       return newUser.id;
     } catch (error) {
       logger.error('getDefaultUserId error:', error);
@@ -671,87 +559,55 @@ class VoiceConversationService {
     }
   }
 
-  // Test inbound call - creates a real Twilio call to test the full flow
+  // ===== Test Calls =====
+
   async testInboundCall(userId: string, phoneNumber?: string): Promise<{
     callSessionId: string;
     callSid: string;
     message: string;
   }> {
     try {
-      logger.info('=== TESTING INBOUND CALL (FULL TEST) ===', { userId, phoneNumber });
-
-      // Import Twilio service
+      logger.info('=== TESTING INBOUND CALL ===', { userId, phoneNumber });
       const twilioSIPService = (await import('../twilio/sip.service')).default;
 
       if (!twilioSIPService.isConfigured()) {
-        throw new Error('Twilio is not configured. Please set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env');
+        throw new Error('Twilio is not configured');
       }
 
-      // If no phone number provided, call the Twilio number itself (will fail but test the flow)
-      // Or better: create a test session without actual call for quick testing
       if (!phoneNumber) {
-        // Quick test - just generate greeting and save to database
         const testCallSid = `test_${uuidv4()}`;
         const { data: callSession, error } = await this.supabase
           .from('call_sessions')
           .insert({
-            user_id: userId,
-            status: 'active',
-            direction: 'inbound',
-            caller_number: 'test-user',
-            callee_number: config.twilio.phoneNumber,
+            user_id: userId, status: 'active', direction: 'inbound',
+            caller_number: 'test-user', callee_number: config.twilio.phoneNumber,
             channel_id: testCallSid,
           })
-          .select()
-          .single();
+          .select().single();
 
-        if (error) {
-          logger.error('Failed to create test call session:', error);
-          throw error;
-        }
+        if (error) throw error;
 
-        // Generate greeting audio
         const greetingAudioUrl = await this.generateAndSaveAudio(
-          this.DEFAULT_GREETING,
-          callSession.id,
-          'greeting'
+          this.DEFAULT_GREETING, callSession.id, 'greeting'
         );
-
-        // Save greeting message
         await this.saveMessage(callSession.id, 'ai', this.DEFAULT_GREETING, greetingAudioUrl);
 
-        // Generate a sample user response for testing
         const testUserMessage = "Hello, I'm testing the AI assistant.";
         await this.saveMessage(callSession.id, 'user', testUserMessage);
 
-        // Generate AI response
         const aiResponse = await gptService.generateResponse(testUserMessage, [
           { role: 'assistant', content: this.DEFAULT_GREETING },
           { role: 'user', content: testUserMessage },
-        ]);
+        ], { voiceMode: true });
 
-        // Generate AI response audio
         const responseAudioUrl = await this.generateAndSaveAudio(
-          aiResponse.text,
-          callSession.id,
-          'response'
+          aiResponse.text, callSession.id, 'response'
         );
-
-        // Save AI response
         await this.saveMessage(callSession.id, 'ai', aiResponse.text, responseAudioUrl);
 
-        // Mark call as ended
-        await this.supabase
-          .from('call_sessions')
-          .update({
-            status: 'ended',
-            ended_at: new Date().toISOString(),
-          })
+        await this.supabase.from('call_sessions')
+          .update({ status: 'ended', ended_at: new Date().toISOString() })
           .eq('id', callSession.id);
-
-        logger.info('Test inbound call completed (quick test)', {
-          callSessionId: callSession.id,
-        });
 
         return {
           callSessionId: callSession.id,
@@ -760,39 +616,20 @@ class VoiceConversationService {
         };
       }
 
-      // Full test - make actual Twilio call
-      // Create call session first
       const { data: callSession, error } = await this.supabase
         .from('call_sessions')
         .insert({
-          user_id: userId,
-          status: 'ringing',
-          direction: 'outbound', // We're calling out to test
-          caller_number: config.twilio.phoneNumber,
-          callee_number: phoneNumber,
+          user_id: userId, status: 'ringing', direction: 'outbound',
+          caller_number: config.twilio.phoneNumber, callee_number: phoneNumber,
         })
-        .select()
-        .single();
+        .select().single();
 
-      if (error) {
-        logger.error('Failed to create test call session:', error);
-        throw error;
-      }
+      if (error) throw error;
 
-      // Make the actual Twilio call
       const call = await twilioSIPService.makeCall(phoneNumber, undefined, callSession.id);
 
-      // Update session with call SID
-      await this.supabase
-        .from('call_sessions')
-        .update({ channel_id: call.sid })
-        .eq('id', callSession.id);
-
-      logger.info('Test call initiated', {
-        callSessionId: callSession.id,
-        callSid: call.sid,
-        to: phoneNumber,
-      });
+      await this.supabase.from('call_sessions')
+        .update({ channel_id: call.sid }).eq('id', callSession.id);
 
       return {
         callSessionId: callSession.id,
