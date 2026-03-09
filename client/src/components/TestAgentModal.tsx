@@ -116,6 +116,7 @@ const TestAgentModal = ({
   const [isCallActive, setIsCallActive] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
   const [callSessionId, setCallSessionId] = useState<string | null>(null);
   const [currentWorkflowStep, setCurrentWorkflowStep] = useState<string | null>(null);
@@ -454,12 +455,28 @@ const TestAgentModal = ({
   // Output a message and optionally speak it (audio mode)
   const outputAndSpeak = useCallback(
     async (text: string, nodeLabel?: string) => {
-      addMessage("ai", text, nodeLabel);
+      const msgId = crypto.randomUUID();
+      const msg: Message = {
+        id: msgId,
+        role: "ai",
+        content: text,
+        timestamp: new Date(),
+        nodeLabel,
+      };
+      setMessages((prev) => [...prev, msg]);
+
+      // Save to call history
+      if (callSessionIdRef.current) {
+        saveMessageToHistory(callSessionIdRef.current, "ai", text);
+      }
+
       if (callModeRef.current === "audio") {
+        setSpeakingMessageId(msgId);
         await speakText(text);
+        setSpeakingMessageId(null);
       }
     },
-    [addMessage, speakText]
+    [speakText]
   );
 
   // --- Auto recording for audio mode ---
@@ -1221,6 +1238,7 @@ const TestAgentModal = ({
                   isLoading={isLoading}
                   isRecording={isRecording}
                   isSpeaking={isSpeaking}
+                  speakingMessageId={speakingMessageId}
                   callDuration={callDuration}
                   callMode={callMode}
                   messages={messages}
@@ -1255,6 +1273,7 @@ const TestAgentModal = ({
                   isLoading={isLoading}
                   isRecording={isRecording}
                   isSpeaking={isSpeaking}
+                  speakingMessageId={speakingMessageId}
                   callDuration={callDuration}
                   callMode={callMode}
                   messages={messages}
@@ -1506,6 +1525,7 @@ interface CallInterfaceProps {
   isLoading: boolean;
   isRecording: boolean;
   isSpeaking: boolean;
+  speakingMessageId: string | null;
   callDuration: number;
   callMode: CallMode;
   messages: Message[];
@@ -1529,6 +1549,7 @@ const CallInterface = ({
   isLoading,
   isRecording,
   isSpeaking,
+  speakingMessageId,
   callDuration,
   callMode,
   messages,
@@ -1648,15 +1669,23 @@ const CallInterface = ({
                         <p className="text-sm leading-relaxed">
                           {message.content}
                         </p>
-                        <span
-                          className={`text-[10px] mt-1 block ${
-                            message.role === "user"
-                              ? "text-blue-100"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          {message.timestamp.toLocaleTimeString()}
-                        </span>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {speakingMessageId === message.id && (
+                            <span className="inline-flex items-center gap-1 text-purple-500 dark:text-purple-400">
+                              <Volume2 className="w-3 h-3 animate-pulse" />
+                              <span className="text-[10px]">Playing</span>
+                            </span>
+                          )}
+                          <span
+                            className={`text-[10px] ${
+                              message.role === "user"
+                                ? "text-blue-100"
+                                : "text-muted-foreground"
+                            }`}
+                          >
+                            {message.timestamp.toLocaleTimeString()}
+                          </span>
+                        </div>
                       </div>
                       {message.role === "user" && (
                         <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center flex-shrink-0 mt-0.5">
