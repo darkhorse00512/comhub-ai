@@ -26,7 +26,7 @@ const DEFAULT_CALL_SETTINGS: CallSettings = {
   language: 'en-US',
   speechTimeout: 'auto',
   maxCallDuration: 600,
-  silenceTimeout: 2,
+  silenceTimeout: 1,
   interruptionSensitivity: 'low',
   interruptionWordCountThreshold: 3,
   onIdleMessage: '',

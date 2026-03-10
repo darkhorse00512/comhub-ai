@@ -50,7 +50,6 @@ import {
   Settings,
   VolumeX,
   Info,
-  Voicemail,
   Music,
   Play,
   Pause,
@@ -103,7 +102,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     elevenlabsApiKey: existingSettings.elevenlabsApiKey || "",
     elevenlabsVoiceId: existingSettings.elevenlabsVoiceId || "",
     maxCallDuration: existingSettings.maxCallDuration?.toString() || "600",
-    silenceTimeout: existingSettings.silenceTimeout?.toString() || "2",
+    silenceTimeout: existingSettings.silenceTimeout?.toString() || "1",
     speechTimeout: existingSettings.speechTimeout || "auto",
     // Background noise
     backgroundNoiseEnabled: existingSettings.backgroundNoiseEnabled ?? false,
@@ -204,7 +203,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
       settings: {
         ...settings,
         maxCallDuration: parseInt(settings.maxCallDuration) || 600,
-        silenceTimeout: parseInt(settings.silenceTimeout) || 2,
+        silenceTimeout: parseInt(settings.silenceTimeout) || 1,
         speechTimeout: settings.speechTimeout,
         backgroundNoiseVolume: settings.backgroundNoiseVolume,
         onIdleTimeout: parseInt(settings.onIdleTimeout) || 10,
@@ -306,21 +305,6 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                         rows={3}
                       />
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Voicemail Detection Notice */}
-                <Card className="bg-card/50 backdrop-blur border-border/50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center gap-2 text-base text-primary">
-                      <Voicemail className="w-4 h-4" />
-                      Voicemail Detection
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      Voicemail configuration has moved to the Add Node toolbar in the Studio tab.
-                    </p>
                   </CardContent>
                 </Card>
 
@@ -509,17 +493,6 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                   </CardContent>
                 </Card>
 
-                {/* Interruption moved to Call Settings tab */}
-                <Card className="bg-card/50 backdrop-blur border-border/50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base text-primary">Interruption</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      Interruption and barge-in settings have moved to the <strong>Call Settings</strong> tab.
-                    </p>
-                  </CardContent>
-                </Card>
               </div>
             </div>
           </TabsContent>
