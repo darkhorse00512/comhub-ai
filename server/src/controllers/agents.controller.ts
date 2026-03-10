@@ -11,8 +11,72 @@ import agentVoiceService from '../services/agent-voice.service';
 
 const supabase = getSupabaseClient();
 
+// --- Group-based access helpers ---
+
+type GroupRole = 'superadmin' | 'admin' | 'editor' | 'viewer';
+const ROLE_RANK: Record<GroupRole, number> = { superadmin: 4, admin: 3, editor: 2, viewer: 1 };
+
 /**
- * Get all agents for the authenticated user
+ * Get all group IDs the user is a member of (any role).
+ */
+async function getUserGroupIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('group_members')
+    .select('group_id')
+    .eq('user_id', userId);
+  if (error || !data) return [];
+  return data.map((m: any) => m.group_id);
+}
+
+/**
+ * Check if user can access an agent (owns it or is a member of its group with sufficient role).
+ * Returns the agent data if access is granted, null otherwise.
+ */
+async function getAgentWithAccess(
+  agentId: string,
+  userId: string,
+  minimumRole: GroupRole = 'viewer',
+  selectFields: string = '*, groups:group_id(id, name)'
+): Promise<{ agent: any; role: GroupRole | 'owner' } | null> {
+  // Fetch the agent without user_id filter
+  const { data: agentData, error } = await supabase
+    .from('agents')
+    .select(selectFields)
+    .eq('id', agentId)
+    .single();
+
+  if (error || !agentData) return null;
+  const agent = agentData as any;
+
+  // Check direct ownership
+  if (agent.user_id === userId) {
+    return { agent, role: 'owner' };
+  }
+
+  // Check group membership
+  if (agent.group_id) {
+    const { data: membership } = await supabase
+      .from('group_members')
+      .select('role')
+      .eq('group_id', agent.group_id)
+      .eq('user_id', userId)
+      .single();
+
+    if (membership) {
+      const userRank = ROLE_RANK[membership.role as GroupRole] || 0;
+      const requiredRank = ROLE_RANK[minimumRole];
+      if (userRank >= requiredRank) {
+        return { agent, role: membership.role as GroupRole };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get all agents for the authenticated user.
+ * Includes agents owned by the user AND agents belonging to groups the user is a member of.
  */
 export const getAgents = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -25,30 +89,67 @@ export const getAgents = async (req: AuthRequest, res: Response): Promise<void> 
 
     logger.info('Fetching agents for user', { userId });
 
-    const { data, error } = await supabase
-      .from('agents')
-      .select(`
-        *,
-        groups:group_id (
-          id,
-          name
-        )
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // Get all group IDs the user belongs to
+    const groupIds = await getUserGroupIds(userId);
 
-    if (error) {
-      logger.error('Error fetching agents', { error: error.message, userId });
-      res.status(500).json({ success: false, error: error.message });
-      return;
+    let data: any[] = [];
+
+    if (groupIds.length > 0) {
+      // Fetch agents owned by user OR belonging to user's groups
+      const { data: agents, error } = await supabase
+        .from('agents')
+        .select(`
+          *,
+          groups:group_id (
+            id,
+            name
+          )
+        `)
+        .or(`user_id.eq.${userId},group_id.in.(${groupIds.join(',')})`)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Error fetching agents', { error: error.message, userId });
+        res.status(500).json({ success: false, error: error.message });
+        return;
+      }
+      data = agents || [];
+    } else {
+      // No group memberships, just fetch owned agents
+      const { data: agents, error } = await supabase
+        .from('agents')
+        .select(`
+          *,
+          groups:group_id (
+            id,
+            name
+          )
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Error fetching agents', { error: error.message, userId });
+        res.status(500).json({ success: false, error: error.message });
+        return;
+      }
+      data = agents || [];
     }
 
-    logger.info('Agents fetched successfully', { userId, count: data?.length || 0 });
+    // Deduplicate (user might own an agent that's also in their group)
+    const seen = new Set<string>();
+    const uniqueData = data.filter((a: any) => {
+      if (seen.has(a.id)) return false;
+      seen.add(a.id);
+      return true;
+    });
+
+    logger.info('Agents fetched successfully', { userId, count: uniqueData.length, groupCount: groupIds.length });
 
     res.status(200).json({
       success: true,
-      data: data || [],
-      count: data?.length || 0
+      data: uniqueData,
+      count: uniqueData.length
     });
   } catch (error) {
     logger.error('Unexpected error fetching agents', { error });
@@ -60,7 +161,8 @@ export const getAgents = async (req: AuthRequest, res: Response): Promise<void> 
 };
 
 /**
- * Get a single agent by ID
+ * Get a single agent by ID.
+ * Allows access if user owns the agent or is a member (viewer+) of its group.
  */
 export const getAgent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -74,30 +176,19 @@ export const getAgent = async (req: AuthRequest, res: Response): Promise<void> =
 
     logger.info('Fetching agent', { userId, agentId: id });
 
-    const { data, error } = await supabase
-      .from('agents')
-      .select(`
-        *,
-        groups:group_id (
-          id,
-          name
-        )
-      `)
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
+    const result = await getAgentWithAccess(id, userId, 'viewer');
 
-    if (error) {
-      logger.error('Error fetching agent', { error: error.message, userId, agentId: id });
+    if (!result) {
+      logger.error('Agent not found or access denied', { userId, agentId: id });
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
 
-    logger.info('Agent fetched successfully', { userId, agentId: id });
+    logger.info('Agent fetched successfully', { userId, agentId: id, accessRole: result.role });
 
     res.status(200).json({
       success: true,
-      data
+      data: result.agent
     });
   } catch (error) {
     logger.error('Unexpected error fetching agent', { error });
@@ -129,6 +220,19 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
 
     if (!group_id) {
       res.status(400).json({ success: false, error: 'Group is required' });
+      return;
+    }
+
+    // Check that user is editor+ in the target group
+    const { data: membership } = await supabase
+      .from('group_members')
+      .select('role')
+      .eq('group_id', group_id)
+      .eq('user_id', userId)
+      .single();
+
+    if (!membership || (ROLE_RANK[membership.role as GroupRole] || 0) < ROLE_RANK.editor) {
+      res.status(403).json({ success: false, error: 'You must be an editor or above in this group to create agents' });
       return;
     }
 
@@ -177,7 +281,8 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
 };
 
 /**
- * Update an existing agent
+ * Update an existing agent.
+ * Allows owner or editor+ group members.
  */
 export const updateAgent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -190,7 +295,14 @@ export const updateAgent = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    logger.info('Updating agent', { userId, agentId: id });
+    // Check access: owner or editor+ in agent's group
+    const access = await getAgentWithAccess(id, userId, 'editor');
+    if (!access) {
+      res.status(404).json({ success: false, error: 'Agent not found or insufficient permissions' });
+      return;
+    }
+
+    logger.info('Updating agent', { userId, agentId: id, accessRole: access.role });
 
     // Build update object (only include fields that are provided)
     const updates: any = {};
@@ -206,7 +318,6 @@ export const updateAgent = async (req: AuthRequest, res: Response): Promise<void
       .from('agents')
       .update(updates)
       .eq('id', id)
-      .eq('user_id', userId)
       .select(`
         *,
         groups:group_id (
@@ -288,11 +399,17 @@ export const getAgentVersions = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Check access: viewer+ can see versions
+    const access = await getAgentWithAccess(id, userId, 'viewer', 'id, user_id, group_id');
+    if (!access) {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+
     const { data, error } = await supabase
       .from('agent_versions')
       .select('id, agent_id, version_number, name, node_count, edge_count, created_at')
       .eq('agent_id', id)
-      .eq('user_id', userId)
       .order('version_number', { ascending: false });
 
     if (error) {
@@ -324,13 +441,19 @@ export const restoreAgentVersion = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
+    // Check access: editor+ can restore versions
+    const access = await getAgentWithAccess(id, userId, 'editor', 'id, user_id, group_id');
+    if (!access) {
+      res.status(404).json({ success: false, error: 'Agent not found or insufficient permissions' });
+      return;
+    }
+
     // Fetch the version
     const { data: version, error: versionError } = await supabase
       .from('agent_versions')
       .select('*')
       .eq('id', versionId)
       .eq('agent_id', id)
-      .eq('user_id', userId)
       .single();
 
     if (versionError || !version) {
@@ -343,7 +466,6 @@ export const restoreAgentVersion = async (req: AuthRequest, res: Response): Prom
       .from('agents')
       .update({ config: version.config })
       .eq('id', id)
-      .eq('user_id', userId)
       .select(`
         *,
         groups:group_id (
@@ -372,7 +494,8 @@ export const restoreAgentVersion = async (req: AuthRequest, res: Response): Prom
 };
 
 /**
- * Delete an agent
+ * Delete an agent.
+ * Allows owner or admin+ group members.
  */
 export const deleteAgent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -384,13 +507,19 @@ export const deleteAgent = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    logger.info('Deleting agent', { userId, agentId: id });
+    // Check access: owner or admin+ in agent's group
+    const access = await getAgentWithAccess(id, userId, 'admin', 'id, user_id, group_id');
+    if (!access) {
+      res.status(404).json({ success: false, error: 'Agent not found or insufficient permissions' });
+      return;
+    }
+
+    logger.info('Deleting agent', { userId, agentId: id, accessRole: access.role });
 
     const { error } = await supabase
       .from('agents')
       .delete()
-      .eq('id', id)
-      .eq('user_id', userId);
+      .eq('id', id);
 
     if (error) {
       logger.error('Error deleting agent', { error: error.message, userId, agentId: id });
@@ -428,19 +557,14 @@ export const cloneAgent = async (req: AuthRequest, res: Response): Promise<void>
 
     logger.info('Cloning agent', { userId, agentId: id });
 
-    // Fetch the original agent
-    const { data: original, error: fetchError } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !original) {
-      logger.error('Error fetching agent to clone', { error: fetchError?.message, userId, agentId: id });
+    // Check access: viewer+ can clone
+    const access = await getAgentWithAccess(id, userId, 'viewer', '*');
+    if (!access) {
+      logger.error('Agent not found or access denied for clone', { userId, agentId: id });
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
+    const original = access.agent;
 
     // Create a clone with "(Copy)" suffix
     const { data: clone, error: cloneError } = await supabase
@@ -506,19 +630,14 @@ export const testChat = async (req: AuthRequest, res: Response): Promise<void> =
 
     logger.info('Test chat with agent', { userId, agentId: id, direction, messageCount: messages.length });
 
-    // Fetch the agent to verify ownership
-    const { data: agent, error: fetchError } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !agent) {
-      logger.error('Error fetching agent for test chat', { error: fetchError?.message, userId, agentId: id });
+    // Check access: viewer+ can test chat
+    const access = await getAgentWithAccess(id, userId, 'viewer', '*');
+    if (!access) {
+      logger.error('Agent not found or access denied for test chat', { userId, agentId: id });
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
+    const agent = access.agent;
 
     // Convert messages to ChatMessage format
     const chatMessages: ChatMessage[] = messages.map((msg: any) => ({
@@ -601,19 +720,14 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
 
     logger.info('Generating workflow for agent', { userId, agentId: id });
 
-    // Fetch the agent to verify ownership
-    const { data: agent, error: fetchError } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !agent) {
-      logger.error('Error fetching agent for workflow generation', { error: fetchError?.message, userId, agentId: id });
+    // Check access: editor+ can generate workflows
+    const access = await getAgentWithAccess(id, userId, 'editor', '*');
+    if (!access) {
+      logger.error('Agent not found or access denied for workflow generation', { userId, agentId: id });
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
+    const agent = access.agent;
 
     // Build the AI prompt for workflow generation
     const systemPrompt = `You are a world-class AI phone call workflow architect. You design production-ready, professional call flows.
@@ -1070,18 +1184,13 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    // Fetch the agent with its workflow config
-    const { data: agent, error: fetchError } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !agent) {
+    // Check access: viewer+ can start test calls
+    const access = await getAgentWithAccess(id, userId, 'viewer', '*');
+    if (!access) {
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
+    const agent = access.agent;
 
     const nodes = agent.config?.flow?.nodes || [];
     const edges = agent.config?.flow?.edges || [];
@@ -1161,9 +1270,18 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    if (session.userId !== userId || session.agentId !== id) {
-      res.status(403).json({ success: false, error: 'Session does not belong to this agent/user' });
+    if (session.agentId !== id) {
+      res.status(403).json({ success: false, error: 'Session does not belong to this agent' });
       return;
+    }
+
+    // Session owner or group member can continue the session
+    if (session.userId !== userId) {
+      const access = await getAgentWithAccess(id, userId, 'viewer', 'id, user_id, group_id');
+      if (!access) {
+        res.status(403).json({ success: false, error: 'No access to this agent' });
+        return;
+      }
     }
 
     // Process the message through the workflow engine
@@ -1255,14 +1373,9 @@ export const uploadAudio = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    const { data: agent, error: fetchError } = await supabase
-      .from('agents')
-      .select('id')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !agent) {
+    // Check access: editor+ can upload audio
+    const access = await getAgentWithAccess(id, userId, 'editor', 'id, user_id, group_id');
+    if (!access) {
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
@@ -1339,15 +1452,9 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Verify the agent belongs to the user
-    const { data: agent, error: fetchError } = await supabase
-      .from('agents')
-      .select('id')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !agent) {
+    // Check access: viewer+ can generate TTS (for test calls)
+    const access = await getAgentWithAccess(id, userId, 'viewer', 'id, user_id, group_id');
+    if (!access) {
       res.status(404).json({ success: false, error: 'Agent not found' });
       return;
     }
