@@ -48,6 +48,7 @@ interface ActiveConversation {
   agentId?: string;
   voiceSettings?: ResolvedVoiceSettings;
   callSettings: CallSettings;
+  idleCount: number; // How many idle messages have been sent
 }
 
 class VoiceConversationService {
@@ -88,7 +89,7 @@ class VoiceConversationService {
       const s = agent.config.settings || {};
       const callSettings: CallSettings = {
         language: s.language || DEFAULT_CALL_SETTINGS.language,
-        speechTimeout: s.silenceTimeout ? String(s.silenceTimeout) : DEFAULT_CALL_SETTINGS.speechTimeout,
+        speechTimeout: s.speechTimeout || (s.silenceTimeout ? String(s.silenceTimeout) : DEFAULT_CALL_SETTINGS.speechTimeout),
         maxCallDuration: s.maxCallDuration || DEFAULT_CALL_SETTINGS.maxCallDuration,
         silenceTimeout: s.silenceTimeout || DEFAULT_CALL_SETTINGS.silenceTimeout,
         interruptionSensitivity: s.interruptionSensitivity || DEFAULT_CALL_SETTINGS.interruptionSensitivity,
@@ -162,6 +163,7 @@ class VoiceConversationService {
         startedAt: new Date(),
         agentId,
         callSettings: { ...DEFAULT_CALL_SETTINGS },
+        idleCount: 0,
       };
 
       this.activeConversations.set(callSid, conversation);
@@ -276,6 +278,7 @@ class VoiceConversationService {
         startedAt: new Date(),
         agentId,
         callSettings: { ...DEFAULT_CALL_SETTINGS },
+        idleCount: 0,
       };
 
       this.activeConversations.set(callSid, conversation);
@@ -335,16 +338,61 @@ class VoiceConversationService {
         return this.generateEndCallTwiML("Sorry, we lost track of our conversation. Goodbye!");
       }
 
+      const cs = conversation.callSettings;
+
       logger.info('Processing speech result', { callSid, text: speechResult, confidence });
 
-      if (!speechResult || speechResult.trim().length === 0) {
-        const retryMessage = "I didn't catch that. Could you please repeat?";
-        const retryAudioUrl = await this.generateAndSaveAudio(
-          retryMessage, conversation.callSessionId, 'retry', conversation.voiceSettings
-        );
-        await this.saveMessage(conversation.callSessionId, 'ai', retryMessage, retryAudioUrl);
-        return this.generatePlayAndGatherTwiML(retryAudioUrl, conversation.callSettings);
+      // --- Max call duration check ---
+      const callDurationSec = Math.floor((Date.now() - conversation.startedAt.getTime()) / 1000);
+      if (cs.maxCallDuration > 0 && callDurationSec >= cs.maxCallDuration) {
+        logger.info('Max call duration reached', { callSid, duration: callDurationSec, limit: cs.maxCallDuration });
+        const endMsg = 'We have reached the maximum call duration. Thank you for calling. Goodbye!';
+        const endAudioUrl = await this.generateAndSaveAudio(endMsg, conversation.callSessionId, 'end', conversation.voiceSettings);
+        await this.saveMessage(conversation.callSessionId, 'ai', endMsg, endAudioUrl);
+        const response = new VoiceResponse();
+        response.play(endAudioUrl);
+        response.hangup();
+        return response.toString();
       }
+
+      // --- Empty speech / idle handling ---
+      if (!speechResult || speechResult.trim().length === 0) {
+        conversation.idleCount++;
+        logger.info('Empty speech (idle)', { callSid, idleCount: conversation.idleCount, threshold: cs.onIdleThreshold });
+
+        // Check if idle threshold exceeded → terminate
+        if (cs.onIdleThreshold > 0 && conversation.idleCount >= cs.onIdleThreshold) {
+          const termMsg = cs.onIdleTerminationMessage || "It seems you're no longer there. Thank you for calling. Goodbye!";
+          const termAudioUrl = await this.generateAndSaveAudio(termMsg, conversation.callSessionId, 'idle-end', conversation.voiceSettings);
+          await this.saveMessage(conversation.callSessionId, 'ai', termMsg, termAudioUrl);
+          const response = new VoiceResponse();
+          response.play(termAudioUrl);
+          response.hangup();
+          return response.toString();
+        }
+
+        // Send idle message if configured, otherwise generic retry
+        const idleMsg = cs.onIdleMessage || "I didn't catch that. Could you please repeat?";
+        const idleAudioUrl = await this.generateAndSaveAudio(idleMsg, conversation.callSessionId, 'idle', conversation.voiceSettings);
+        await this.saveMessage(conversation.callSessionId, 'ai', idleMsg, idleAudioUrl);
+        return this.generatePlayAndGatherTwiML(idleAudioUrl, cs);
+      }
+
+      // --- Interruption word count threshold ---
+      // If barge-in is enabled, short utterances (below threshold) are likely accidental
+      const wordCount = speechResult.trim().split(/\s+/).length;
+      if (cs.interruptionSensitivity === 'high' && wordCount < cs.interruptionWordCountThreshold) {
+        logger.info('Speech below word count threshold, ignoring', {
+          callSid, wordCount, threshold: cs.interruptionWordCountThreshold,
+        });
+        // Re-listen without responding — just Gather again
+        const response = new VoiceResponse();
+        this.appendGather(response, cs);
+        return response.toString();
+      }
+
+      // Reset idle count on valid speech
+      conversation.idleCount = 0;
 
       await this.saveMessage(conversation.callSessionId, 'user', speechResult);
       conversation.history.push({ role: 'user', content: speechResult });
