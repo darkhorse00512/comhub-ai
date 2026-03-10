@@ -102,8 +102,9 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     openaiVoice: existingSettings.openaiVoice || "alloy",
     elevenlabsApiKey: existingSettings.elevenlabsApiKey || "",
     elevenlabsVoiceId: existingSettings.elevenlabsVoiceId || "",
-    maxCallDuration: existingSettings.maxCallDuration?.toString() || "30",
+    maxCallDuration: existingSettings.maxCallDuration?.toString() || "600",
     silenceTimeout: existingSettings.silenceTimeout?.toString() || "2",
+    speechTimeout: existingSettings.speechTimeout || "auto",
     // Background noise
     backgroundNoiseEnabled: existingSettings.backgroundNoiseEnabled ?? false,
     backgroundNoiseType: existingSettings.backgroundNoiseType || "office",
@@ -202,8 +203,9 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
       ...agent.config,
       settings: {
         ...settings,
-        maxCallDuration: parseInt(settings.maxCallDuration) || 30,
+        maxCallDuration: parseInt(settings.maxCallDuration) || 600,
         silenceTimeout: parseInt(settings.silenceTimeout) || 2,
+        speechTimeout: settings.speechTimeout,
         backgroundNoiseVolume: settings.backgroundNoiseVolume,
         onIdleTimeout: parseInt(settings.onIdleTimeout) || 10,
         onIdleThreshold: parseInt(settings.onIdleThreshold) || 3,
@@ -507,64 +509,15 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                   </CardContent>
                 </Card>
 
-                {/* Interruption */}
+                {/* Interruption moved to Call Settings tab */}
                 <Card className="bg-card/50 backdrop-blur border-border/50">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base text-primary">Interruption</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-1.5">
-                        Sensitivity <span className="text-destructive">*</span>
-                        <InfoTooltip text="Controls how easily the user can interrupt the agent. Low = agent finishes speaking before listening, High = agent stops immediately when user speaks." />
-                      </Label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSettings({ ...settings, interruptionSensitivity: "low" })
-                          }
-                          className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                            settings.interruptionSensitivity === "low"
-                              ? "bg-primary text-primary-foreground shadow-md"
-                              : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
-                          }`}
-                        >
-                          Low
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSettings({ ...settings, interruptionSensitivity: "high" })
-                          }
-                          className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                            settings.interruptionSensitivity === "high"
-                              ? "bg-primary text-primary-foreground shadow-md"
-                              : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
-                          }`}
-                        >
-                          High
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-1.5">
-                        Word count threshold <span className="text-destructive">*</span>
-                        <InfoTooltip text="Minimum number of words the user must speak before the agent considers it an interruption." />
-                      </Label>
-                      <Input
-                        type="number"
-                        value={settings.interruptionWordCountThreshold}
-                        onChange={(e) =>
-                          setSettings({
-                            ...settings,
-                            interruptionWordCountThreshold: e.target.value,
-                          })
-                        }
-                        min={1}
-                      />
-                    </div>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                      Interruption and barge-in settings have moved to the <strong>Call Settings</strong> tab.
+                    </p>
                   </CardContent>
                 </Card>
               </div>
@@ -776,37 +729,176 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
           {/* ===== CALL SETTINGS TAB ===== */}
           <TabsContent value="call" className="mt-6 space-y-6">
-            <div>
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Timing */}
               <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Timer className="w-5 h-5 text-primary" />
-                    Call Settings
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base text-primary">
+                    <Timer className="w-4 h-4" />
+                    Timing
                   </CardTitle>
                   <CardDescription>
-                    Configure timing and behavior during calls
+                    Control call duration and speech detection timing
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Max Call Duration (seconds)</Label>
-                      <Input
-                        type="number"
-                        value={settings.maxCallDuration}
-                        onChange={(e) => setSettings({ ...settings, maxCallDuration: e.target.value })}
-                        min={1}
-                      />
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      Max Call Duration (seconds)
+                      <InfoTooltip text="Maximum duration for a single call. The call will automatically end after this time. Default: 600s (10 minutes)." />
+                    </Label>
+                    <Input
+                      type="number"
+                      value={settings.maxCallDuration}
+                      onChange={(e) => setSettings({ ...settings, maxCallDuration: e.target.value })}
+                      min={30}
+                      max={3600}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {(() => {
+                        const sec = parseInt(settings.maxCallDuration) || 600;
+                        const min = Math.floor(sec / 60);
+                        const rem = sec % 60;
+                        return min > 0
+                          ? `${min} minute${min !== 1 ? "s" : ""}${rem > 0 ? ` ${rem}s` : ""}`
+                          : `${sec} seconds`;
+                      })()}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      Speech Timeout
+                      <InfoTooltip text="How long to wait after the user stops speaking before processing their input. 'Auto' lets Twilio detect natural pauses. A custom value (in seconds) gives you precise control." />
+                    </Label>
+                    <Select
+                      value={settings.speechTimeout === "auto" ? "auto" : "custom"}
+                      onValueChange={(value) => {
+                        if (value === "auto") {
+                          setSettings({ ...settings, speechTimeout: "auto" });
+                        } else {
+                          setSettings({ ...settings, speechTimeout: settings.silenceTimeout || "2" });
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">Auto (recommended)</SelectItem>
+                        <SelectItem value="custom">Custom (seconds)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {settings.speechTimeout !== "auto" && (
+                      <div className="pt-1">
+                        <Input
+                          type="number"
+                          value={settings.speechTimeout}
+                          onChange={(e) => setSettings({ ...settings, speechTimeout: e.target.value })}
+                          min={1}
+                          max={15}
+                          placeholder="Seconds of silence before processing"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Wait {settings.speechTimeout || "2"}s of silence before processing speech
+                        </p>
+                      </div>
+                    )}
+                    {settings.speechTimeout === "auto" && (
+                      <p className="text-xs text-muted-foreground">
+                        Twilio automatically detects natural pauses in conversation
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      Silence Timeout (seconds)
+                      <InfoTooltip text="Seconds of complete silence before the agent sends an idle message (if configured in General tab). Also used as the default speech timeout for custom mode." />
+                    </Label>
+                    <Input
+                      type="number"
+                      value={settings.silenceTimeout}
+                      onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
+                      min={1}
+                      max={30}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Interruption */}
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base text-primary">
+                    <Volume2 className="w-4 h-4" />
+                    Interruption (Barge-in)
+                  </CardTitle>
+                  <CardDescription>
+                    Control whether users can interrupt the agent while it's speaking
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      Sensitivity
+                      <InfoTooltip text="Low: Agent finishes speaking before listening — more structured conversation. High: User can interrupt at any time (barge-in) — more natural, real-time feel." />
+                    </Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSettings({ ...settings, interruptionSensitivity: "low" })
+                        }
+                        className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                          settings.interruptionSensitivity === "low"
+                            ? "bg-primary text-primary-foreground shadow-md"
+                            : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
+                        }`}
+                      >
+                        Low
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSettings({ ...settings, interruptionSensitivity: "high" })
+                        }
+                        className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                          settings.interruptionSensitivity === "high"
+                            ? "bg-primary text-primary-foreground shadow-md"
+                            : "bg-secondary/50 text-muted-foreground hover:bg-secondary border border-border"
+                        }`}
+                      >
+                        High
+                      </button>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Silence Timeout (seconds)</Label>
-                      <Input
-                        type="number"
-                        value={settings.silenceTimeout}
-                        onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
-                        min={1}
-                      />
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {settings.interruptionSensitivity === "high"
+                        ? "User can speak over the agent — audio stops immediately and speech is captured"
+                        : "Agent completes speaking before listening — prevents accidental interruptions"}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-1.5">
+                      Word Count Threshold
+                      <InfoTooltip text="Minimum number of words the user must speak before it's treated as an intentional interruption. Helps filter out accidental sounds like 'uh' or 'um'." />
+                    </Label>
+                    <Input
+                      type="number"
+                      value={settings.interruptionWordCountThreshold}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          interruptionWordCountThreshold: e.target.value,
+                        })
+                      }
+                      min={1}
+                      max={10}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Ignore speech shorter than {settings.interruptionWordCountThreshold || "3"} word{parseInt(settings.interruptionWordCountThreshold) !== 1 ? "s" : ""}
+                    </p>
                   </div>
                 </CardContent>
               </Card>

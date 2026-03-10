@@ -9,6 +9,32 @@ import { v4 as uuidv4 } from 'uuid';
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
+interface CallSettings {
+  language: string;
+  speechTimeout: string;       // seconds or 'auto'
+  maxCallDuration: number;     // seconds
+  silenceTimeout: number;      // seconds — used as speechTimeout when not 'auto'
+  interruptionSensitivity: 'low' | 'high';
+  interruptionWordCountThreshold: number;
+  onIdleMessage: string;
+  onIdleTimeout: number;       // seconds
+  onIdleThreshold: number;
+  onIdleTerminationMessage: string;
+}
+
+const DEFAULT_CALL_SETTINGS: CallSettings = {
+  language: 'en-US',
+  speechTimeout: 'auto',
+  maxCallDuration: 600,
+  silenceTimeout: 2,
+  interruptionSensitivity: 'low',
+  interruptionWordCountThreshold: 3,
+  onIdleMessage: '',
+  onIdleTimeout: 10,
+  onIdleThreshold: 3,
+  onIdleTerminationMessage: '',
+};
+
 interface ActiveConversation {
   callSid: string;
   callSessionId: string;
@@ -21,6 +47,7 @@ interface ActiveConversation {
   workflowEngine?: WorkflowEngine;
   agentId?: string;
   voiceSettings?: ResolvedVoiceSettings;
+  callSettings: CallSettings;
 }
 
 class VoiceConversationService {
@@ -28,8 +55,6 @@ class VoiceConversationService {
   private supabase = getSupabaseClient();
 
   private readonly DEFAULT_GREETING = "Hey there! Here is ComHub AI. What can I help you with today?";
-  private readonly SPEECH_TIMEOUT = 'auto'; // Twilio auto-detects end of speech
-  private readonly MAX_SPEECH_TIME = 30; // seconds
 
   /**
    * Load an agent's workflow from the database and create a WorkflowEngine.
@@ -38,6 +63,7 @@ class VoiceConversationService {
     engine: WorkflowEngine;
     initialResult: import('./workflow-engine.service').WorkflowStepResult;
     voiceSettings?: ResolvedVoiceSettings;
+    callSettings: CallSettings;
   } | null> {
     try {
       const { data: agent, error } = await this.supabase
@@ -58,7 +84,22 @@ class VoiceConversationService {
 
       const voiceSettings = await agentVoiceService.resolveVoiceSettings(agentId) || undefined;
 
-      return { engine, initialResult, voiceSettings };
+      // Extract call settings from agent config
+      const s = agent.config.settings || {};
+      const callSettings: CallSettings = {
+        language: s.language || DEFAULT_CALL_SETTINGS.language,
+        speechTimeout: s.silenceTimeout ? String(s.silenceTimeout) : DEFAULT_CALL_SETTINGS.speechTimeout,
+        maxCallDuration: s.maxCallDuration || DEFAULT_CALL_SETTINGS.maxCallDuration,
+        silenceTimeout: s.silenceTimeout || DEFAULT_CALL_SETTINGS.silenceTimeout,
+        interruptionSensitivity: s.interruptionSensitivity || DEFAULT_CALL_SETTINGS.interruptionSensitivity,
+        interruptionWordCountThreshold: s.interruptionWordCountThreshold || DEFAULT_CALL_SETTINGS.interruptionWordCountThreshold,
+        onIdleMessage: s.onIdleMessage || DEFAULT_CALL_SETTINGS.onIdleMessage,
+        onIdleTimeout: s.onIdleTimeout || DEFAULT_CALL_SETTINGS.onIdleTimeout,
+        onIdleThreshold: s.onIdleThreshold || DEFAULT_CALL_SETTINGS.onIdleThreshold,
+        onIdleTerminationMessage: s.onIdleTerminationMessage || DEFAULT_CALL_SETTINGS.onIdleTerminationMessage,
+      };
+
+      return { engine, initialResult, voiceSettings, callSettings };
     } catch (err) {
       logger.error('Failed to load agent workflow', { agentId, error: err });
       return null;
@@ -120,6 +161,7 @@ class VoiceConversationService {
         calleeNumber,
         startedAt: new Date(),
         agentId,
+        callSettings: { ...DEFAULT_CALL_SETTINGS },
       };
 
       this.activeConversations.set(callSid, conversation);
@@ -131,11 +173,13 @@ class VoiceConversationService {
         if (workflow) {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
+          conversation.callSettings = workflow.callSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for inbound call', {
             callSid, agentId,
             ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
+            callSettings: workflow.callSettings,
           });
         }
       }
@@ -149,14 +193,14 @@ class VoiceConversationService {
         logger.error('Failed to generate greeting audio:', audioError);
         const response = new VoiceResponse();
         response.say({ voice: 'Polly.Joanna' }, greetingText);
-        this.appendGather(response);
+        this.appendGather(response, conversation.callSettings);
         return response.toString();
       }
 
       await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: greetingText });
 
-      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl);
+      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl, conversation.callSettings);
 
       logger.info('Inbound conversation started successfully', {
         callSid, callSessionId: callSession.id,
@@ -231,6 +275,7 @@ class VoiceConversationService {
         calleeNumber,
         startedAt: new Date(),
         agentId,
+        callSettings: { ...DEFAULT_CALL_SETTINGS },
       };
 
       this.activeConversations.set(callSid, conversation);
@@ -242,11 +287,13 @@ class VoiceConversationService {
         if (workflow) {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
+          conversation.callSettings = workflow.callSettings;
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for outbound call', {
             callSid, agentId,
             ttsProvider: workflow.voiceSettings?.ttsProvider || 'openai',
+            callSettings: workflow.callSettings,
           });
         }
       }
@@ -258,7 +305,7 @@ class VoiceConversationService {
       await this.saveMessage(callSession.id, 'ai', greetingText, greetingAudioUrl);
       conversation.history.push({ role: 'assistant', content: greetingText });
 
-      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl);
+      const twiml = this.generatePlayAndGatherTwiML(greetingAudioUrl, conversation.callSettings);
 
       logger.info('Outbound conversation started successfully', {
         callSid, callSessionId: callSession.id,
@@ -296,7 +343,7 @@ class VoiceConversationService {
           retryMessage, conversation.callSessionId, 'retry', conversation.voiceSettings
         );
         await this.saveMessage(conversation.callSessionId, 'ai', retryMessage, retryAudioUrl);
-        return this.generatePlayAndGatherTwiML(retryAudioUrl);
+        return this.generatePlayAndGatherTwiML(retryAudioUrl, conversation.callSettings);
       }
 
       await this.saveMessage(conversation.callSessionId, 'user', speechResult);
@@ -353,7 +400,7 @@ class VoiceConversationService {
 
       logger.info('AI responded', { callSid, text: responseText.substring(0, 100) });
 
-      return this.generatePlayAndGatherTwiML(aiAudioUrl);
+      return this.generatePlayAndGatherTwiML(aiAudioUrl, conversation.callSettings);
     } catch (error) {
       logger.error('Failed to process speech result:', error);
 
@@ -365,7 +412,7 @@ class VoiceConversationService {
           const errorAudioUrl = await this.generateAndSaveAudio(
             errorMessage, conversation.callSessionId, 'error', conversation.voiceSettings
           );
-          return this.generatePlayAndGatherTwiML(errorAudioUrl);
+          return this.generatePlayAndGatherTwiML(errorAudioUrl, conversation.callSettings);
         } catch {
           // Fall through to Twilio Say
         }
@@ -433,20 +480,22 @@ class VoiceConversationService {
    * Append <Gather input="speech"> for real-time speech recognition.
    * Uses Twilio's built-in STT — eliminates Record → Download → Whisper latency.
    *
-   * Key settings for natural conversation:
+   * Settings from agent config:
+   * - speechTimeout: configurable silence detection (seconds or 'auto')
+   * - language: agent's configured language
    * - speechModel: "experimental_conversations" — optimized for back-and-forth dialogue
-   * - speechTimeout: "auto" — Twilio auto-detects natural pauses
    * - enhanced: true — higher accuracy speech recognition
    */
-  private appendGather(response: twilio.twiml.VoiceResponse): void {
+  private appendGather(response: twilio.twiml.VoiceResponse, cs?: CallSettings): void {
+    const s = cs || DEFAULT_CALL_SETTINGS;
     response.gather({
       input: ['speech'],
       action: `${config.server.apiBaseUrl}/api/twilio/handle-speech`,
       method: 'POST',
-      speechTimeout: this.SPEECH_TIMEOUT,
+      speechTimeout: s.speechTimeout,
       speechModel: 'experimental_conversations',
       enhanced: true,
-      language: 'en-US',
+      language: s.language,
     } as any);
 
     // Fallback if no speech detected
@@ -454,10 +503,40 @@ class VoiceConversationService {
     response.hangup();
   }
 
-  private generatePlayAndGatherTwiML(audioUrl: string): string {
+  /**
+   * Generate TwiML that plays audio then listens for speech.
+   *
+   * Interruption handling:
+   * - HIGH sensitivity: <Play> is nested inside <Gather> so user speech
+   *   immediately stops playback and is captured (barge-in).
+   * - LOW sensitivity: <Play> runs first, then <Gather> listens after
+   *   audio finishes — agent completes speaking before listening.
+   */
+  private generatePlayAndGatherTwiML(audioUrl: string, cs?: CallSettings): string {
+    const s = cs || DEFAULT_CALL_SETTINGS;
     const response = new VoiceResponse();
-    response.play(audioUrl);
-    this.appendGather(response);
+
+    if (s.interruptionSensitivity === 'high') {
+      // Barge-in: Gather wraps Play — user speech interrupts audio
+      const gather = response.gather({
+        input: ['speech'],
+        action: `${config.server.apiBaseUrl}/api/twilio/handle-speech`,
+        method: 'POST',
+        speechTimeout: s.speechTimeout,
+        speechModel: 'experimental_conversations',
+        enhanced: true,
+        language: s.language,
+      } as any);
+      gather.play(audioUrl);
+
+      // If user doesn't speak during playback, add a standalone Gather to wait
+      this.appendGather(response, s);
+    } else {
+      // No barge-in: Play finishes, then Gather listens
+      response.play(audioUrl);
+      this.appendGather(response, s);
+    }
+
     return response.toString();
   }
 
