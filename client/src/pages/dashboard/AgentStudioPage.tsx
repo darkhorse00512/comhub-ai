@@ -263,7 +263,7 @@ const AgentStudioPage = () => {
       <DialogueNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     field_setter: (props: any) => (
-      <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
+      <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} allNodes={nodes} />
     ),
     junction: (props: any) => (
       <JunctionNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />

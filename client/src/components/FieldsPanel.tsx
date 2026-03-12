@@ -63,10 +63,12 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
   useEffect(() => {
     const extractedFields: FieldInfo[] = [];
 
+    const seenFieldNames = new Set<string>();
     nodes.forEach((node) => {
       if (node.type === "field_setter") {
         const fieldName = node.data?.fieldName;
-        if (fieldName) {
+        if (fieldName && !seenFieldNames.has(fieldName)) {
+          seenFieldNames.add(fieldName);
           extractedFields.push({
             name: fieldName,
             type: node.data?.valueType || "text",

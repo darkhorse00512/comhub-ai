@@ -250,13 +250,27 @@ export class TwilioController {
       res.send(twiml);
     } catch (error) {
       logger.error('Failed to handle speech result:', error);
+
+      // Try to get the conversation's language setting for proper fallback
+      const conversation = voiceConversationService.getConversation(req.body?.CallSid);
+      const lang = conversation?.callSettings?.language || 'en-US';
+      const langCode = lang.substring(0, 2);
+
+      const errorMessages: Record<string, { retry: string; goodbye: string }> = {
+        en: { retry: 'Sorry, I had trouble processing that. Let me try again.', goodbye: 'Thank you for calling. Goodbye.' },
+        de: { retry: 'Entschuldigung, da gab es ein Problem. Lassen Sie es mich erneut versuchen.', goodbye: 'Vielen Dank für Ihren Anruf. Auf Wiederhören.' },
+        es: { retry: 'Lo siento, tuve un problema. Déjame intentar de nuevo.', goodbye: 'Gracias por llamar. Adiós.' },
+        fr: { retry: 'Désolé, j\'ai eu un problème. Laissez-moi réessayer.', goodbye: 'Merci de votre appel. Au revoir.' },
+      };
+      const msgs = errorMessages[langCode] || errorMessages.en;
+
       res.type('text/xml');
       res.send(`
         <?xml version="1.0" encoding="UTF-8"?>
         <Response>
-          <Say voice="alice">Sorry, I had trouble processing that. Let me try again.</Say>
-          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" language="en-US"/>
-          <Say voice="alice">Thank you for calling. Goodbye.</Say>
+          <Say voice="alice" language="${lang}">${msgs.retry}</Say>
+          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="1" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false"/>
+          <Say voice="alice" language="${lang}">${msgs.goodbye}</Say>
           <Hangup/>
         </Response>
       `);

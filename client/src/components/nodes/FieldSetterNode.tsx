@@ -23,9 +23,10 @@ interface FieldSetterNodeProps {
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
+  allNodes?: Array<{ id: string; type: string; data: any }>;
 }
 
-const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterNodeProps) => {
+const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: FieldSetterNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
@@ -64,6 +65,16 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate }: FieldSetterN
       newErrors.fieldName = "Field name is required";
     } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(editedFieldName)) {
       newErrors.fieldName = "Field name must start with letter/underscore, contain only letters, numbers, underscores";
+    }
+
+    // Check uniqueness against other field_setter nodes
+    if (editedFieldName.trim() && allNodes) {
+      const duplicate = allNodes.find(
+        (n) => n.id !== id && n.type === 'field_setter' && n.data?.fieldName === editedFieldName.trim()
+      );
+      if (duplicate) {
+        newErrors.fieldName = `Field "${editedFieldName}" already exists in "${duplicate.data?.label || 'another node'}"`;
+      }
     }
 
     if (editedValueType === 'number' && isNaN(Number(editedValue))) {

@@ -24,7 +24,7 @@ interface CallSettings {
 
 const DEFAULT_CALL_SETTINGS: CallSettings = {
   language: 'en-US',
-  speechTimeout: 'auto',
+  speechTimeout: '1',
   maxCallDuration: 600,
   silenceTimeout: 1,
   interruptionSensitivity: 'low',
@@ -342,11 +342,24 @@ class VoiceConversationService {
 
       logger.info('Processing speech result', { callSid, text: speechResult, confidence });
 
+      // --- Low confidence: treat as unrecognized speech ---
+      if (confidence > 0 && confidence < 0.3 && speechResult.trim().length > 0) {
+        logger.info('Low confidence speech, treating as unrecognized', { callSid, confidence, text: speechResult });
+        // Route through workflow engine's [SPEECH_NOT_RECOGNIZED] handler
+        if (conversation.workflowEngine && conversation.workflowEngine.isWaitingForInput()) {
+          const result = await conversation.workflowEngine.processMessage('[SPEECH_NOT_RECOGNIZED]');
+          const responseText = this.combineMessages(result.messages) || "I didn't catch that. Could you please repeat?";
+          const audioUrl = await this.generateAndSaveAudio(responseText, conversation.callSessionId, 'retry', conversation.voiceSettings);
+          await this.saveMessage(conversation.callSessionId, 'ai', responseText, audioUrl);
+          return this.generatePlayAndGatherTwiML(audioUrl, cs);
+        }
+      }
+
       // --- Max call duration check ---
       const callDurationSec = Math.floor((Date.now() - conversation.startedAt.getTime()) / 1000);
       if (cs.maxCallDuration > 0 && callDurationSec >= cs.maxCallDuration) {
         logger.info('Max call duration reached', { callSid, duration: callDurationSec, limit: cs.maxCallDuration });
-        const endMsg = 'We have reached the maximum call duration. Thank you for calling. Goodbye!';
+        const endMsg = this.getLocalizedMessage(cs.language, 'maxDuration');
         const endAudioUrl = await this.generateAndSaveAudio(endMsg, conversation.callSessionId, 'end', conversation.voiceSettings);
         await this.saveMessage(conversation.callSessionId, 'ai', endMsg, endAudioUrl);
         const response = new VoiceResponse();
@@ -362,7 +375,7 @@ class VoiceConversationService {
 
         // Check if idle threshold exceeded → terminate
         if (cs.onIdleThreshold > 0 && conversation.idleCount >= cs.onIdleThreshold) {
-          const termMsg = cs.onIdleTerminationMessage || "It seems you're no longer there. Thank you for calling. Goodbye!";
+          const termMsg = cs.onIdleTerminationMessage || this.getLocalizedMessage(cs.language, 'idleTermination');
           const termAudioUrl = await this.generateAndSaveAudio(termMsg, conversation.callSessionId, 'idle-end', conversation.voiceSettings);
           await this.saveMessage(conversation.callSessionId, 'ai', termMsg, termAudioUrl);
           const response = new VoiceResponse();
@@ -371,8 +384,8 @@ class VoiceConversationService {
           return response.toString();
         }
 
-        // Send idle message if configured, otherwise generic retry
-        const idleMsg = cs.onIdleMessage || "I didn't catch that. Could you please repeat?";
+        // Send idle message if configured, otherwise generic retry in agent's language
+        const idleMsg = cs.onIdleMessage || this.getLocalizedMessage(cs.language, 'idleRetry');
         const idleAudioUrl = await this.generateAndSaveAudio(idleMsg, conversation.callSessionId, 'idle', conversation.voiceSettings);
         await this.saveMessage(conversation.callSessionId, 'ai', idleMsg, idleAudioUrl);
         return this.generatePlayAndGatherTwiML(idleAudioUrl, cs);
@@ -452,8 +465,8 @@ class VoiceConversationService {
     } catch (error) {
       logger.error('Failed to process speech result:', error);
 
-      const errorMessage = "I'm sorry, I encountered an error. Let me try again.";
       const conversation = this.activeConversations.get(callSid);
+      const errorMessage = this.getLocalizedMessage(conversation?.callSettings?.language || 'en-US', 'error');
 
       if (conversation) {
         try {
@@ -522,6 +535,39 @@ class VoiceConversationService {
     return this.activeConversations.get(callSid);
   }
 
+  // ===== Localized Messages =====
+
+  private getLocalizedMessage(language: string, key: string): string {
+    const langCode = (language || 'en-US').substring(0, 2);
+    const messages: Record<string, Record<string, string>> = {
+      en: {
+        idleRetry: "I didn't catch that. Could you please repeat?",
+        idleTermination: "It seems you're no longer there. Thank you for calling. Goodbye!",
+        error: "I'm sorry, I encountered an error. Let me try again.",
+        maxDuration: "We have reached the maximum call duration. Thank you for calling. Goodbye!",
+      },
+      de: {
+        idleRetry: 'Das habe ich leider nicht verstanden. Könnten Sie das bitte wiederholen?',
+        idleTermination: 'Es scheint, als wären Sie nicht mehr da. Vielen Dank für Ihren Anruf. Auf Wiederhören!',
+        error: 'Entschuldigung, es ist ein Fehler aufgetreten. Lassen Sie es mich erneut versuchen.',
+        maxDuration: 'Wir haben die maximale Anrufdauer erreicht. Vielen Dank für Ihren Anruf. Auf Wiederhören!',
+      },
+      es: {
+        idleRetry: 'No entendí eso. ¿Podría repetirlo, por favor?',
+        idleTermination: 'Parece que ya no está ahí. Gracias por llamar. ¡Adiós!',
+        error: 'Lo siento, encontré un error. Déjeme intentar de nuevo.',
+        maxDuration: 'Hemos alcanzado la duración máxima de la llamada. Gracias por llamar. ¡Adiós!',
+      },
+      fr: {
+        idleRetry: "Je n'ai pas compris. Pourriez-vous répéter, s'il vous plaît?",
+        idleTermination: "Il semble que vous ne soyez plus là. Merci d'avoir appelé. Au revoir!",
+        error: "Désolé, j'ai rencontré une erreur. Laissez-moi réessayer.",
+        maxDuration: "Nous avons atteint la durée maximale de l'appel. Merci d'avoir appelé. Au revoir!",
+      },
+    };
+    return messages[langCode]?.[key] || messages.en[key] || messages.en.idleRetry;
+  }
+
   // ===== TwiML Generation =====
 
   /**
@@ -544,10 +590,21 @@ class VoiceConversationService {
       speechModel: 'experimental_conversations',
       enhanced: true,
       language: s.language,
+      profanityFilter: false,
     } as any);
 
-    // Fallback if no speech detected
-    response.say({ voice: 'Polly.Joanna' }, 'Thank you for calling. Goodbye!');
+    // Fallback if no speech detected — use agent's language
+    const langCode = s.language?.substring(0, 2) || 'en';
+    const goodbyeMessages: Record<string, string> = {
+      en: 'Thank you for calling. Goodbye!',
+      de: 'Vielen Dank für Ihren Anruf. Auf Wiederhören!',
+      es: 'Gracias por llamar. ¡Adiós!',
+      fr: 'Merci de votre appel. Au revoir!',
+      it: 'Grazie per la chiamata. Arrivederci!',
+      pt: 'Obrigado pela ligação. Até logo!',
+      nl: 'Bedankt voor uw telefoontje. Tot ziens!',
+    };
+    response.say({ voice: 'Polly.Joanna', language: s.language as any }, goodbyeMessages[langCode] || goodbyeMessages.en);
     response.hangup();
   }
 
@@ -574,6 +631,7 @@ class VoiceConversationService {
         speechModel: 'experimental_conversations',
         enhanced: true,
         language: s.language,
+        profanityFilter: false,
       } as any);
       gather.play(audioUrl);
 

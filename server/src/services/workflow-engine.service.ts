@@ -317,10 +317,11 @@ export class WorkflowEngine {
     // Current field values available to the AI
     const fieldEntries = Object.entries(this.state.fields);
     if (fieldEntries.length > 0) {
-      prompt += `\n\n### Known Information:`;
+      prompt += `\n\n### Known Information (already collected — do NOT re-ask for these):`;
       fieldEntries.forEach(([key, value]) => {
         prompt += `\n- ${key}: ${JSON.stringify(value)}`;
       });
+      prompt += `\n\nIMPORTANT: The above information has already been collected. Do NOT ask the caller for information that is already known. Use it directly in the conversation.`;
     }
 
     // --- CONVERSATION CONTEXT: what happened before this stage ---
@@ -334,7 +335,12 @@ export class WorkflowEngine {
           prompt += `\n- Caller: "${entry.text}"`;
         }
       }
-      prompt += `\n\nIMPORTANT: Do NOT repeat greetings, introductions, or information that was already said above. Continue the conversation naturally from where it left off.`;
+      prompt += `\n\nIMPORTANT RULES about previous conversation:
+1. Do NOT repeat greetings, introductions, or information that was already said above.
+2. Do NOT re-ask questions that were already asked and answered.
+3. If you see the same question was asked before and the caller answered it, use that answer and move forward.
+4. Continue the conversation naturally from where it left off.
+5. If a fallback or error happened, acknowledge briefly and continue — don't restart the conversation.`;
     }
 
     const maxTurns = parseInt(node.data?.maxTurns);
@@ -566,8 +572,17 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         return this.executeFromCurrent(messages);
       }
 
-      // No fallback connected — ask user to repeat and stay in dialogue
-      const retryMsg = "I'm sorry, I didn't catch that. Could you please repeat?";
+      // No fallback connected — ask the AI to generate a contextual retry in the correct language
+      this.state.dialogueHistory.push({
+        role: 'user',
+        content: '[The caller\'s speech was not recognized. Ask them politely to repeat what they said, in the same language you have been speaking.]',
+      });
+
+      const aiRetry = await this.generateAIResponse();
+      const retryMsg = aiRetry
+        ? parseAIResponse(aiRetry).text
+        : "I'm sorry, I didn't catch that. Could you please repeat?";
+
       messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
       this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
       this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
@@ -719,11 +734,28 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
   }
 
   private async _executeFromCurrentInternal(messages: WorkflowMessage[]): Promise<WorkflowStepResult> {
+    // Cycle detection: prevent infinite loops in non-interactive node chains
+    const MAX_NON_INTERACTIVE_STEPS = 50;
+    let stepCount = 0;
+
     while (this.state.currentNodeId) {
       const node = this.nodes.find((n) => n.id === this.state.currentNodeId);
       if (!node) break;
 
+      // Prevent infinite loops in non-interactive nodes
       const nodeType = node.data?.type || node.type;
+      if (!['dialogue', 'scripted'].includes(nodeType)) {
+        stepCount++;
+        if (stepCount > MAX_NON_INTERACTIVE_STEPS) {
+          logger.error('WorkflowEngine: Max non-interactive steps exceeded, breaking potential loop', {
+            currentNodeId: this.state.currentNodeId,
+            stepCount,
+          });
+          this.state.isComplete = true;
+          messages.push({ type: 'system', text: 'Workflow stopped: too many automatic steps (possible loop detected).' });
+          return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
+        }
+      }
 
       switch (nodeType) {
         case 'agentSetup': {
