@@ -77,7 +77,34 @@ interface WorkflowCallResult {
   transferType?: string;
   error?: string;
   collectedFields?: Record<string, any>;
+  callSettings?: CallSettings;
 }
+
+interface CallSettings {
+  language: string;
+  speechTimeout: string;
+  maxCallDuration: number;
+  silenceTimeout: number;
+  interruptionSensitivity: "low" | "high";
+  interruptionWordCountThreshold: number;
+  onIdleMessage: string;
+  onIdleTimeout: number;
+  onIdleThreshold: number;
+  onIdleTerminationMessage: string;
+}
+
+const DEFAULT_CALL_SETTINGS: CallSettings = {
+  language: "en-US",
+  speechTimeout: "1",
+  maxCallDuration: 600,
+  silenceTimeout: 1,
+  interruptionSensitivity: "low",
+  interruptionWordCountThreshold: 3,
+  onIdleMessage: "",
+  onIdleTimeout: 10,
+  onIdleThreshold: 3,
+  onIdleTerminationMessage: "",
+};
 
 interface AgentVoiceConfig {
   ttsProvider?: string;
@@ -123,6 +150,11 @@ const TestAgentModal = ({
   const [waitingForInput, setWaitingForInput] = useState(false);
   const [collectedFields, setCollectedFields] = useState<Record<string, any>>({});
   const collectedFieldsRef = useRef<Record<string, any>>({});
+  const [callSettings, setCallSettings] = useState<CallSettings>(DEFAULT_CALL_SETTINGS);
+  const callSettingsRef = useRef<CallSettings>(DEFAULT_CALL_SETTINGS);
+  const idleCountRef = useRef(0);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // History state
   const [showHistory, setShowHistory] = useState(false);
@@ -147,6 +179,7 @@ const TestAgentModal = ({
   const waitingForInputRef = useRef(false);
   const callSessionIdRef = useRef<string | null>(null);
   const handleUserMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const endCallRef = useRef<() => Promise<void>>(async () => {});
   const noSpeechCountRef = useRef(0);
 
   // Set mode when modal opens with initialMode
@@ -168,6 +201,10 @@ const TestAgentModal = ({
   useEffect(() => {
     isSpeakingRef.current = isSpeaking;
   }, [isSpeaking]);
+
+  useEffect(() => {
+    callSettingsRef.current = callSettings;
+  }, [callSettings]);
 
   const hasInboundStart = nodes.some(
     (n) => n.type === "callDirection" && n.data?.direction === "inbound"
@@ -196,6 +233,8 @@ const TestAgentModal = ({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -537,8 +576,10 @@ const TestAgentModal = ({
           }
         };
 
-        // After user starts talking, stop after 2s silence.
-        // Before user talks, give 5s to begin speaking.
+        // Use configured silence timeout; fall back to defaults
+        const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 1) * 1000;
+        const initialWaitMs = Math.max(silenceTimeoutMs, 5000); // at least 5s for user to start speaking
+
         const startSilenceTimer = (ms: number) => {
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(stopRecognition, ms);
@@ -546,7 +587,7 @@ const TestAgentModal = ({
 
         recognition.onstart = () => {
           setIsRecording(true);
-          startSilenceTimer(5000); // 5s for user to start speaking
+          startSilenceTimer(initialWaitMs);
         };
 
         recognition.onresult = (event: any) => {
@@ -560,7 +601,7 @@ const TestAgentModal = ({
               interimTranscript += event.results[i][0].transcript;
             }
           }
-          startSilenceTimer(2000); // 2s after last speech
+          startSilenceTimer(silenceTimeoutMs); // configured silence timeout after last speech
         };
 
         recognition.onend = async () => {
@@ -574,16 +615,47 @@ const TestAgentModal = ({
           const text = (finalTranscript.trim() || interimTranscript.trim());
 
           if (text) {
+            const cs = callSettingsRef.current;
+            // Interruption sensitivity: if high, ignore short utterances below word threshold
+            const wordCount = text.split(/\s+/).length;
+            if (cs.interruptionSensitivity === "high" && wordCount < cs.interruptionWordCountThreshold) {
+              // Too few words — likely accidental, re-listen
+              if (waitingForInputRef.current && isCallActiveRef.current) {
+                startAutoRecording();
+              }
+              return;
+            }
             noSpeechCountRef.current = 0;
+            idleCountRef.current = 0; // reset idle on valid speech
             await handleUserMessageRef.current(text);
           } else if (hasReceivedSpeech) {
             // User spoke but speech couldn't be transcribed — trigger fallback
             await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
           } else {
-            // No speech detected
-            noSpeechCountRef.current++;
-            if (noSpeechCountRef.current >= 2) {
-              // User hasn't spoken after 2 cycles (~10s) — trigger fallback
+            // No speech detected — handle idle behavior
+            const cs = callSettingsRef.current;
+            idleCountRef.current++;
+
+            if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+              // Max idle threshold reached — terminate call
+              if (cs.onIdleTerminationMessage) {
+                addMessage("ai", cs.onIdleTerminationMessage);
+                if (callModeRef.current === "audio") {
+                  await speakText(cs.onIdleTerminationMessage);
+                }
+              }
+              endCallRef.current();
+            } else if (cs.onIdleMessage) {
+              // Send configured idle prompt message
+              addMessage("ai", cs.onIdleMessage);
+              if (callModeRef.current === "audio") {
+                await speakText(cs.onIdleMessage);
+              }
+              if (waitingForInputRef.current && isCallActiveRef.current) {
+                startAutoRecording();
+              }
+            } else if (idleCountRef.current >= 2) {
+              // No idle message configured — fall back to workflow after 2 cycles
               noSpeechCountRef.current = 0;
               await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
             } else if (waitingForInputRef.current) {
@@ -898,6 +970,27 @@ const TestAgentModal = ({
       // Store workflow session ID
       workflowSessionIdRef.current = result.sessionId || null;
 
+      // Apply call settings from server
+      if (result.callSettings) {
+        setCallSettings(result.callSettings);
+        callSettingsRef.current = result.callSettings;
+      }
+
+      // Reset idle counter
+      idleCountRef.current = 0;
+
+      // Set up max call duration enforcement
+      const maxDur = result.callSettings?.maxCallDuration || DEFAULT_CALL_SETTINGS.maxCallDuration;
+      if (maxDur > 0) {
+        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = setTimeout(() => {
+          if (isCallActiveRef.current) {
+            addMessage("system", `Maximum call duration of ${maxDur} seconds reached. Ending call.`);
+            endCallRef.current();
+          }
+        }, maxDur * 1000);
+      }
+
       setIsLoading(false);
 
       toast({
@@ -958,6 +1051,18 @@ const TestAgentModal = ({
       silenceTimerRef.current = null;
     }
 
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+
+    idleCountRef.current = 0;
+
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -1011,6 +1116,11 @@ const TestAgentModal = ({
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
   }, [callDuration, toast, callSessionId, endWorkflowCallAPI]);
+
+  // Keep endCallRef in sync
+  useEffect(() => {
+    endCallRef.current = endCall;
+  }, [endCall]);
 
   // Manual mic for text mode
   const startRecording = async () => {
@@ -1280,6 +1390,7 @@ const TestAgentModal = ({
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
                   formatDuration={formatDuration}
+                  silenceTimeout={callSettings.silenceTimeout}
                 />
               )}
             </TabsContent>
@@ -1315,6 +1426,7 @@ const TestAgentModal = ({
                   onSendMessage={handleSendMessage}
                   onKeyDown={handleKeyDown}
                   formatDuration={formatDuration}
+                  silenceTimeout={callSettings.silenceTimeout}
                 />
               )}
             </TabsContent>
@@ -1567,6 +1679,7 @@ interface CallInterfaceProps {
   onSendMessage: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   formatDuration: (seconds: number) => string;
+  silenceTimeout: number;
 }
 
 const CallInterface = ({
@@ -1591,6 +1704,7 @@ const CallInterface = ({
   onSendMessage,
   onKeyDown,
   formatDuration,
+  silenceTimeout,
 }: CallInterfaceProps) => {
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -1844,7 +1958,7 @@ const CallInterface = ({
         {isCallActive && callMode === "audio" && (
           <p className="text-xs text-center text-muted-foreground">
             {isRecording
-              ? "Listening... speak now (stops after 2s silence)"
+              ? `Listening... speak now (stops after ${silenceTimeout}s silence)`
               : isSpeaking
                 ? "AI is speaking..."
                 : isLoading
