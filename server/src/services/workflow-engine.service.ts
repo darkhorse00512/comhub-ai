@@ -283,6 +283,14 @@ export class WorkflowEngine {
   private buildDialogueSystemPrompt(node: WorkflowNode): string {
     let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
 
+    prompt += `\n\nIMPORTANT — VOICE CALL BREVITY RULES (apply to EVERY response):
+- This is a real-time voice call. Every word costs latency.
+- Keep responses to 1-2 SHORT sentences max. Be direct.
+- Never use filler phrases like "Guten Tag, mein Name ist X von Y. Spreche ich mit Z?" — just say "Hallo, hier ist X von Y. Sind Sie Z?"
+- Cut greetings, pleasantries, and formalities to the bare minimum.
+- Do NOT repeat information the caller already knows.
+- Get to the point immediately.`;
+
     prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || 'Dialogue'}"`;
     prompt += `\n\n### Stage Instructions:\n${node.data?.stageMessage || 'Engage in natural conversation with the caller.'}`;
 
@@ -361,28 +369,26 @@ When — and ONLY when — you are confident that the conversation has reached a
 
 Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${transitions[0].name}]"
 
-### CRITICAL RULES — read these carefully:
-1. Your PRIMARY job is to have a natural, helpful conversation. Keep talking to the caller, ask questions, provide information.
-2. Do NOT rush to transition. The caller called for a reason — help them thoroughly.
-3. NEVER include a transition signal in your very first response. You need at least a few exchanges to understand the caller's needs.
-4. Only include [TRANSITION:name] when you are CERTAIN the caller's intent clearly matches one of the named transitions.
-5. If you are unsure which transition applies, keep the conversation going — ask a clarifying question.
-6. The transition signal is invisible to the caller. Do NOT say it aloud, mention it, or reference it.
-7. The transition name must EXACTLY match one of the options listed above. Do not invent new names.
-8. Keep responses concise and natural for voice conversation (1-3 sentences).
-9. Be friendly and professional.
-10. If the caller's message is completely unintelligible, irrelevant, or you absolutely cannot understand their intent after multiple attempts, append [FALLBACK] at the end of your response. This will route the call to a fallback handler. Only use this as a last resort.`;
+### CRITICAL RULES:
+1. BREVITY IS MANDATORY: Max 1-2 short sentences per response. This is a voice call — long text = long wait.
+2. Have a natural, helpful conversation. Ask questions, provide info.
+3. Do NOT rush to transition. Help the caller first.
+4. NEVER transition in your first response.
+5. Only use [TRANSITION:name] when the caller's intent clearly matches a transition.
+6. If unsure, ask a short clarifying question.
+7. [TRANSITION:name] is invisible to the caller — never say it aloud.
+8. Transition name must exactly match one listed above.
+9. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
-      prompt += `\n\n### CRITICAL RULES — read these carefully:
-1. Your PRIMARY job is to have a natural, helpful conversation. Keep talking to the caller, ask questions, provide information.
+      prompt += `\n\n### CRITICAL RULES:
+1. BREVITY IS MANDATORY: Max 1-2 short sentences per response. This is a voice call — long text = long wait.
 2. Follow the stage instructions precisely.
-3. Keep responses concise and natural for voice conversation (1-3 sentences).
-4. Be friendly and professional.
-5. When — and ONLY when — you have fully completed ALL objectives of this conversation stage, append [NEXT] at the very end of your response.
-6. NEVER include [NEXT] in your first response. You must have a real conversation first.
-7. Do NOT say "[NEXT]" aloud — it is an invisible system signal.
-8. If there is more to discuss, do NOT include [NEXT]. Keep the conversation going.
-9. If the caller's message is completely unintelligible, irrelevant, or you absolutely cannot understand their intent after multiple attempts, append [FALLBACK] at the end of your response. This will route the call to a fallback handler. Only use this as a last resort.`;
+3. Have a natural, helpful conversation.
+4. When you have completed ALL objectives of this stage, append [NEXT] at the end.
+5. NEVER include [NEXT] in your first response. Converse first.
+6. [NEXT] is invisible — never say it aloud.
+7. If more to discuss, do NOT include [NEXT].
+8. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     }
 
     return prompt;
