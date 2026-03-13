@@ -278,18 +278,70 @@ export class WorkflowEngine {
     return fallbackEdge?.target || null;
   }
 
+  // --- Language-aware fallback messages ---
+
+  private detectLanguage(): string {
+    // Detect language from conversation context or system message
+    const text = (this.state.agentSystemMessage + ' ' +
+      this.state.conversationContext.map(e => e.text).join(' ')).toLowerCase();
+    if (/\b(spreche|bitte|danke|guten|hallo|wiederhören|ja|nein)\b/.test(text)) return 'de';
+    if (/\b(hola|gracias|buenos|por favor|sí)\b/.test(text)) return 'es';
+    if (/\b(bonjour|merci|s'il vous|oui|non)\b/.test(text)) return 'fr';
+    if (/\b(ciao|grazie|buongiorno|prego)\b/.test(text)) return 'it';
+    return 'en';
+  }
+
+  private getLanguageAwareFallback(type: 'retry' | 'error' | 'greeting'): string {
+    const lang = this.detectLanguage();
+    const fallbacks: Record<string, Record<string, string>> = {
+      en: {
+        retry: "Could you repeat that?",
+        error: "Sorry, could you say that again?",
+        greeting: "Hello, how can I help you?",
+      },
+      de: {
+        retry: "Könnten Sie das bitte wiederholen?",
+        error: "Entschuldigung, könnten Sie das nochmal sagen?",
+        greeting: "Hallo, wie kann ich Ihnen helfen?",
+      },
+      es: {
+        retry: "¿Podría repetir eso?",
+        error: "Disculpe, ¿podría decirlo de nuevo?",
+        greeting: "Hola, ¿en qué puedo ayudarle?",
+      },
+      fr: {
+        retry: "Pourriez-vous répéter?",
+        error: "Excusez-moi, pourriez-vous répéter?",
+        greeting: "Bonjour, comment puis-je vous aider?",
+      },
+      it: {
+        retry: "Potrebbe ripetere?",
+        error: "Mi scusi, potrebbe ripetere?",
+        greeting: "Buongiorno, come posso aiutarla?",
+      },
+    };
+    return fallbacks[lang]?.[type] || fallbacks.en[type];
+  }
+
   // --- System prompt builder for dialogue stages ---
 
   private buildDialogueSystemPrompt(node: WorkflowNode): string {
     let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
 
-    prompt += `\n\nIMPORTANT — VOICE CALL BREVITY RULES (apply to EVERY response):
-- This is a real-time voice call. Every word costs latency.
-- Keep responses to 1-2 SHORT sentences max. Be direct.
-- Never use filler phrases like "Guten Tag, mein Name ist X von Y. Spreche ich mit Z?" — just say "Hallo, hier ist X von Y. Sind Sie Z?"
-- Cut greetings, pleasantries, and formalities to the bare minimum.
-- Do NOT repeat information the caller already knows.
-- Get to the point immediately.`;
+    prompt += `\n\nIMPORTANT — VOICE CALL RULES (apply to EVERY response without exception):
+BREVITY:
+- This is a real-time voice call converted to speech. Every extra word = delay.
+- MAX 1 short sentence per response. Never 2+ sentences unless absolutely necessary.
+- No filler words, no pleasantries, no "Fantastisch", "Wunderbar", "Vielen Dank für Ihre Antwort".
+- Wrong: "Guten Tag, mein Name ist Daniel Schmidt von Solar Guru. Spreche ich mit Herr Mustermann?" → Right: "Hallo, hier Schmidt von Solar Guru. Sind Sie Herr Mustermann?"
+- Get to the point. Be human and natural but extremely concise.
+
+CONTEXT AWARENESS (CRITICAL):
+- NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
+- NEVER re-introduce yourself or re-greet if you already did.
+- If the caller already confirmed something (e.g. their name), treat it as confirmed and move forward.
+- If speech was not recognized, ask them to repeat ONLY the last unanswered question — do NOT restart.
+- Always continue from exactly where the conversation left off.`;
 
     prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || 'Dialogue'}"`;
     prompt += `\n\n### Stage Instructions:\n${node.data?.stageMessage || 'Engage in natural conversation with the caller.'}`;
@@ -334,21 +386,19 @@ export class WorkflowEngine {
 
     // --- CONVERSATION CONTEXT: what happened before this stage ---
     if (this.state.conversationContext.length > 0) {
-      prompt += `\n\n### Previous Conversation in This Call:`;
-      prompt += `\nThe following has already been said in this call before reaching this stage:`;
+      prompt += `\n\n### CALL TRANSCRIPT SO FAR (read carefully before responding):`;
       for (const entry of this.state.conversationContext) {
         if (entry.role === 'agent') {
-          prompt += `\n- Agent${entry.nodeLabel ? ` (${entry.nodeLabel})` : ''}: "${entry.text}"`;
+          prompt += `\nYou: "${entry.text}"`;
         } else {
-          prompt += `\n- Caller: "${entry.text}"`;
+          prompt += `\nCaller: "${entry.text}"`;
         }
       }
-      prompt += `\n\nIMPORTANT RULES about previous conversation:
-1. Do NOT repeat greetings, introductions, or information that was already said above.
-2. Do NOT re-ask questions that were already asked and answered.
-3. If you see the same question was asked before and the caller answered it, use that answer and move forward.
-4. Continue the conversation naturally from where it left off.
-5. If a fallback or error happened, acknowledge briefly and continue — don't restart the conversation.`;
+      prompt += `\n\n⚠️ STRICT RULES — violating these makes the call sound robotic and unprofessional:
+- You ALREADY said everything above. Do NOT say it again. Do NOT rephrase it. Do NOT ask the same question differently.
+- The caller ALREADY answered the questions above. Their answers are final — use them, don't re-verify.
+- If an error/fallback occurred, just continue from the last unanswered question — do NOT restart from the beginning.
+- Continue the conversation as if you remember everything above perfectly.`;
     }
 
     const maxTurns = parseInt(node.data?.maxTurns);
@@ -370,8 +420,8 @@ When — and ONLY when — you are confident that the conversation has reached a
 Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${transitions[0].name}]"
 
 ### CRITICAL RULES:
-1. BREVITY IS MANDATORY: Max 1-2 short sentences per response. This is a voice call — long text = long wait.
-2. Have a natural, helpful conversation. Ask questions, provide info.
+1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
+2. Be natural and helpful. Ask one question at a time.
 3. Do NOT rush to transition. Help the caller first.
 4. NEVER transition in your first response.
 5. Only use [TRANSITION:name] when the caller's intent clearly matches a transition.
@@ -381,9 +431,9 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 9. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
-1. BREVITY IS MANDATORY: Max 1-2 short sentences per response. This is a voice call — long text = long wait.
+1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
 2. Follow the stage instructions precisely.
-3. Have a natural, helpful conversation.
+3. Be natural and helpful. Ask one question at a time.
 4. When you have completed ALL objectives of this stage, append [NEXT] at the end.
 5. NEVER include [NEXT] in your first response. Converse first.
 6. [NEXT] is invisible — never say it aloud.
@@ -406,7 +456,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 500, temperature: 0.7 }
+        { maxTokens: 200, temperature: 0.4 }
       );
 
       return aiResponse.text || null;
@@ -581,13 +631,13 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
       // No fallback connected — ask the AI to generate a contextual retry in the correct language
       this.state.dialogueHistory.push({
         role: 'user',
-        content: '[The caller\'s speech was not recognized. Ask them politely to repeat what they said, in the same language you have been speaking.]',
+        content: '[The caller\'s speech was unclear. Say a SHORT sentence asking them to repeat ONLY their last answer. Stay in the SAME language. Do NOT restart the conversation or re-ask previous questions. Do NOT re-introduce yourself.]',
       });
 
       const aiRetry = await this.generateAIResponse();
       const retryMsg = aiRetry
         ? parseAIResponse(aiRetry).text
-        : "I'm sorry, I didn't catch that. Could you please repeat?";
+        : this.getLanguageAwareFallback('retry');
 
       messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
       this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
@@ -619,7 +669,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
     if (!aiResponse) {
       // AI failed — keep dialogue open, ask user to repeat
-      const fallback = 'I apologize, I had trouble processing that. Could you say that again?';
+      const fallback = this.getLanguageAwareFallback('error');
       messages.push({ type: 'ai', text: fallback, nodeLabel: dialogueNode.data?.label });
       this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
       this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: dialogueNode.data?.label });
@@ -867,7 +917,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             } else {
               // AI failed — send a fallback and keep dialogue open for retry
               logger.warn('WorkflowEngine: AI response unavailable in callerAlreadyResponded path');
-              const fallback = 'I apologize, could you please repeat that?';
+              const fallback = this.getLanguageAwareFallback('retry');
               messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
               this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
@@ -885,8 +935,8 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           // No prior caller response — generate an opening AI message
           const hasContext = this.state.conversationContext.length > 0;
           const trigger = hasContext
-            ? 'The caller is now on the line. Previous messages have already been delivered (see conversation context above). Continue the conversation naturally — do NOT repeat any greetings or introductions. Respond according to your stage instructions.'
-            : 'The caller just connected. Begin the conversation for this stage. Greet or address the caller following your stage instructions.';
+            ? 'Continue from where the call left off. The caller is waiting. Do NOT greet again, do NOT introduce yourself again, do NOT repeat anything from the transcript above. Just continue with the next thing according to your stage instructions. Keep it to 1 short sentence.'
+            : 'The caller just connected. Greet them briefly following your stage instructions. Max 1 short sentence.';
 
           this.state.dialogueHistory = [
             { role: 'system', content: stagePrompt },
@@ -903,7 +953,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
           } else {
             // AI failed — send a generic opening and keep dialogue open
-            const fallback = 'Hello! How can I help you today?';
+            const fallback = this.getLanguageAwareFallback('greeting');
             messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
             this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
