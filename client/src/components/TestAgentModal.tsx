@@ -180,6 +180,7 @@ const TestAgentModal = ({
   const callSessionIdRef = useRef<string | null>(null);
   const handleUserMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
   const endCallRef = useRef<() => Promise<void>>(async () => {});
+  const startAutoRecordingRef = useRef<(opts?: { skipSpeakingCheck?: boolean }) => void>(() => {});
   const noSpeechCountRef = useRef(0);
 
   // Set mode when modal opens with initialMode
@@ -307,7 +308,22 @@ const TestAgentModal = ({
         if (voiceConfig?.language) {
           utterance.lang = voiceConfig.language;
         }
-        utterance.onstart = () => onStart?.();
+        let earlyRecordingTriggered = false;
+        utterance.onstart = () => {
+          onStart?.();
+          // Estimate speech duration (~150 words/min) and start recording 2s before end
+          const wordCount = text.split(/\s+/).length;
+          const estimatedDurationMs = (wordCount / 150) * 60 * 1000;
+          const earlyStartMs = Math.max(estimatedDurationMs - 2000, 500);
+          if (estimatedDurationMs > 3000) {
+            setTimeout(() => {
+              if (!earlyRecordingTriggered) {
+                earlyRecordingTriggered = true;
+                startAutoRecordingRef.current({ skipSpeakingCheck: true });
+              }
+            }, earlyStartMs);
+          }
+        };
         utterance.onend = () => resolve();
         utterance.onerror = () => resolve();
         window.speechSynthesis.speak(utterance);
@@ -323,7 +339,18 @@ const TestAgentModal = ({
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       serverAudioRef.current = audio;
+      let earlyRecordingTriggered = false;
       audio.onplay = () => onStart?.();
+      // Start recording ~2s before audio ends to eliminate dead time
+      audio.ontimeupdate = () => {
+        if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
+          const remaining = audio.duration - audio.currentTime;
+          if (remaining <= 2 && remaining > 0) {
+            earlyRecordingTriggered = true;
+            startAutoRecordingRef.current({ skipSpeakingCheck: true });
+          }
+        }
+      };
       audio.onended = () => {
         URL.revokeObjectURL(url);
         serverAudioRef.current = null;
@@ -346,6 +373,7 @@ const TestAgentModal = ({
       serverAudioRef.current = audio;
       const objectUrl = URL.createObjectURL(mediaSource);
       audio.src = objectUrl;
+      let earlyRecordingTriggered = false;
 
       const cleanup = () => {
         URL.revokeObjectURL(objectUrl);
@@ -354,6 +382,16 @@ const TestAgentModal = ({
       };
 
       audio.onplay = () => onStart?.();
+      // Start recording ~2s before audio ends to eliminate dead time
+      audio.ontimeupdate = () => {
+        if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
+          const remaining = audio.duration - audio.currentTime;
+          if (remaining <= 2 && remaining > 0) {
+            earlyRecordingTriggered = true;
+            startAutoRecordingRef.current({ skipSpeakingCheck: true });
+          }
+        }
+      };
       audio.onended = cleanup;
       audio.onerror = cleanup;
 
@@ -430,6 +468,12 @@ const TestAgentModal = ({
   }, []);
 
   const speakText = useCallback(async (text: string, onAudioStart?: () => void): Promise<void> => {
+    // Stop any early-started recording before playing next audio
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch {}
+      recognitionRef.current = null;
+      setIsRecording(false);
+    }
     setIsSpeaking(true);
     isSpeakingRef.current = true;
 
@@ -544,10 +588,12 @@ const TestAgentModal = ({
   );
 
   // --- Auto recording for audio mode ---
-  const startAutoRecording = useCallback(() => {
+  const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-    if (isSpeakingRef.current) return;
+    if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
     if (!waitingForInputRef.current) return;
+    // Prevent duplicate: if already recording, skip
+    if (recognitionRef.current) return;
 
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition ||
@@ -788,6 +834,11 @@ const TestAgentModal = ({
   // Process workflow result messages - display them and update state
   const processWorkflowResult = useCallback(
     async (result: WorkflowCallResult) => {
+      // Set waitingForInput BEFORE playing messages so early recording
+      // (triggered ~2s before last audio ends) can check this flag
+      setWaitingForInput(result.waitingForInput);
+      waitingForInputRef.current = result.waitingForInput;
+
       for (const msg of result.messages) {
         if (!isCallActiveRef.current) break;
 
@@ -808,9 +859,6 @@ const TestAgentModal = ({
           return merged;
         });
       }
-
-      setWaitingForInput(result.waitingForInput);
-      waitingForInputRef.current = result.waitingForInput;
       setCurrentWorkflowStep(
         result.currentStage || (result.isComplete ? "Workflow completed" : null)
       );
@@ -1121,6 +1169,11 @@ const TestAgentModal = ({
   useEffect(() => {
     endCallRef.current = endCall;
   }, [endCall]);
+
+  // Keep startAutoRecordingRef in sync
+  useEffect(() => {
+    startAutoRecordingRef.current = startAutoRecording;
+  }, [startAutoRecording]);
 
   // Manual mic for text mode
   const startRecording = async () => {
