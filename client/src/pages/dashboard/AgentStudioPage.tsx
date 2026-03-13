@@ -87,7 +87,7 @@ const AgentStudioPage = () => {
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
-  const savedStateRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
+  const savedStateRef = useRef<{ nodes: Node[]; edges: Edge[]; fields: WorkflowField[] } | null>(null);
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
 
   // Check if there are unsaved changes
@@ -95,10 +95,12 @@ const AgentStudioPage = () => {
     if (!savedStateRef.current) return false;
     const savedNodes = JSON.stringify(savedStateRef.current.nodes);
     const savedEdges = JSON.stringify(savedStateRef.current.edges);
+    const savedFields = JSON.stringify(savedStateRef.current.fields);
     const currentNodes = JSON.stringify(nodes);
     const currentEdges = JSON.stringify(edges);
-    return savedNodes !== currentNodes || savedEdges !== currentEdges;
-  }, [nodes, edges]);
+    const currentFields = JSON.stringify(workflowFields);
+    return savedNodes !== currentNodes || savedEdges !== currentEdges || savedFields !== currentFields;
+  }, [nodes, edges, workflowFields]);
 
   // Handle browser beforeunload event
   useEffect(() => {
@@ -119,7 +121,7 @@ const AgentStudioPage = () => {
       const loadedEdges = agent.config.flow.edges || [];
       setNodes(loadedNodes);
       setEdges(loadedEdges);
-      savedStateRef.current = { nodes: loadedNodes, edges: loadedEdges };
+      savedStateRef.current = { nodes: loadedNodes, edges: loadedEdges, fields: agent.config?.fields || [] };
     } else {
       initializeDefaultFlow();
     }
@@ -305,7 +307,7 @@ const AgentStudioPage = () => {
 
     setNodes(defaultNodes);
     setEdges(defaultEdges);
-    savedStateRef.current = { nodes: defaultNodes, edges: defaultEdges };
+    savedStateRef.current = { nodes: defaultNodes, edges: defaultEdges, fields: [] };
   };
 
   const handleConnect = (sourceId: string, targetId: string, sourceHandle?: string) => {
@@ -339,7 +341,7 @@ const AgentStudioPage = () => {
       }
       return false;
     } else {
-      savedStateRef.current = { nodes, edges };
+      savedStateRef.current = { nodes, edges, fields: workflowFields };
       if (showToast) {
         toast({
           title: "Agent saved",
@@ -669,6 +671,7 @@ const AgentStudioPage = () => {
             savedStateRef.current = {
               nodes: config.flow.nodes || [],
               edges: config.flow.edges || [],
+              fields: config.fields || [],
             };
           }
           setWorkflowFields(config?.fields || []);
