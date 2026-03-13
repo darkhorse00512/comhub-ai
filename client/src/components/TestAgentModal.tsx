@@ -214,20 +214,32 @@ const TestAgentModal = ({
     (n) => n.type === "callDirection" && n.data?.direction === "outbound"
   );
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
+  // Scroll to bottom helper — used whenever content changes
+  const scrollToBottom = useCallback(() => {
+    // Small delay to ensure DOM has rendered the new content
     const timer = setTimeout(() => {
+      // Approach 1: scroll the Radix viewport directly
       if (scrollAreaRef.current) {
-        const scrollContainer = scrollAreaRef.current.querySelector(
+        const viewport = scrollAreaRef.current.querySelector(
           "[data-radix-scroll-area-viewport]"
         );
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
         }
       }
-    }, 50);
+      // Approach 2: scrollIntoView as backup
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+    }, 100);
+    return timer;
+  }, []);
+
+  // Scroll to bottom when messages change, loading state changes, or speaking state changes
+  useEffect(() => {
+    const timer = scrollToBottom();
     return () => clearTimeout(timer);
-  }, [messages, isLoading]);
+  }, [messages, isLoading, isSpeaking, scrollToBottom]);
 
   // Cleanup on unmount
   useEffect(() => {
