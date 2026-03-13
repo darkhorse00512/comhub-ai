@@ -13,7 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
+import type { WorkflowField } from "@/components/FieldsPanel";
 
 interface SwitchNodeProps {
   id: string;
@@ -22,9 +24,10 @@ interface SwitchNodeProps {
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
+  workflowFields?: WorkflowField[];
 }
 
-const SwitchNode = ({ id, data, onClone, onDelete, onUpdate }: SwitchNodeProps) => {
+const SwitchNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields = [] }: SwitchNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
@@ -272,17 +275,40 @@ const SwitchNode = ({ id, data, onClone, onDelete, onUpdate }: SwitchNodeProps) 
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="switchField">Switch Field</Label>
-              <Input
-                id="switchField"
-                value={editedSwitchField}
-                onChange={(e) => {
-                  setEditedSwitchField(e.target.value);
-                  if (errors.switchField) setErrors({...errors, switchField: ""});
-                }}
-                placeholder="e.g., user_choice, menu_selection"
-                className={errors.switchField ? "border-red-500" : ""}
-              />
+              <Label>Switch Field</Label>
+              {workflowFields.length > 0 ? (
+                <Select
+                  value={editedSwitchField}
+                  onValueChange={(v) => {
+                    setEditedSwitchField(v);
+                    if (errors.switchField) setErrors({...errors, switchField: ""});
+                  }}
+                >
+                  <SelectTrigger className={errors.switchField ? "border-red-500" : ""}>
+                    <SelectValue placeholder="Select a field..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workflowFields.map((field) => (
+                      <SelectItem key={field.name} value={field.name}>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono">{field.name}</span>
+                          <span className="text-xs text-muted-foreground">({field.type})</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={editedSwitchField}
+                  onChange={(e) => {
+                    setEditedSwitchField(e.target.value);
+                    if (errors.switchField) setErrors({...errors, switchField: ""});
+                  }}
+                  placeholder="Define fields in Workflow Fields first"
+                  className={errors.switchField ? "border-red-500" : ""}
+                />
+              )}
               {errors.switchField && (
                 <p className="text-xs text-red-600 mt-1">{errors.switchField}</p>
               )}

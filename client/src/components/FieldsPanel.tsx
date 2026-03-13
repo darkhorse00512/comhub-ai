@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   Sheet,
   SheetContent,
@@ -28,93 +28,26 @@ import {
   X,
   AlertCircle,
   Info,
-  GitBranch,
-  ArrowRightLeft,
 } from "lucide-react";
-import { Node } from "@/components/FlowCanvas";
+
+export interface WorkflowField {
+  name: string;
+  type: "text" | "number" | "boolean";
+}
 
 interface FieldsPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  nodes: Node[];
-  onUpdateNode?: (nodeId: string, newData: any) => void;
-  onDeleteNode?: (nodeId: string) => void;
-  onAddFieldNode?: (fieldName: string, valueType: string, defaultValue: string) => void;
+  fields: WorkflowField[];
+  onFieldsChange: (fields: WorkflowField[]) => void;
 }
 
-interface FieldInfo {
-  name: string;
-  type: "text" | "number" | "boolean";
-  nodeId: string;
-  nodeLabel: string;
-  defaultValue?: string;
-  source: "field_setter" | "junction" | "switch";
-}
-
-const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAddFieldNode }: FieldsPanelProps) => {
-  const [fields, setFields] = useState<FieldInfo[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", type: "text", value: "" });
+const FieldsPanel = ({ isOpen, onClose, fields, onFieldsChange }: FieldsPanelProps) => {
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", type: "text" });
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", type: "text", value: "" });
+  const [addForm, setAddForm] = useState({ name: "", type: "text" });
   const [addError, setAddError] = useState("");
-
-  // Extract fields from nodes
-  useEffect(() => {
-    const extractedFields: FieldInfo[] = [];
-
-    const seenFieldNames = new Set<string>();
-    nodes.forEach((node) => {
-      if (node.type === "field_setter") {
-        const fieldName = node.data?.fieldName;
-        if (fieldName && !seenFieldNames.has(fieldName)) {
-          seenFieldNames.add(fieldName);
-          extractedFields.push({
-            name: fieldName,
-            type: node.data?.valueType || "text",
-            nodeId: node.id,
-            nodeLabel: node.data?.label || "Field Setter",
-            defaultValue: node.data?.value || "",
-            source: "field_setter",
-          });
-        }
-      }
-    });
-
-    nodes.forEach((node) => {
-      if (node.type === "junction") {
-        const conditionField = node.data?.left?.field_name || node.data?.conditionField;
-        if (conditionField && !extractedFields.find((f) => f.name === conditionField)) {
-          extractedFields.push({
-            name: conditionField,
-            type: "text",
-            nodeId: node.id,
-            nodeLabel: node.data?.label || "Junction",
-            defaultValue: "",
-            source: "junction",
-          });
-        }
-      }
-    });
-
-    nodes.forEach((node) => {
-      if (node.type === "switch") {
-        const switchField = node.data?.switchField;
-        if (switchField && !extractedFields.find((f) => f.name === switchField)) {
-          extractedFields.push({
-            name: switchField,
-            type: "text",
-            nodeId: node.id,
-            nodeLabel: node.data?.label || "Switch",
-            defaultValue: "",
-            source: "switch",
-          });
-        }
-      }
-    });
-
-    setFields(extractedFields);
-  }, [nodes]);
 
   const getTypeIcon = (type: string) => {
     switch (type) {
@@ -124,17 +57,6 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
         return <ToggleLeft className="w-3.5 h-3.5" />;
       default:
         return <Type className="w-3.5 h-3.5" />;
-    }
-  };
-
-  const getSourceIcon = (source: string) => {
-    switch (source) {
-      case "junction":
-        return <GitBranch className="w-3 h-3" />;
-      case "switch":
-        return <ArrowRightLeft className="w-3 h-3" />;
-      default:
-        return <Database className="w-3 h-3" />;
     }
   };
 
@@ -149,17 +71,6 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
     }
   };
 
-  const getSourceBadgeClasses = (source: string) => {
-    switch (source) {
-      case "junction":
-        return "bg-amber-500/15 text-amber-400 border-amber-500/25";
-      case "switch":
-        return "bg-pink-500/15 text-pink-400 border-pink-500/25";
-      default:
-        return "bg-violet-500/15 text-violet-400 border-violet-500/25";
-    }
-  };
-
   const validateFieldName = (name: string): string => {
     if (!name.trim()) return "Field name is required";
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
@@ -168,44 +79,36 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
     return "";
   };
 
-  const startEdit = useCallback((field: FieldInfo) => {
-    setEditingId(field.nodeId);
-    setEditForm({
-      name: field.name,
-      type: field.type,
-      value: field.defaultValue || "",
-    });
-  }, []);
+  const startEdit = useCallback((index: number) => {
+    const field = fields[index];
+    setEditingIndex(index);
+    setEditForm({ name: field.name, type: field.type });
+  }, [fields]);
 
   const cancelEdit = useCallback(() => {
-    setEditingId(null);
-    setEditForm({ name: "", type: "text", value: "" });
+    setEditingIndex(null);
+    setEditForm({ name: "", type: "text" });
   }, []);
 
-  const saveEdit = useCallback((field: FieldInfo) => {
+  const saveEdit = useCallback((index: number) => {
     const error = validateFieldName(editForm.name);
     if (error) return;
 
     const duplicate = fields.find(
-      (f) => f.name === editForm.name && f.nodeId !== field.nodeId
+      (f, i) => f.name === editForm.name && i !== index
     );
     if (duplicate) return;
 
-    if (onUpdateNode) {
-      onUpdateNode(field.nodeId, {
-        fieldName: editForm.name,
-        valueType: editForm.type,
-        value: editForm.value,
-      });
-    }
-    setEditingId(null);
-  }, [editForm, fields, onUpdateNode]);
+    const updated = [...fields];
+    updated[index] = { name: editForm.name, type: editForm.type as WorkflowField["type"] };
+    onFieldsChange(updated);
+    setEditingIndex(null);
+  }, [editForm, fields, onFieldsChange]);
 
-  const handleDelete = useCallback((field: FieldInfo) => {
-    if (onDeleteNode && field.source === "field_setter") {
-      onDeleteNode(field.nodeId);
-    }
-  }, [onDeleteNode]);
+  const handleDelete = useCallback((index: number) => {
+    const updated = fields.filter((_, i) => i !== index);
+    onFieldsChange(updated);
+  }, [fields, onFieldsChange]);
 
   const handleAdd = useCallback(() => {
     const error = validateFieldName(addForm.name);
@@ -220,16 +123,11 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
       return;
     }
 
-    if (onAddFieldNode) {
-      onAddFieldNode(addForm.name, addForm.type, addForm.value);
-    }
-    setAddForm({ name: "", type: "text", value: "" });
+    onFieldsChange([...fields, { name: addForm.name, type: addForm.type as WorkflowField["type"] }]);
+    setAddForm({ name: "", type: "text" });
     setAddError("");
     setShowAddForm(false);
-  }, [addForm, fields, onAddFieldNode]);
-
-  const fieldSetterFields = fields.filter((f) => f.source === "field_setter");
-  const referencedFields = fields.filter((f) => f.source !== "field_setter");
+  }, [addForm, fields, onFieldsChange]);
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
@@ -244,7 +142,7 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
               Workflow Fields
             </SheetTitle>
             <SheetDescription className="text-muted-foreground text-xs mt-1">
-              Manage variables collected and used throughout your workflow.
+              Define variables that can be set and used throughout your workflow. Field Setter, Junction, and Switch nodes will reference these fields.
             </SheetDescription>
           </SheetHeader>
         </div>
@@ -270,7 +168,7 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                   <button
                     onClick={() => {
                       setShowAddForm(false);
-                      setAddForm({ name: "", type: "text", value: "" });
+                      setAddForm({ name: "", type: "text" });
                       setAddError("");
                     }}
                     className="p-1 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
@@ -299,51 +197,23 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block">Type</label>
-                    <Select
-                      value={addForm.type}
-                      onValueChange={(v) => {
-                        setAddForm({ ...addForm, type: v, value: v === "boolean" ? "true" : "" });
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-sm bg-background/50 border-border/50">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="text">Text</SelectItem>
-                        <SelectItem value="number">Number</SelectItem>
-                        <SelectItem value="boolean">Boolean</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block">Default Value</label>
-                    {addForm.type === "boolean" ? (
-                      <Select
-                        value={addForm.value || "true"}
-                        onValueChange={(v) => setAddForm({ ...addForm, value: v })}
-                      >
-                        <SelectTrigger className="h-9 text-sm bg-background/50 border-border/50">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="true">true</SelectItem>
-                          <SelectItem value="false">false</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        type={addForm.type === "number" ? "number" : "text"}
-                        value={addForm.value}
-                        onChange={(e) => setAddForm({ ...addForm, value: e.target.value })}
-                        placeholder={addForm.type === "number" ? "0" : "value"}
-                        className="h-9 text-sm bg-background/50 border-border/50"
-                        onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                      />
-                    )}
-                  </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">Type</label>
+                  <Select
+                    value={addForm.type}
+                    onValueChange={(v) => {
+                      setAddForm({ ...addForm, type: v });
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm bg-background/50 border-border/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Text</SelectItem>
+                      <SelectItem value="number">Number</SelectItem>
+                      <SelectItem value="boolean">Boolean</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <Button
@@ -357,24 +227,24 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
               </div>
             )}
 
-            {/* Defined Fields (from field_setter nodes) */}
-            {fieldSetterFields.length > 0 && (
+            {/* Fields List */}
+            {fields.length > 0 && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Defined Fields
+                    Fields
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-                    {fieldSetterFields.length}
+                    {fields.length}
                   </span>
                 </div>
 
-                {fieldSetterFields.map((field) => (
+                {fields.map((field, index) => (
                   <div
-                    key={field.nodeId}
+                    key={`${field.name}-${index}`}
                     className="group rounded-xl border border-border/40 bg-card/50 hover:border-border/70 hover:bg-card transition-all"
                   >
-                    {editingId === field.nodeId ? (
+                    {editingIndex === index ? (
                       /* Edit Mode */
                       <div className="p-3.5 space-y-3">
                         <div>
@@ -385,64 +255,34 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                             className="h-8 text-sm bg-background/50 border-border/50 font-mono"
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") saveEdit(field);
+                              if (e.key === "Enter") saveEdit(index);
                               if (e.key === "Escape") cancelEdit();
                             }}
                           />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1.5 block">Type</label>
-                            <Select
-                              value={editForm.type}
-                              onValueChange={(v) => {
-                                setEditForm({ ...editForm, type: v, value: v === "boolean" ? "true" : editForm.value });
-                              }}
-                            >
-                              <SelectTrigger className="h-8 text-sm bg-background/50 border-border/50">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="text">Text</SelectItem>
-                                <SelectItem value="number">Number</SelectItem>
-                                <SelectItem value="boolean">Boolean</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1.5 block">Value</label>
-                            {editForm.type === "boolean" ? (
-                              <Select
-                                value={editForm.value || "true"}
-                                onValueChange={(v) => setEditForm({ ...editForm, value: v })}
-                              >
-                                <SelectTrigger className="h-8 text-sm bg-background/50 border-border/50">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="true">true</SelectItem>
-                                  <SelectItem value="false">false</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Input
-                                type={editForm.type === "number" ? "number" : "text"}
-                                value={editForm.value}
-                                onChange={(e) => setEditForm({ ...editForm, value: e.target.value })}
-                                className="h-8 text-sm bg-background/50 border-border/50"
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") saveEdit(field);
-                                  if (e.key === "Escape") cancelEdit();
-                                }}
-                              />
-                            )}
-                          </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground mb-1.5 block">Type</label>
+                          <Select
+                            value={editForm.type}
+                            onValueChange={(v) => {
+                              setEditForm({ ...editForm, type: v });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-sm bg-background/50 border-border/50">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text">Text</SelectItem>
+                              <SelectItem value="number">Number</SelectItem>
+                              <SelectItem value="boolean">Boolean</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                         <div className="flex gap-2 pt-1">
                           <Button
                             size="sm"
                             className="h-7 flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs"
-                            onClick={() => saveEdit(field)}
+                            onClick={() => saveEdit(index)}
                           >
                             <Check className="w-3 h-3 mr-1" /> Save
                           </Button>
@@ -473,11 +313,6 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                                   {getTypeIcon(field.type)}
                                   {field.type}
                                 </span>
-                                {field.defaultValue && (
-                                  <span className="text-[10px] text-muted-foreground">
-                                    = <code className="px-1 py-0.5 rounded bg-muted/50 text-foreground/70">{field.defaultValue}</code>
-                                  </span>
-                                )}
                               </div>
                             </div>
                           </div>
@@ -485,70 +320,23 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                           {/* Actions */}
                           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                             <button
-                              onClick={() => startEdit(field)}
+                              onClick={() => startEdit(index)}
                               className="p-1.5 rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
                               title="Edit field"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => handleDelete(field)}
+                              onClick={() => handleDelete(index)}
                               className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
-                              title="Delete field node"
+                              title="Delete field"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-1.5 mt-2 text-[11px] text-muted-foreground">
-                          {getSourceIcon(field.source)}
-                          <span>
-                            Defined in <span className="font-medium text-foreground/70">{field.nodeLabel}</span>
-                          </span>
-                        </div>
                       </div>
                     )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Referenced Fields (from junction/switch - read-only) */}
-            {referencedFields.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Referenced Fields
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-                    {referencedFields.length}
-                  </span>
-                </div>
-
-                {referencedFields.map((field, index) => (
-                  <div
-                    key={`${field.nodeId}-${index}`}
-                    className="rounded-xl border border-border/30 bg-card/30 p-3.5"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className={`p-1.5 rounded-lg border ${getSourceBadgeClasses(field.source)}`}>
-                        {getSourceIcon(field.source)}
-                      </div>
-                      <div className="min-w-0">
-                        <span className="font-mono font-semibold text-sm text-foreground/80 block truncate">
-                          {field.name}
-                        </span>
-                        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
-                          <span>
-                            Used in <span className="font-medium text-foreground/60">{field.nodeLabel}</span>
-                          </span>
-                          <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10px] ${getSourceBadgeClasses(field.source)}`}>
-                            {field.source === "junction" ? "Condition" : "Switch"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 ))}
               </div>
@@ -562,7 +350,7 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
                 </div>
                 <h3 className="text-sm font-semibold text-foreground mb-1.5">No Fields Yet</h3>
                 <p className="text-xs text-muted-foreground max-w-[260px] leading-relaxed mb-4">
-                  Fields store data during calls. Add a field here or use Field Setter nodes on the canvas.
+                  Define fields here first, then use Field Setter nodes to set their values during calls.
                 </p>
                 <Button
                   variant="outline"
@@ -584,16 +372,16 @@ const FieldsPanel = ({ isOpen, onClose, nodes, onUpdateNode, onDeleteNode, onAdd
               </div>
               <ul className="text-[11px] text-muted-foreground space-y-1.5 leading-relaxed">
                 <li className="flex items-start gap-2">
-                  <Database className="w-3 h-3 mt-0.5 text-violet-400 shrink-0" />
-                  <span><span className="text-foreground/70 font-medium">Field Setter</span> nodes store data during calls</span>
+                  <span className="text-violet-400 font-bold shrink-0">1.</span>
+                  <span>Define your fields here (name + type)</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <GitBranch className="w-3 h-3 mt-0.5 text-amber-400 shrink-0" />
-                  <span><span className="text-foreground/70 font-medium">Junction</span> nodes check field values for conditions</span>
+                  <span className="text-violet-400 font-bold shrink-0">2.</span>
+                  <span><span className="text-foreground/70 font-medium">Field Setter</span> nodes set values for these fields during calls</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <ArrowRightLeft className="w-3 h-3 mt-0.5 text-pink-400 shrink-0" />
-                  <span><span className="text-foreground/70 font-medium">Switch</span> nodes branch based on field values</span>
+                  <span className="text-violet-400 font-bold shrink-0">3.</span>
+                  <span><span className="text-foreground/70 font-medium">Junction</span> and <span className="text-foreground/70 font-medium">Switch</span> nodes can check field values for branching</span>
                 </li>
               </ul>
             </div>

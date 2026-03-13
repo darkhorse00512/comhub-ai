@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
+import type { WorkflowField } from "@/components/FieldsPanel";
 
 interface JunctionNodeProps {
   id: string;
@@ -23,9 +24,10 @@ interface JunctionNodeProps {
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
+  workflowFields?: WorkflowField[];
 }
 
-const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodeProps) => {
+const JunctionNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields = [] }: JunctionNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
@@ -248,16 +250,40 @@ const JunctionNode = ({ id, data, onClone, onDelete, onUpdate }: JunctionNodePro
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="fieldName">Field Name (Left Side)</Label>
-              <Input
-                id="fieldName"
-                value={editedFieldName}
-                onChange={(e) => {
-                  setEditedFieldName(e.target.value);
-                  if (errors.fieldName) setErrors({...errors, fieldName: ""});
-                }}
-                placeholder="e.g., customer_type, is_business_hours"
-              />
+              <Label>Field Name (Left Side)</Label>
+              {workflowFields.length > 0 ? (
+                <Select
+                  value={editedFieldName}
+                  onValueChange={(v) => {
+                    setEditedFieldName(v);
+                    if (errors.fieldName) setErrors({...errors, fieldName: ""});
+                  }}
+                >
+                  <SelectTrigger className={errors.fieldName ? "border-red-500" : ""}>
+                    <SelectValue placeholder="Select a field..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workflowFields.map((field) => (
+                      <SelectItem key={field.name} value={field.name}>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono">{field.name}</span>
+                          <span className="text-xs text-muted-foreground">({field.type})</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={editedFieldName}
+                  onChange={(e) => {
+                    setEditedFieldName(e.target.value);
+                    if (errors.fieldName) setErrors({...errors, fieldName: ""});
+                  }}
+                  placeholder="Define fields in Workflow Fields first"
+                  className={errors.fieldName ? "border-red-500" : ""}
+                />
+              )}
               {errors.fieldName && (
                 <p className="text-xs text-red-600 mt-1">{errors.fieldName}</p>
               )}

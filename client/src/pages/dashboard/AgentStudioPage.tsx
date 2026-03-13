@@ -44,7 +44,7 @@ import EndNode from "@/components/nodes/EndNode";
 import TestAgentModal from "@/components/TestAgentModal";
 import AIWorkflowGenerator from "@/components/AIWorkflowGenerator";
 import HistoryPanel from "@/components/HistoryPanel";
-import FieldsPanel from "@/components/FieldsPanel";
+import FieldsPanel, { WorkflowField } from "@/components/FieldsPanel";
 import DebugPanel from "@/components/DebugPanel";
 import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
 import { useAgentContext } from "@/components/agent/AgentLayout";
@@ -70,6 +70,7 @@ const AgentStudioPage = () => {
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [workflowFields, setWorkflowFields] = useState<WorkflowField[]>([]);
   const [showTestModal, setShowTestModal] = useState(false);
   const [testMode, setTestMode] = useState<"text" | "audio">("text");
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -122,6 +123,7 @@ const AgentStudioPage = () => {
     } else {
       initializeDefaultFlow();
     }
+    setWorkflowFields(agent.config?.fields || []);
   }, [agent.id]);
 
   // Clear debug error highlights when workflow changes
@@ -214,42 +216,9 @@ const AgentStudioPage = () => {
     });
   }, [toast]);
 
-  const handleAddFieldNode = useCallback((fieldName: string, valueType: string, defaultValue: string) => {
-    setNodes((currentNodes) => {
-      const fieldSetterNodes = currentNodes.filter((n) => n.type === "field_setter");
-      let posX = 400;
-      let posY = 200;
-
-      if (fieldSetterNodes.length > 0) {
-        const lastFS = fieldSetterNodes.reduce((a, b) => (a.position.y > b.position.y ? a : b));
-        posX = lastFS.position.x;
-        posY = lastFS.position.y + 200;
-      } else if (currentNodes.length > 0) {
-        const maxX = Math.max(...currentNodes.map((n) => n.position.x));
-        posX = maxX + 400;
-        posY = 200;
-      }
-
-      const newNode: Node = {
-        id: `field_setter-${Date.now()}`,
-        type: "field_setter",
-        position: { x: posX, y: posY },
-        data: {
-          label: fieldName.charAt(0).toUpperCase() + fieldName.slice(1).replace(/_/g, " "),
-          fieldName,
-          valueType,
-          value: defaultValue,
-        },
-      };
-
-      toast({
-        title: "Field added",
-        description: `Field "${fieldName}" has been added to the workflow`,
-      });
-
-      return [...currentNodes, newNode];
-    });
-  }, [toast]);
+  const handleWorkflowFieldsChange = useCallback((fields: WorkflowField[]) => {
+    setWorkflowFields(fields);
+  }, []);
 
   const nodeComponents = {
     agentSetup: AgentSetupNode,
@@ -263,13 +232,13 @@ const AgentStudioPage = () => {
       <DialogueNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     field_setter: (props: any) => (
-      <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} allNodes={nodes} />
+      <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} workflowFields={workflowFields} />
     ),
     junction: (props: any) => (
-      <JunctionNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
+      <JunctionNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} workflowFields={workflowFields} />
     ),
     switch: (props: any) => (
-      <SwitchNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
+      <SwitchNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} workflowFields={workflowFields} />
     ),
     play_audio: (props: any) => (
       <PlayAudioNode {...props} agentId={agent?.id} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
@@ -355,7 +324,7 @@ const AgentStudioPage = () => {
     const flowData = { nodes, edges };
 
     const response = await api.updateAgent(agent.id, {
-      config: { ...agent.config, flow: flowData },
+      config: { ...agent.config, flow: flowData, fields: workflowFields },
     });
 
     setIsSaving(false);
@@ -702,6 +671,7 @@ const AgentStudioPage = () => {
               edges: config.flow.edges || [],
             };
           }
+          setWorkflowFields(config?.fields || []);
           onAgentUpdate({ ...agent, config });
         }}
       />
@@ -709,10 +679,8 @@ const AgentStudioPage = () => {
       <FieldsPanel
         isOpen={showFieldsPanel}
         onClose={() => setShowFieldsPanel(false)}
-        nodes={nodes}
-        onUpdateNode={handleUpdateNode}
-        onDeleteNode={handleDeleteNode}
-        onAddFieldNode={handleAddFieldNode}
+        fields={workflowFields}
+        onFieldsChange={handleWorkflowFieldsChange}
       />
 
       <DebugPanel

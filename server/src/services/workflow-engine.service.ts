@@ -441,7 +441,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
     if (!startNode) {
       this.state.isComplete = true;
       return {
-        messages: [{ type: 'system', text: `No ${direction} call direction node found.` }],
+        messages: [{ type: 'system', text: `No ${direction} start node found` }],
         waitingForInput: false,
         isComplete: true,
         currentStage: null,
@@ -465,7 +465,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
     if (this._processing) {
       logger.warn('WorkflowEngine: processMessage called while already processing — rejecting');
       return {
-        messages: [{ type: 'system', text: 'Still processing previous message. Please wait.' }],
+        messages: [{ type: 'system', text: 'Still processing, please wait' }],
         waitingForInput: true,
         isComplete: false,
         currentStage: 'Processing...',
@@ -492,7 +492,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
       // Return a graceful error instead of letting the exception propagate as a 500
       return {
-        messages: [{ type: 'system', text: 'An error occurred processing your message. Please try again.' }],
+        messages: [{ type: 'system', text: 'Something went wrong, please try again' }],
         waitingForInput: this.state.isInDialogue || this.state.isWaitingAfterSpoken,
         isComplete: false,
         currentStage: 'Error',
@@ -507,7 +507,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
     if (this.state.isComplete) {
       return {
-        messages: [{ type: 'system', text: 'Workflow already completed.' }],
+        messages: [{ type: 'system', text: 'Workflow completed' }],
         waitingForInput: false,
         isComplete: true,
         currentStage: null,
@@ -534,7 +534,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         currentDialogueNodeId: this.state.currentDialogueNodeId,
       });
       return {
-        messages: [{ type: 'system', text: 'Not waiting for input.' }],
+        messages: [{ type: 'system', text: 'Not waiting for input' }],
         waitingForInput: false,
         isComplete: this.state.isComplete,
         currentStage: null,
@@ -546,7 +546,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
       this.state.isInDialogue = false;
       this.state.isComplete = true;
       return {
-        messages: [{ type: 'system', text: 'Dialogue node not found.' }],
+        messages: [{ type: 'system', text: 'Dialogue node not found' }],
         waitingForInput: false,
         isComplete: true,
         currentStage: null,
@@ -685,7 +685,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
     if (shouldAdvance) {
       if (maxTurnsReached && !transition && !(validTransitionNames.length === 0 && wantsToComplete)) {
-        messages.push({ type: 'system', text: `Max turns (${maxTurns}) reached.` });
+        messages.push({ type: 'system', text: `Max turns reached (${maxTurns})` });
       }
       if (transition) {
         logger.info('WorkflowEngine: Dialogue transitioning', { transition });
@@ -723,7 +723,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
       });
       // Return a graceful error
       this.state.isComplete = true;
-      messages.push({ type: 'system', text: 'An internal error occurred. Workflow stopped.' });
+      messages.push({ type: 'system', text: 'An error occurred, workflow stopped' });
       return {
         messages,
         waitingForInput: false,
@@ -752,7 +752,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             stepCount,
           });
           this.state.isComplete = true;
-          messages.push({ type: 'system', text: 'Workflow stopped: too many automatic steps (possible loop detected).' });
+          messages.push({ type: 'system', text: 'Workflow stopped: loop detected' });
           return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
         }
       }
@@ -818,7 +818,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             logger.warn('WorkflowEngine: Dialogue node has no fallback connection', { nodeId: node.id, label });
             messages.push({
               type: 'system',
-              text: `Warning: Dialogue node "${label}" has no fallback connection. Connect a Fallback node to handle unrecognized input.`,
+              text: `No fallback connected to "${label}"`,
             });
           }
 
@@ -925,7 +925,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             this.state.fields[fieldName] = parsedValue;
             messages.push({
               type: 'system',
-              text: `Field "${fieldName}" set to ${JSON.stringify(parsedValue)}`,
+              text: `Set ${fieldName} = ${JSON.stringify(parsedValue)}`,
             });
           }
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
@@ -941,7 +941,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
           messages.push({
             type: 'system',
-            text: `Condition: ${fieldName} ${operator} "${compareVal}" → ${result ? 'True' : 'False'}`,
+            text: `${fieldName} ${operator} "${compareVal}" → ${result ? 'true' : 'false'}`,
           });
 
           this.state.currentNodeId = this.evaluateJunction(node);
@@ -953,7 +953,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           const switchVal = this.state.fields[switchField];
           messages.push({
             type: 'system',
-            text: `Switch: ${switchField} = "${switchVal ?? 'undefined'}"`,
+            text: `${switchField} = "${switchVal ?? 'not set'}"`,
           });
           this.state.currentNodeId = this.evaluateSwitch(node);
           break;
@@ -975,7 +975,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           });
           messages.push({
             type: 'system',
-            text: `Call transferred to ${node.data?.transferTo || 'agent'} (${node.data?.transferType || 'cold'} transfer)`,
+            text: `Transferring to ${node.data?.transferTo || 'agent'}`,
           });
 
           this.state.isComplete = true;
@@ -1003,7 +1003,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             text: greeting,
             nodeLabel: node.data?.label,
           });
-          messages.push({ type: 'system', text: 'Voicemail recording started.' });
+          messages.push({ type: 'system', text: 'Voicemail started' });
 
           this.state.isComplete = true;
           this.state.currentNodeId = null;
@@ -1034,7 +1034,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         case 'time_limit': {
           const maxDuration = node.data?.maxDuration;
           if (maxDuration) {
-            messages.push({ type: 'system', text: `Time limit set: ${maxDuration}s` });
+            messages.push({ type: 'system', text: `Time limit: ${maxDuration}s` });
           }
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
@@ -1043,7 +1043,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         case 'reconfigure': {
           messages.push({
             type: 'system',
-            text: `Agent reconfigured: ${node.data?.setting || 'setting'} → ${node.data?.newValue || 'value'}`,
+            text: `Reconfigured ${node.data?.setting || 'setting'} to ${node.data?.newValue || 'value'}`,
           });
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
@@ -1120,7 +1120,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             logger.info('WorkflowEngine: End node extracting results', { extracted });
             messages.push({
               type: 'system',
-              text: `Extracted results: ${JSON.stringify(extracted)}`,
+              text: `Results: ${Object.entries(extracted).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ')}`,
             });
           }
 
@@ -1138,7 +1138,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         case 'function': {
           messages.push({
             type: 'system',
-            text: `Function "${node.data?.functionName || 'unknown'}" executed (simulated)`,
+            text: `Ran ${node.data?.functionName || 'function'}`,
           });
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
@@ -1154,7 +1154,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
 
     // Workflow completed (ran out of nodes)
     this.state.isComplete = true;
-    messages.push({ type: 'system', text: 'Call workflow completed.' });
+    messages.push({ type: 'system', text: 'Workflow completed' });
     return {
       messages,
       waitingForInput: false,

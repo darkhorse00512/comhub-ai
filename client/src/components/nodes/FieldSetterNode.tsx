@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, Database, ChevronRight, HelpCircle } from "lucide-react";
+import { Copy, Pencil, Trash2, Database, ChevronRight, HelpCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
+import type { WorkflowField } from "@/components/FieldsPanel";
 
 interface FieldSetterNodeProps {
   id: string;
@@ -23,10 +24,10 @@ interface FieldSetterNodeProps {
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
-  allNodes?: Array<{ id: string; type: string; data: any }>;
+  workflowFields?: WorkflowField[];
 }
 
-const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: FieldSetterNodeProps) => {
+const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields = [] }: FieldSetterNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editedName, setEditedName] = useState(data.label || "");
@@ -54,6 +55,22 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
     setIsEditModalOpen(true);
   };
 
+  const handleFieldSelection = (fieldName: string) => {
+    setEditedFieldName(fieldName);
+    if (errors.fieldName) setErrors({ ...errors, fieldName: "" });
+    // Auto-set the value type from the workflow field definition
+    const field = workflowFields.find((f) => f.name === fieldName);
+    if (field) {
+      setEditedValueType(field.type);
+      // Reset value when type changes
+      if (field.type === "boolean") {
+        setEditedValue("true");
+      } else if (field.type !== editedValueType) {
+        setEditedValue("");
+      }
+    }
+  };
+
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
@@ -62,19 +79,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
     }
 
     if (!editedFieldName.trim()) {
-      newErrors.fieldName = "Field name is required";
-    } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(editedFieldName)) {
-      newErrors.fieldName = "Field name must start with letter/underscore, contain only letters, numbers, underscores";
-    }
-
-    // Check uniqueness against other field_setter nodes
-    if (editedFieldName.trim() && allNodes) {
-      const duplicate = allNodes.find(
-        (n) => n.id !== id && n.type === 'field_setter' && n.data?.fieldName === editedFieldName.trim()
-      );
-      if (duplicate) {
-        newErrors.fieldName = `Field "${editedFieldName}" already exists in "${duplicate.data?.label || 'another node'}"`;
-      }
+      newErrors.fieldName = "Please select a field";
     }
 
     if (editedValueType === 'number' && isNaN(Number(editedValue))) {
@@ -114,15 +119,6 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
     setEditedValue(data.value || "");
     setEditedValueType(data.valueType || "text");
     setIsEditModalOpen(false);
-  };
-
-  // Get preview text
-  const getPreviewText = () => {
-    if (data.fieldName) {
-      const valueDisplay = data.value !== undefined ? ` = ${data.value}` : "";
-      return `${data.fieldName}${valueDisplay}`;
-    }
-    return "No field configured";
   };
 
   return (
@@ -228,7 +224,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
           <DialogHeader>
             <DialogTitle>Field Setter Configuration</DialogTitle>
             <DialogDescription>
-              Set a field value that can be used later in the workflow for conditions or data storage.
+              Select a workflow field and set its value. Fields must be defined in Workflow Fields first.
             </DialogDescription>
           </DialogHeader>
 
@@ -251,29 +247,40 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="fieldName">Field Name</Label>
-              <Input
-                id="fieldName"
-                value={editedFieldName}
-                onChange={(e) => {
-                  setEditedFieldName(e.target.value);
-                  if (errors.fieldName) setErrors({...errors, fieldName: ""});
-                }}
-                placeholder="e.g., customer_name, order_id"
-                className={errors.fieldName ? "border-red-500" : ""}
-              />
+              <Label>Field Name</Label>
+              {workflowFields.length > 0 ? (
+                <Select value={editedFieldName} onValueChange={handleFieldSelection}>
+                  <SelectTrigger className={errors.fieldName ? "border-red-500" : ""}>
+                    <SelectValue placeholder="Select a field..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workflowFields.map((field) => (
+                      <SelectItem key={field.name} value={field.name}>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono">{field.name}</span>
+                          <span className="text-xs text-muted-foreground">({field.type})</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-700">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <p className="text-xs">
+                    No fields defined yet. Add fields in <span className="font-semibold">Workflow Fields</span> panel first.
+                  </p>
+                </div>
+              )}
               {errors.fieldName && (
                 <p className="text-xs text-red-600 mt-1">{errors.fieldName}</p>
               )}
-              <p className="text-xs text-muted-foreground">
-                Variable name to store the value (letters, numbers, underscores only)
-              </p>
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="valueType">Value Type</Label>
-              <Select value={editedValueType} onValueChange={setEditedValueType}>
-                <SelectTrigger>
+              <Select value={editedValueType} disabled>
+                <SelectTrigger className="opacity-60">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
@@ -282,6 +289,9 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, allNodes }: Fi
                   <SelectItem value="number">Number</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Type is determined by the field definition in Workflow Fields
+              </p>
             </div>
 
             <div className="grid gap-2">

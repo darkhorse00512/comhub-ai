@@ -819,7 +819,7 @@ const TestAgentModal = ({
         if (result.transferTo) {
           addMessage(
             "system",
-            `Call would be transferred to ${result.transferTo} (${result.transferType || "cold"} transfer)`
+            `Transferring to ${result.transferTo}`
           );
         }
       }
@@ -839,7 +839,7 @@ const TestAgentModal = ({
 
       if (!waitingForInputRef.current) {
         if (!isSpeechNotRecognized) {
-          addMessage("system", "Waiting for the next conversation stage...");
+          addMessage("system", "Waiting for next stage...");
         }
         return;
       }
@@ -876,7 +876,7 @@ const TestAgentModal = ({
       } else {
         setIsLoading(false);
         isLoadingRef.current = false;
-        addMessage("system", error || "Failed to get workflow response. Try again.");
+        addMessage("system", error || "Failed to get response, try again");
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
         }
@@ -985,7 +985,7 @@ const TestAgentModal = ({
         if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
         maxDurationTimerRef.current = setTimeout(() => {
           if (isCallActiveRef.current) {
-            addMessage("system", `Maximum call duration of ${maxDur} seconds reached. Ending call.`);
+            addMessage("system", `Max duration reached (${maxDur}s), ending call`);
             endCallRef.current();
           }
         }, maxDur * 1000);
