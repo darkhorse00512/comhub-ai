@@ -102,7 +102,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     elevenlabsApiKey: existingSettings.elevenlabsApiKey || "",
     elevenlabsVoiceId: existingSettings.elevenlabsVoiceId || "",
     maxCallDuration: existingSettings.maxCallDuration?.toString() || "600",
-    silenceTimeout: existingSettings.silenceTimeout?.toString() || "1",
+    silenceTimeout: existingSettings.silenceTimeout?.toString() || "2",
     speechTimeout: existingSettings.speechTimeout || "auto",
     // Background noise
     backgroundNoiseEnabled: existingSettings.backgroundNoiseEnabled ?? false,
@@ -116,7 +116,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     onIdleTerminationMessage: existingSettings.onIdleTerminationMessage || "",
     // Interruption
     interruptionSensitivity: existingSettings.interruptionSensitivity || "low",
-    interruptionWordCountThreshold: existingSettings.interruptionWordCountThreshold?.toString() || "3",
+    interruptionWordCountThreshold: existingSettings.interruptionWordCountThreshold?.toString() || "1",
     // ComhubAI Voice
     comhubaiVoiceModelId: existingSettings.comhubaiVoiceModelId || "",
   });
@@ -203,12 +203,12 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
       settings: {
         ...settings,
         maxCallDuration: parseInt(settings.maxCallDuration) || 600,
-        silenceTimeout: parseInt(settings.silenceTimeout) || 1,
+        silenceTimeout: settings.silenceTimeout === "auto" ? 2 : (parseInt(settings.silenceTimeout) || 2),
         speechTimeout: settings.speechTimeout,
         backgroundNoiseVolume: settings.backgroundNoiseVolume,
         onIdleTimeout: parseInt(settings.onIdleTimeout) || 10,
         onIdleThreshold: parseInt(settings.onIdleThreshold) || 3,
-        interruptionWordCountThreshold: parseInt(settings.interruptionWordCountThreshold) || 3,
+        interruptionWordCountThreshold: parseInt(settings.interruptionWordCountThreshold) || 1,
       },
     };
 
@@ -786,16 +786,46 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
                   <div className="space-y-2">
                     <Label className="flex items-center gap-1.5">
-                      Silence Timeout (seconds)
-                      <InfoTooltip text="Seconds of complete silence before the agent sends an idle message (if configured in General tab). Also used as the default speech timeout for custom mode." />
+                      Silence Timeout
+                      <InfoTooltip text="How long to wait in silence before the agent sends an idle/follow-up message. 'Auto' uses a smart 2-second default that works well for natural conversation. Also used as the speech timeout fallback when Speech Timeout is set to Custom." />
                     </Label>
-                    <Input
-                      type="number"
-                      value={settings.silenceTimeout}
-                      onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
-                      min={1}
-                      max={30}
-                    />
+                    <Select
+                      value={settings.silenceTimeout === "auto" ? "auto" : "custom"}
+                      onValueChange={(value) => {
+                        if (value === "auto") {
+                          setSettings({ ...settings, silenceTimeout: "auto" });
+                        } else {
+                          setSettings({ ...settings, silenceTimeout: "2" });
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">Auto (2s — recommended)</SelectItem>
+                        <SelectItem value="custom">Custom (seconds)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {settings.silenceTimeout !== "auto" && (
+                      <div className="pt-1">
+                        <Input
+                          type="number"
+                          value={settings.silenceTimeout}
+                          onChange={(e) => setSettings({ ...settings, silenceTimeout: e.target.value })}
+                          min={1}
+                          max={30}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Wait {settings.silenceTimeout || "2"}s of silence before idle message
+                        </p>
+                      </div>
+                    )}
+                    {settings.silenceTimeout === "auto" && (
+                      <p className="text-xs text-muted-foreground">
+                        Waits 2 seconds of silence — balances responsiveness with natural pauses
+                      </p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -870,7 +900,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                       max={10}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Ignore speech shorter than {settings.interruptionWordCountThreshold || "3"} word{parseInt(settings.interruptionWordCountThreshold) !== 1 ? "s" : ""}
+                      Ignore speech shorter than {settings.interruptionWordCountThreshold || "1"} word{parseInt(settings.interruptionWordCountThreshold) !== 1 ? "s" : ""}
                     </p>
                   </div>
                 </CardContent>

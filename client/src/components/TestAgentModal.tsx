@@ -95,11 +95,11 @@ interface CallSettings {
 
 const DEFAULT_CALL_SETTINGS: CallSettings = {
   language: "en-US",
-  speechTimeout: "1",
+  speechTimeout: "auto",
   maxCallDuration: 600,
-  silenceTimeout: 1,
+  silenceTimeout: 2,
   interruptionSensitivity: "low",
-  interruptionWordCountThreshold: 3,
+  interruptionWordCountThreshold: 1,
   onIdleMessage: "",
   onIdleTimeout: 10,
   onIdleThreshold: 3,
@@ -634,8 +634,8 @@ const TestAgentModal = ({
           }
         };
 
-        // Use configured silence timeout; fall back to defaults
-        const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 1) * 1000;
+        // Use configured silence timeout; fall back to 2s default
+        const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 2) * 1000;
         const initialWaitMs = Math.max(silenceTimeoutMs, 5000); // at least 5s for user to start speaking
 
         const startSilenceTimer = (ms: number) => {
@@ -674,10 +674,11 @@ const TestAgentModal = ({
 
           if (text) {
             const cs = callSettingsRef.current;
-            // Interruption sensitivity: if high, ignore short utterances below word threshold
+            // Interruption sensitivity: only filter when barge-in is active AND threshold > 1.
+            // Default threshold is 1, so single-word responses ("yes", "hello") are always accepted.
             const wordCount = text.split(/\s+/).length;
-            if (cs.interruptionSensitivity === "high" && wordCount < cs.interruptionWordCountThreshold) {
-              // Too few words — likely accidental, re-listen
+            if (cs.interruptionSensitivity === "high" && cs.interruptionWordCountThreshold > 1 && wordCount < cs.interruptionWordCountThreshold) {
+              // Too few words during barge-in — likely accidental noise, re-listen
               if (waitingForInputRef.current && isCallActiveRef.current) {
                 startAutoRecording();
               }
