@@ -1900,6 +1900,21 @@ const CallInterface = ({
                   )}
                 </div>
               ))}
+              {/* Thinking indicator — shown while AI is processing */}
+              {isLoading && (
+                <div className="flex gap-2 justify-start">
+                  <div className="w-7 h-7 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div className="max-w-[75%] rounded-lg px-3 py-2 bg-muted text-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
           )}

@@ -10,6 +10,7 @@ router.post('/voice', twilioController.handleVoiceWebhook);
 router.post('/outbound-voice', twilioController.handleOutboundVoice);
 router.post('/handle-recording', twilioController.handleRecording);
 router.post('/handle-speech', twilioController.handleSpeech);
+router.post('/get-response', twilioController.handleGetResponse);
 router.post('/status', twilioController.handleStatusCallback);
 router.post('/bulk-status', twilioController.handleBulkStatusCallback);
 router.post('/sip-forward', twilioController.handleSIPForward);

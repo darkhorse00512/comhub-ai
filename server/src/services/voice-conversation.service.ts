@@ -55,6 +55,76 @@ class VoiceConversationService {
   private activeConversations: Map<string, ActiveConversation> = new Map();
   private supabase = getSupabaseClient();
 
+  /**
+   * Pending AI responses keyed by callSid.
+   * When a filler is returned, the real processing runs in the background.
+   * The get-response endpoint awaits this promise.
+   */
+  private pendingResponses: Map<string, Promise<string>> = new Map();
+
+  // --- Language-aware filler phrases ---
+  // Short, natural phrases that buy time while AI processes the real response.
+  private readonly FILLER_PHRASES: Record<string, string[]> = {
+    en: [
+      'Hmm, let me think...',
+      'One moment...',
+      'Let me see...',
+      'So...',
+      'Alright...',
+    ],
+    de: [
+      'Hmm, einen Moment...',
+      'Lass mich überlegen...',
+      'Moment bitte...',
+      'Also...',
+      'Einen Augenblick...',
+    ],
+    es: [
+      'Hmm, déjame pensar...',
+      'Un momento...',
+      'A ver...',
+      'Bueno...',
+      'Un segundo...',
+    ],
+    fr: [
+      'Hmm, laissez-moi réfléchir...',
+      'Un instant...',
+      'Voyons voir...',
+      'Alors...',
+      'Un moment...',
+    ],
+    it: [
+      'Hmm, un momento...',
+      'Vediamo...',
+      'Allora...',
+      'Un attimo...',
+      'Fammi pensare...',
+    ],
+    pt: [
+      'Hmm, um momento...',
+      'Deixe-me pensar...',
+      'Vamos ver...',
+      'Então...',
+      'Um instante...',
+    ],
+    nl: [
+      'Hmm, even denken...',
+      'Een moment...',
+      'Laat me even kijken...',
+      'Dus...',
+      'Een ogenblik...',
+    ],
+  };
+
+  /**
+   * Pick a random filler phrase for the given language.
+   */
+  private getFillerPhrase(language: string): string {
+    const langCode = (language || 'en-US').substring(0, 2);
+    const phrases = this.FILLER_PHRASES[langCode] || this.FILLER_PHRASES.en;
+    return phrases[Math.floor(Math.random() * phrases.length)];
+  }
+
   private readonly DEFAULT_GREETING = "Hey there! Here is ComHub AI. What can I help you with today?";
 
   /**
@@ -412,6 +482,62 @@ class VoiceConversationService {
 
       logger.info('User said', { callSid, text: speechResult });
 
+      // --- Filler response pattern ---
+      // Start AI processing in the background, return a short filler immediately,
+      // then redirect to /get-response which awaits the real answer.
+      // This dramatically reduces perceived latency on voice calls.
+
+      const processingPromise = this.processAIResponse(callSid, speechResult, conversation);
+      this.pendingResponses.set(callSid, processingPromise);
+
+      const fillerPhrase = this.getFillerPhrase(cs.language);
+      logger.info('Returning filler while AI processes', { callSid, filler: fillerPhrase });
+
+      const response = new VoiceResponse();
+      response.say({
+        voice: 'Polly.Joanna',
+        language: cs.language as any,
+      }, fillerPhrase);
+      response.redirect({
+        method: 'POST',
+      }, `${config.server.apiBaseUrl}/api/twilio/get-response?callSid=${encodeURIComponent(callSid)}`);
+
+      return response.toString();
+    } catch (error) {
+      logger.error('Failed to process speech result:', error);
+
+      const conversation = this.activeConversations.get(callSid);
+      const errorMessage = this.getLocalizedMessage(conversation?.callSettings?.language || 'en-US', 'error');
+
+      if (conversation) {
+        try {
+          const errorAudioUrl = await this.generateAndSaveAudio(
+            errorMessage, conversation.callSessionId, 'error', conversation.voiceSettings
+          );
+          return this.generatePlayAndGatherTwiML(errorAudioUrl, conversation.callSettings);
+        } catch {
+          // Fall through to Twilio Say
+        }
+      }
+
+      const response = new VoiceResponse();
+      response.say({ voice: 'Polly.Joanna' }, errorMessage);
+      this.appendGather(response);
+      return response.toString();
+    }
+  }
+
+  /**
+   * Process the AI response in the background (called from processSpeechResult).
+   * Returns the final TwiML string once ready.
+   */
+  private async processAIResponse(
+    callSid: string,
+    speechResult: string,
+    conversation: ActiveConversation,
+  ): Promise<string> {
+    try {
+      const cs = conversation.callSettings;
       let responseText: string;
 
       if (conversation.workflowEngine && conversation.workflowEngine.isWaitingForInput()) {
@@ -420,7 +546,7 @@ class VoiceConversationService {
 
         if (!responseText) responseText = 'Thank you for calling. Goodbye!';
 
-        logger.info('Workflow engine processed message', {
+        logger.info('Workflow engine processed message (background)', {
           callSid,
           waitingForInput: result.waitingForInput,
           isComplete: result.isComplete,
@@ -459,30 +585,49 @@ class VoiceConversationService {
       await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioUrl);
       conversation.history.push({ role: 'assistant', content: responseText });
 
-      logger.info('AI responded', { callSid, text: responseText.substring(0, 100) });
+      logger.info('AI responded (background)', { callSid, text: responseText.substring(0, 100) });
 
-      return this.generatePlayAndGatherTwiML(aiAudioUrl, conversation.callSettings);
+      return this.generatePlayAndGatherTwiML(aiAudioUrl, cs);
     } catch (error) {
-      logger.error('Failed to process speech result:', error);
-
-      const conversation = this.activeConversations.get(callSid);
-      const errorMessage = this.getLocalizedMessage(conversation?.callSettings?.language || 'en-US', 'error');
-
-      if (conversation) {
-        try {
-          const errorAudioUrl = await this.generateAndSaveAudio(
-            errorMessage, conversation.callSessionId, 'error', conversation.voiceSettings
-          );
-          return this.generatePlayAndGatherTwiML(errorAudioUrl, conversation.callSettings);
-        } catch {
-          // Fall through to Twilio Say
-        }
+      logger.error('Background AI processing failed', { callSid, error });
+      const errorMessage = this.getLocalizedMessage(conversation.callSettings.language, 'error');
+      try {
+        const errorAudioUrl = await this.generateAndSaveAudio(
+          errorMessage, conversation.callSessionId, 'error', conversation.voiceSettings
+        );
+        return this.generatePlayAndGatherTwiML(errorAudioUrl, conversation.callSettings);
+      } catch {
+        const response = new VoiceResponse();
+        response.say({ voice: 'Polly.Joanna' }, errorMessage);
+        this.appendGather(response, conversation.callSettings);
+        return response.toString();
       }
+    }
+  }
 
-      const response = new VoiceResponse();
-      response.say({ voice: 'Polly.Joanna' }, errorMessage);
-      this.appendGather(response);
-      return response.toString();
+  /**
+   * Await the pending AI response for a call.
+   * Called by the /get-response endpoint after the filler has played.
+   */
+  async getProcessedResponse(callSid: string): Promise<string> {
+    const pending = this.pendingResponses.get(callSid);
+    if (!pending) {
+      logger.warn('No pending response found for callSid', { callSid });
+      const conversation = this.activeConversations.get(callSid);
+      if (conversation) {
+        // No pending response — just re-gather
+        const response = new VoiceResponse();
+        this.appendGather(response, conversation.callSettings);
+        return response.toString();
+      }
+      return this.generateEndCallTwiML("Sorry, something went wrong. Goodbye!");
+    }
+
+    try {
+      const twiml = await pending;
+      return twiml;
+    } finally {
+      this.pendingResponses.delete(callSid);
     }
   }
 
@@ -520,6 +665,7 @@ class VoiceConversationService {
         .eq('channel_id', callSid);
 
       this.activeConversations.delete(callSid);
+      this.pendingResponses.delete(callSid);
 
       logger.info('Conversation ended', {
         callSid,

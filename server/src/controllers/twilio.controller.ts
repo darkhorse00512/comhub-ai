@@ -277,6 +277,59 @@ export class TwilioController {
     }
   }
 
+  /**
+   * Return the real AI response after the filler phrase has played.
+   * Called by <Redirect> in the filler TwiML.
+   */
+  async handleGetResponse(req: Request, res: Response): Promise<void> {
+    try {
+      const callSid = (req.query.callSid || req.body.CallSid) as string;
+
+      if (!callSid) {
+        logger.warn('handleGetResponse called without callSid');
+        res.type('text/xml');
+        res.send(`
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Response>
+            <Say voice="alice">Sorry, something went wrong.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
+
+      logger.info('Fetching processed AI response', { callSid });
+
+      const twiml = await voiceConversationService.getProcessedResponse(callSid);
+
+      res.type('text/xml');
+      res.send(twiml);
+    } catch (error) {
+      logger.error('Failed to get processed response:', error);
+
+      const conversation = voiceConversationService.getConversation(req.body?.CallSid || req.query?.callSid as string);
+      const lang = conversation?.callSettings?.language || 'en-US';
+      const langCode = lang.substring(0, 2);
+
+      const errorMessages: Record<string, string> = {
+        en: 'Sorry, I had trouble processing that. Could you repeat?',
+        de: 'Entschuldigung, da gab es ein Problem. Könnten Sie das wiederholen?',
+        es: 'Lo siento, tuve un problema. ¿Podría repetirlo?',
+        fr: 'Désolé, j\'ai eu un problème. Pourriez-vous répéter?',
+      };
+
+      res.type('text/xml');
+      res.send(`
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+          <Say voice="alice" language="${lang}">${errorMessages[langCode] || errorMessages.en}</Say>
+          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="1" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false"/>
+          <Hangup/>
+        </Response>
+      `);
+    }
+  }
+
   async handleSIPForward(req: Request, res: Response): Promise<void> {
     try {
       const { CallSid, From } = req.body;
