@@ -31,11 +31,19 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Node, Edge } from "@/components/FlowCanvas";
 
+interface WorkflowField {
+  name: string;
+  type: "text" | "number" | "boolean";
+}
+
 interface AIWorkflowGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  onGenerate: (nodes: Node[], edges: Edge[]) => void;
+  onGenerate: (nodes: Node[], edges: Edge[], fields?: WorkflowField[]) => void;
   agentId: string;
+  existingNodes?: Node[];
+  existingEdges?: Edge[];
+  existingFields?: WorkflowField[];
 }
 
 const PRESET_FIELDS = [
@@ -52,6 +60,9 @@ const AIWorkflowGenerator = ({
   onClose,
   onGenerate,
   agentId,
+  existingNodes,
+  existingEdges,
+  existingFields,
 }: AIWorkflowGeneratorProps) => {
   const { toast } = useToast();
   const [step, setStep] = useState(1);
@@ -137,6 +148,16 @@ const AIWorkflowGenerator = ({
         ...callFlowConfig.customFields,
       ];
 
+      // Include existing workflow so AI can improve/complete it instead of starting from scratch
+      const hasExistingWorkflow = existingNodes && existingNodes.length > 0;
+      const existingWorkflow = hasExistingWorkflow
+        ? {
+            nodes: existingNodes,
+            edges: existingEdges || [],
+            fields: existingFields || [],
+          }
+        : undefined;
+
       const response = await fetch(
         `${import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api"}/agents/${agentId}/generate-workflow`,
         {
@@ -148,6 +169,7 @@ const AIWorkflowGenerator = ({
               ...callFlowConfig,
               collectInfo: allCollectInfo,
             },
+            existingWorkflow,
           }),
         }
       );
@@ -159,10 +181,10 @@ const AIWorkflowGenerator = ({
       }
 
       if (data.success && data.workflow) {
-        onGenerate(data.workflow.nodes, data.workflow.edges);
+        onGenerate(data.workflow.nodes, data.workflow.edges, data.workflow.fields);
         toast({
-          title: "Workflow Generated",
-          description: `Created ${data.workflow.nodes.length} nodes and ${data.workflow.edges.length} connections.`,
+          title: hasExistingWorkflow ? "Workflow Improved" : "Workflow Generated",
+          description: `${hasExistingWorkflow ? 'Improved' : 'Created'} workflow with ${data.workflow.nodes.length} nodes and ${data.workflow.edges.length} connections.`,
         });
         handleClose();
       } else {
@@ -264,7 +286,9 @@ const AIWorkflowGenerator = ({
             AI Workflow Generator
           </DialogTitle>
           <DialogDescription>
-            Describe your business and preferences — AI will create a production-ready call workflow.
+            {existingNodes && existingNodes.length > 0
+              ? "AI will improve and complete your existing workflow based on your preferences."
+              : "Describe your business and preferences — AI will create a production-ready call workflow."}
           </DialogDescription>
         </DialogHeader>
 

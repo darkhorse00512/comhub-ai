@@ -341,7 +341,10 @@ const AgentStudioPage = () => {
       }
       return false;
     } else {
+      const updatedConfig = { ...agent.config, flow: flowData, fields: workflowFields };
       savedStateRef.current = { nodes, edges, fields: workflowFields };
+      // Update the agent context so other sections (Configure, etc.) see the latest config
+      onAgentUpdate({ ...agent, config: updatedConfig });
       if (showToast) {
         toast({
           title: "Agent saved",
@@ -645,11 +648,17 @@ const AgentStudioPage = () => {
       <AIWorkflowGenerator
         isOpen={showAIGenerator}
         onClose={() => setShowAIGenerator(false)}
-        onGenerate={(generatedNodes, generatedEdges) => {
+        onGenerate={(generatedNodes, generatedEdges, generatedFields) => {
           setNodes(generatedNodes);
           setEdges(generatedEdges);
+          if (generatedFields && generatedFields.length > 0) {
+            setWorkflowFields(generatedFields);
+          }
         }}
         agentId={agent.id}
+        existingNodes={nodes}
+        existingEdges={edges}
+        existingFields={workflowFields}
       />
 
       <UnsavedChangesModal

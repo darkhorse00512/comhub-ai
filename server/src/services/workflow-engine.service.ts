@@ -291,6 +291,17 @@ export class WorkflowEngine {
     return 'en';
   }
 
+  /** Replace {{fieldName}} placeholders with actual field values from state */
+  private substituteFieldVariables(text: string): string {
+    return text.replace(/\{\{(\w+)\}\}/g, (match, fieldName) => {
+      const value = this.state.fields[fieldName];
+      if (value !== undefined && value !== null && value !== '') {
+        return String(value);
+      }
+      return match; // Keep placeholder if field not set
+    });
+  }
+
   private getLanguageAwareFallback(type: 'retry' | 'error' | 'greeting'): string {
     const lang = this.detectLanguage();
     const fallbacks: Record<string, Record<string, string>> = {
@@ -344,7 +355,8 @@ CONTEXT AWARENESS (CRITICAL):
 - Always continue from exactly where the conversation left off.`;
 
     prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || 'Dialogue'}"`;
-    prompt += `\n\n### Stage Instructions:\n${node.data?.stageMessage || 'Engage in natural conversation with the caller.'}`;
+    const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || 'Engage in natural conversation with the caller.');
+    prompt += `\n\n### Stage Instructions:\n${stageMessage}`;
 
     const extraInstructions: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
     if (extraInstructions.length > 0) {
@@ -628,19 +640,17 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         return this.executeFromCurrent(messages);
       }
 
-      // No fallback connected — ask the AI to generate a contextual retry in the correct language
+      // No fallback connected — use language-aware fallback directly (more reliable than asking AI)
+      const detectedLang = this.detectLanguage();
+      const retryMsg = this.getLanguageAwareFallback('retry');
+      // Also push to dialogue history so AI knows a retry happened
       this.state.dialogueHistory.push({
         role: 'user',
-        content: '[The caller\'s speech was unclear. Say a SHORT sentence asking them to repeat ONLY their last answer. Stay in the SAME language. Do NOT restart the conversation or re-ask previous questions. Do NOT re-introduce yourself.]',
+        content: `[Speech was unclear — agent asked caller to repeat in ${detectedLang}]`,
       });
-
-      const aiRetry = await this.generateAIResponse();
-      const retryMsg = aiRetry
-        ? parseAIResponse(aiRetry).text
-        : this.getLanguageAwareFallback('retry');
+      this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
 
       messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
-      this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
       this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
 
       return {
@@ -826,7 +836,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
         }
 
         case 'scripted': {
-          const script = node.data?.script || 'No script configured.';
+          const script = this.substituteFieldVariables(node.data?.script || 'No script configured.');
           messages.push({
             type: 'scripted',
             text: script,

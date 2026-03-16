@@ -706,7 +706,7 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
   try {
     const userId = req.user?.id;
     const { id } = req.params;
-    const { businessInfo, callFlowConfig } = req.body;
+    const { businessInfo, callFlowConfig, existingWorkflow } = req.body;
 
     if (!userId) {
       res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -730,11 +730,20 @@ export const generateWorkflow = async (req: AuthRequest, res: Response): Promise
     const agent = access.agent;
 
     // Build the AI prompt for workflow generation
+    const hasExisting = existingWorkflow?.nodes?.length > 0;
     const systemPrompt = `You are a world-class AI phone call workflow architect. You design production-ready, professional call flows.
 Return ONLY valid JSON. No markdown, no code blocks, no explanations, no text outside the JSON object.
-
+${hasExisting ? `
+IMPORTANT: You are IMPROVING an existing workflow. Analyze the current workflow carefully:
+- Keep what works well (good node structure, transitions, stage messages)
+- Fix issues (missing connections, poor prompts, missing error handling)
+- Add missing pieces (field_setter nodes, fallback nodes, better dialogue instructions)
+- Improve dialogue stageMessage instructions to be more detailed and effective
+- Preserve existing node IDs where possible so connections are maintained
+- Output the COMPLETE improved workflow (not just the changes)
+` : ''}
 ## OUTPUT FORMAT
-{"nodes": [...], "edges": [...]}
+{"nodes": [...], "edges": [...], "fields": [...]}
 
 ## NODE TYPES (use these exact "type" values)
 
@@ -767,6 +776,9 @@ Return ONLY valid JSON. No markdown, no code blocks, no explanations, no text ou
 
 10. fallback - Error handling
     {"id": "fallback", "type": "fallback", "position": {"x": 50, "y": 600}, "data": {"label": "Error Handler", "fallbackMessage": "I'm sorry, I didn't quite catch that. Could you please repeat?", "retryCount": 3, "escalateTo": "+15551234567"}}
+
+11. end_call - End the call with a closing message
+    {"id": "end-call", "type": "end_call", "position": {"x": 2050, "y": 150}, "data": {"label": "End Call", "endMessage": "Thank you for calling. Goodbye!"}}
 
 ## EDGE RULES
 - Basic: {"id": "e1", "source": "node-a", "target": "node-b", "animated": true}
@@ -802,7 +814,14 @@ AgentSetup → CallDirection(outbound) → Scripted(introduction + permission) �
 - Always include a fallback node for error recovery
 - Junction conditions should check meaningful business logic
 - Closing scripts should thank the caller and summarize next steps
-- SystemMessage in agentSetup should be 3-5 sentences defining the agent's role, tone, and boundaries`;
+- SystemMessage in agentSetup should be 3-5 sentences defining the agent's role, tone, and boundaries
+
+## FIELDS (workflow variables)
+Include a "fields" array in your output. Fields are variables used across the workflow via {{fieldName}} syntax in scripted messages and dialogue stageMessages.
+Example: {"fields": [{"name": "customer_name", "type": "text"}, {"name": "is_qualified", "type": "boolean"}, {"name": "call_count", "type": "number"}]}
+- type can be: "text", "number", or "boolean"
+- Create a field for every piece of information collected or tracked in the workflow
+- field_setter nodes reference these fields by fieldName`;
 
     // Build detailed user prompt
     // Map collectInfo IDs to labels and field names (client sends IDs like "name", "email")
@@ -865,7 +884,11 @@ LAYOUT:
 - Agent Setup at x=50, y=300
 - Inbound row: y=150, Outbound row: y=500
 - Junction True branch: keep same y, False branch: y+200
+${hasExisting ? `
+EXISTING WORKFLOW TO IMPROVE:
+${JSON.stringify(existingWorkflow, null, 2)}
 
+Analyze this workflow and return an improved version. Keep what works, fix issues, and add missing pieces.` : ''}
 Return ONLY the JSON object.`;
 
     // Generate workflow using GPT with custom prompt and higher token limit
@@ -949,7 +972,7 @@ Return ONLY the JSON object.`;
       }
 
       const nodeIds = new Set<string>();
-      const validTypes = ['agentSetup', 'callDirection', 'scripted', 'dialogue', 'field_setter', 'junction', 'switch', 'call_transfer', 'voicemail', 'fallback', 'time_limit', 'reconfigure', 'function', 'play_audio'];
+      const validTypes = ['agentSetup', 'callDirection', 'scripted', 'dialogue', 'field_setter', 'junction', 'switch', 'call_transfer', 'voicemail', 'fallback', 'time_limit', 'reconfigure', 'function', 'play_audio', 'end_call'];
 
       // Sanitize nodes: fix IDs, ensure position/data exist, remove invalid types
       wf.nodes = wf.nodes.filter((node: any, idx: number) => {
@@ -1011,6 +1034,19 @@ Return ONLY the JSON object.`;
       });
       if (wf.edges.length < originalEdgeCount) {
         warnings.push(`Removed ${originalEdgeCount - wf.edges.length} invalid edges`);
+      }
+
+      // Sanitize fields array
+      if (wf.fields && Array.isArray(wf.fields)) {
+        const validFieldTypes = ['text', 'number', 'boolean'];
+        wf.fields = wf.fields
+          .filter((f: any) => f && typeof f.name === 'string' && f.name.trim())
+          .map((f: any) => ({
+            name: f.name.trim(),
+            type: validFieldTypes.includes(f.type) ? f.type : 'text'
+          }));
+      } else {
+        wf.fields = [];
       }
 
       return { workflow: wf, warnings };
