@@ -24,11 +24,11 @@ interface CallSettings {
 
 const DEFAULT_CALL_SETTINGS: CallSettings = {
   language: 'en-US',
-  speechTimeout: '1',
+  speechTimeout: 'auto',
   maxCallDuration: 600,
-  silenceTimeout: 1,
+  silenceTimeout: 2,
   interruptionSensitivity: 'low',
-  interruptionWordCountThreshold: 3,
+  interruptionWordCountThreshold: 1,
   onIdleMessage: '',
   onIdleTimeout: 10,
   onIdleThreshold: 3,
@@ -115,6 +115,28 @@ class VoiceConversationService {
       'Een ogenblik...',
     ],
   };
+
+  /**
+   * Common short words/phrases that Twilio STT often misses without hints.
+   * These are passed as the `hints` parameter on <Gather> to boost recognition.
+   */
+  private readonly SPEECH_HINTS: Record<string, string> = {
+    en: 'yes, no, yeah, yep, nope, hello, hi, hey, okay, ok, sure, right, correct, wrong, maybe, please, thanks, thank you, goodbye, bye, one, two, three, four, five, six, seven, eight, nine, ten',
+    de: 'ja, nein, hallo, hi, okay, richtig, falsch, vielleicht, bitte, danke, tschüss, auf wiedersehen, eins, zwei, drei, vier, fünf, sechs, sieben, acht, neun, zehn',
+    es: 'sí, no, hola, bueno, vale, claro, correcto, incorrecto, quizás, por favor, gracias, adiós, uno, dos, tres, cuatro, cinco, seis, siete, ocho, nueve, diez',
+    fr: 'oui, non, bonjour, salut, d\'accord, bien sûr, correct, peut-être, s\'il vous plaît, merci, au revoir, un, deux, trois, quatre, cinq, six, sept, huit, neuf, dix',
+    it: 'sì, no, ciao, salve, okay, va bene, corretto, forse, per favore, grazie, arrivederci, uno, due, tre, quattro, cinque, sei, sette, otto, nove, dieci',
+    pt: 'sim, não, olá, oi, tudo bem, certo, errado, talvez, por favor, obrigado, tchau, um, dois, três, quatro, cinco, seis, sete, oito, nove, dez',
+    nl: 'ja, nee, hallo, hoi, oké, goed, juist, fout, misschien, alstublieft, dank u, tot ziens, een, twee, drie, vier, vijf, zes, zeven, acht, negen, tien',
+  };
+
+  /**
+   * Get speech hints for the given language.
+   */
+  private getSpeechHints(language: string): string {
+    const langCode = (language || 'en-US').substring(0, 2);
+    return this.SPEECH_HINTS[langCode] || this.SPEECH_HINTS.en;
+  }
 
   /**
    * Pick a random filler phrase for the given language.
@@ -413,8 +435,10 @@ class VoiceConversationService {
       logger.info('Processing speech result', { callSid, text: speechResult, confidence });
 
       // --- Low confidence: treat as unrecognized speech ---
-      if (confidence > 0 && confidence < 0.3 && speechResult.trim().length > 0) {
-        logger.info('Low confidence speech, treating as unrecognized', { callSid, confidence, text: speechResult });
+      // Threshold is intentionally low (0.15) — short words like "yes", "no", "hello"
+      // often return moderate confidence (0.3-0.6) and must NOT be rejected.
+      if (confidence > 0 && confidence < 0.15 && speechResult.trim().length > 0) {
+        logger.info('Very low confidence speech, treating as unrecognized', { callSid, confidence, text: speechResult });
         // Route through workflow engine's [SPEECH_NOT_RECOGNIZED] handler
         if (conversation.workflowEngine && conversation.workflowEngine.isWaitingForInput()) {
           const result = await conversation.workflowEngine.processMessage('[SPEECH_NOT_RECOGNIZED]');
@@ -461,14 +485,15 @@ class VoiceConversationService {
         return this.generatePlayAndGatherTwiML(idleAudioUrl, cs);
       }
 
-      // --- Interruption word count threshold ---
-      // If barge-in is enabled, short utterances (below threshold) are likely accidental
+      // --- Interruption word count threshold (barge-in only) ---
+      // Only applies when barge-in is active AND the agent is currently speaking.
+      // This filters accidental noise/breath during playback, NOT legitimate short answers.
+      // Threshold defaults to 1, meaning only completely empty post-trim results are filtered.
       const wordCount = speechResult.trim().split(/\s+/).length;
-      if (cs.interruptionSensitivity === 'high' && wordCount < cs.interruptionWordCountThreshold) {
-        logger.info('Speech below word count threshold, ignoring', {
-          callSid, wordCount, threshold: cs.interruptionWordCountThreshold,
+      if (cs.interruptionSensitivity === 'high' && cs.interruptionWordCountThreshold > 1 && wordCount < cs.interruptionWordCountThreshold) {
+        logger.info('Barge-in speech below word count threshold, re-listening', {
+          callSid, wordCount, threshold: cs.interruptionWordCountThreshold, text: speechResult,
         });
-        // Re-listen without responding — just Gather again
         const response = new VoiceResponse();
         this.appendGather(response, cs);
         return response.toString();
@@ -737,6 +762,7 @@ class VoiceConversationService {
       enhanced: true,
       language: s.language,
       profanityFilter: false,
+      hints: this.getSpeechHints(s.language),
     } as any);
 
     // Fallback if no speech detected — use agent's language
@@ -778,6 +804,7 @@ class VoiceConversationService {
         enhanced: true,
         language: s.language,
         profanityFilter: false,
+        hints: this.getSpeechHints(s.language),
       } as any);
       gather.play(audioUrl);
 

@@ -269,7 +269,7 @@ export class TwilioController {
         <?xml version="1.0" encoding="UTF-8"?>
         <Response>
           <Say voice="alice" language="${lang}">${msgs.retry}</Say>
-          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="1" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false"/>
+          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false" hints="yes,no,hello,hi,okay,sure,yeah"/>
           <Say voice="alice" language="${lang}">${msgs.goodbye}</Say>
           <Hangup/>
         </Response>
@@ -323,7 +323,7 @@ export class TwilioController {
         <?xml version="1.0" encoding="UTF-8"?>
         <Response>
           <Say voice="alice" language="${lang}">${errorMessages[langCode] || errorMessages.en}</Say>
-          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="1" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false"/>
+          <Gather input="speech" action="/api/twilio/handle-speech" method="POST" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" language="${lang}" profanityFilter="false" hints="yes,no,hello,hi,okay,sure,yeah"/>
           <Hangup/>
         </Response>
       `);

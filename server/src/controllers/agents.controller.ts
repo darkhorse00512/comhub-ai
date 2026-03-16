@@ -1269,11 +1269,11 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
     const s = agent.config?.settings || {};
     const callSettings = {
       language: s.language || 'en-US',
-      speechTimeout: s.speechTimeout || (s.silenceTimeout ? String(s.silenceTimeout) : '1'),
+      speechTimeout: s.speechTimeout || (s.silenceTimeout ? String(s.silenceTimeout) : 'auto'),
       maxCallDuration: Number(s.maxCallDuration) || 600,
-      silenceTimeout: Number(s.silenceTimeout) || 1,
+      silenceTimeout: Number(s.silenceTimeout) || 2,
       interruptionSensitivity: s.interruptionSensitivity || 'low',
-      interruptionWordCountThreshold: Number(s.interruptionWordCountThreshold) || 3,
+      interruptionWordCountThreshold: Number(s.interruptionWordCountThreshold) || 1,
       onIdleMessage: s.onIdleMessage || '',
       onIdleTimeout: Number(s.onIdleTimeout) || 10,
       onIdleThreshold: Number(s.onIdleThreshold) || 3,
