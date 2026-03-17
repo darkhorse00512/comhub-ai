@@ -342,10 +342,9 @@ export class WorkflowEngine {
     prompt += `\n\nIMPORTANT — VOICE CALL RULES (apply to EVERY response without exception):
 BREVITY:
 - This is a real-time voice call converted to speech. Every extra word = delay.
-- MAX 1 short sentence per response. Never 2+ sentences unless absolutely necessary.
-- No filler words, no pleasantries, no "Fantastisch", "Wunderbar", "Vielen Dank für Ihre Antwort".
-- Wrong: "Guten Tag, mein Name ist Daniel Schmidt von Solar Guru. Spreche ich mit Herr Mustermann?" → Right: "Hallo, hier Schmidt von Solar Guru. Sind Sie Herr Mustermann?"
-- Get to the point. Be human and natural but extremely concise.
+- MAX 1-2 short sentences per response. Keep it concise.
+- No unnecessary filler words or excessive pleasantries.
+- Get to the point. Be human and natural but concise.
 
 CONTEXT AWARENESS (CRITICAL):
 - NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
@@ -426,21 +425,20 @@ This stage can end by moving to one of these named transitions:
 ${transitions.map((t: any) => `- "${t.name}"`).join('\n')}
 
 ### How Transitions Work:
-When — and ONLY when — you are confident that the conversation has reached a clear outcome that matches one of the transitions above, append the transition signal at the very end of your response using this exact format:
+When the Stage Instructions above tell you to "execute the transition X", you MUST append the transition signal at the very end of your response:
 [TRANSITION:transition_name]
 
-Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${transitions[0].name}]"
+Example: "Thank you! [TRANSITION:${transitions[0].name}]"
 
-### CRITICAL RULES:
-1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
-2. Be natural and helpful. Ask one question at a time.
-3. Do NOT rush to transition. Help the caller first.
-4. NEVER transition in your first response.
-5. Only use [TRANSITION:name] when the caller's intent clearly matches a transition.
-6. If unsure, ask a short clarifying question.
-7. [TRANSITION:name] is invisible to the caller — never say it aloud.
-8. Transition name must exactly match one listed above.
-9. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+### TRANSITION RULES (CRITICAL — follow these exactly):
+1. The Stage Instructions are your PRIMARY authority. When they say "execute the transition", DO IT IMMEDIATELY in the same response. Do not delay.
+2. Append [TRANSITION:name] at the END of your response text. The caller cannot see it.
+3. Transition name must EXACTLY match one listed above (case-insensitive).
+4. You CAN transition on any turn — including your first response — if the Stage Instructions conditions are met.
+5. If the caller's message clearly matches a transition condition described in Stage Instructions, transition NOW. Do not ask for confirmation.
+6. If unsure whether a condition is met, ask ONE short clarifying question.
+7. [TRANSITION:name] is invisible to the caller — never read it aloud.
+8. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
 1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
@@ -878,10 +876,14 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
 
+          // Collect valid transition names for this dialogue node
+          const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+          const validTransitionNames = dialogueTransitions.map((t) => t.name);
+
           logger.info('WorkflowEngine: Entering dialogue node', {
             nodeId: node.id,
             nodeLabel: node.data?.label,
-            transitions: (node.data?.transitions || []).map((t: any) => t.name),
+            transitions: validTransitionNames,
             contextLength: this.state.conversationContext.length,
           });
 
@@ -920,18 +922,39 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
             const aiResponse = await this.generateAIResponse();
 
             if (aiResponse) {
-              // IMPORTANT: Opening response NEVER triggers transition.
-              // The user just said "Good" or "Ok" to a welcome — that's not a real dialogue answer.
-              // Strip any transition signals the AI may have hallucinated.
-              const { text } = parseAIResponse(aiResponse);
+              // Parse and HONOUR transitions — the caller's message may already satisfy
+              // a transition condition (e.g., confirming identity triggers "Contact Confirmed").
+              const { text, transition, wantsToComplete, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
 
-              logger.info('WorkflowEngine: Dialogue opening response (transition signals ignored)', {
+              logger.info('WorkflowEngine: Dialogue opening response', {
                 responsePreview: text.substring(0, 100),
+                transition,
+                wantsToComplete,
               });
 
               messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
               this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
+
+              // If AI triggered a valid transition, follow it immediately
+              if (transition) {
+                logger.info('WorkflowEngine: Opening response triggered transition', { transition });
+                this.state.isInDialogue = false;
+                this.state.currentDialogueNodeId = null;
+                this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
+                return this.executeFromCurrent(messages);
+              }
+
+              // Handle fallback
+              if (wantsFallback) {
+                const fallbackNodeId = this.getDialogueFallbackNodeId(node);
+                if (fallbackNodeId) {
+                  this.state.isInDialogue = false;
+                  this.state.currentDialogueNodeId = null;
+                  this.state.currentNodeId = fallbackNodeId;
+                  return this.executeFromCurrent(messages);
+                }
+              }
             } else {
               // AI failed — send a fallback and keep dialogue open for retry
               logger.warn('WorkflowEngine: AI response unavailable in callerAlreadyResponded path');
@@ -941,7 +964,7 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
               this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
             }
 
-            // Always stay in dialogue — wait for user's next message
+            // Stay in dialogue — wait for user's next message
             return {
               messages,
               waitingForInput: true,
