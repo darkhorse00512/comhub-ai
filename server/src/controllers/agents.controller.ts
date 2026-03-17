@@ -1633,13 +1633,17 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     }
 
     // Process the message through the workflow engine
+    const preState = session.engine.getState();
     logger.info('Processing workflow message', {
       sessionId,
       message: message.substring(0, 100),
       engineState: {
-        isInDialogue: session.engine.getState().isInDialogue,
-        isWaitingAfterSpoken: session.engine.getState().isWaitingAfterSpoken,
-        currentNodeId: session.engine.getState().currentNodeId,
+        isInDialogue: preState.isInDialogue,
+        isWaitingAfterSpoken: preState.isWaitingAfterSpoken,
+        currentNodeId: preState.currentNodeId,
+        currentDialogueNodeId: preState.currentDialogueNodeId,
+        completedDialogueNodeIds: preState.completedDialogueNodeIds,
+        dialogueTurnCount: preState.dialogueTurnCount,
       },
     });
 

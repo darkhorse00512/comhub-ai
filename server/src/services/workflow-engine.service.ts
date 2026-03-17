@@ -52,6 +52,8 @@ export interface WorkflowEngineState {
   conversationContext: ConversationEntry[];
   /** True when the agent has spoken (scripted/play_audio/fallback) and is waiting for the caller to respond before advancing */
   isWaitingAfterSpoken: boolean;
+  /** IDs of dialogue nodes that have been completed (transitioned out of). Prevents re-entry loops. */
+  completedDialogueNodeIds: string[];
 }
 
 // --- Condition evaluator ---
@@ -162,13 +164,15 @@ export class WorkflowEngine {
       dialogueTurnCount: 0,
       conversationContext: [],
       isWaitingAfterSpoken: false,
+      completedDialogueNodeIds: [],
     };
   }
 
   // --- State management ---
 
   getState(): WorkflowEngineState {
-    return { ...this.state };
+    // Deep copy to prevent shared-reference issues during serialization
+    return JSON.parse(JSON.stringify(this.state));
   }
 
   getFields(): Record<string, any> {
@@ -185,7 +189,10 @@ export class WorkflowEngine {
 
   /** Restore engine from serialized state (for persisting across HTTP requests) */
   restoreState(savedState: WorkflowEngineState): void {
-    this.state = { ...savedState };
+    this.state = {
+      ...savedState,
+      completedDialogueNodeIds: savedState.completedDialogueNodeIds || [],
+    };
   }
 
   // --- Edge traversal ---
@@ -769,7 +776,11 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
         toLabel: nextNodeId ? this.nodes.find(n => n.id === nextNodeId)?.data?.label : null,
       });
 
-      // Exit dialogue and continue workflow
+      // Exit dialogue and continue workflow — mark this dialogue as completed
+      if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+      if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
+        this.state.completedDialogueNodeIds.push(dialogueNode.id);
+      }
       this.state.isInDialogue = false;
       this.state.currentDialogueNodeId = null;
       this.state.currentNodeId = nextNodeId;
@@ -885,6 +896,22 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
         }
 
         case 'dialogue': {
+          // GUARD: If this dialogue was already completed (transitioned out of),
+          // do NOT re-enter it — skip to the default next node.
+          // This prevents loops caused by stale state after server restarts.
+          if (this.state.completedDialogueNodeIds?.includes(node.id)) {
+            logger.warn('WorkflowEngine: Skipping already-completed dialogue node', {
+              nodeId: node.id,
+              nodeLabel: node.data?.label,
+            });
+            messages.push({
+              type: 'system',
+              text: `Skipping already-completed stage "${node.data?.label || node.id}"`,
+            });
+            this.state.currentNodeId = this.getNextNodeId(node.id);
+            break;
+          }
+
           // Enter dialogue mode — user STAYS here until a valid transition is triggered
           this.state.isInDialogue = true;
           this.state.currentDialogueNodeId = node.id;
@@ -899,6 +926,7 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
             nodeLabel: node.data?.label,
             transitions: validTransitionNames,
             contextLength: this.state.conversationContext.length,
+            completedDialogues: this.state.completedDialogueNodeIds,
           });
 
           // Validate: warn if no fallback node is connected
@@ -953,6 +981,10 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
               // If AI triggered a valid transition, follow it immediately
               if (transition) {
                 logger.info('WorkflowEngine: Opening response triggered transition', { transition });
+                if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+                if (!this.state.completedDialogueNodeIds.includes(node.id)) {
+                  this.state.completedDialogueNodeIds.push(node.id);
+                }
                 this.state.isInDialogue = false;
                 this.state.currentDialogueNodeId = null;
                 this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
@@ -1009,6 +1041,10 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
             // If the opening triggers a valid transition (e.g., context already satisfies conditions), follow it
             if (openingTransition) {
               logger.info('WorkflowEngine: Opening response triggered transition', { transition: openingTransition, nodeLabel: node.data?.label });
+              if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+              if (!this.state.completedDialogueNodeIds.includes(node.id)) {
+                this.state.completedDialogueNodeIds.push(node.id);
+              }
               this.state.isInDialogue = false;
               this.state.currentDialogueNodeId = null;
               this.state.currentNodeId = this.getDialogueNextNodeId(node, openingTransition);
