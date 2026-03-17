@@ -851,15 +851,23 @@ Example: "Thank you for your interest! Let me transfer you now. [TRANSITION:${tr
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
 
           // After speaking, wait for caller response before advancing
-          // (like a real phone call — agent says something, caller responds)
+          // UNLESS the next node is a terminal node (end_call, call_transfer, voicemail)
+          // — in that case, just continue immediately (don't wait after "Goodbye").
           if (this.state.currentNodeId) {
-            this.state.isWaitingAfterSpoken = true;
-            return {
-              messages,
-              waitingForInput: true,
-              isComplete: false,
-              currentStage: node.data?.label || 'Scripted',
-            };
+            const nextNode = this.nodes.find((n) => n.id === this.state.currentNodeId);
+            const nextType = nextNode?.type || nextNode?.data?.type;
+            const isTerminalNext = nextType === 'end_call' || nextType === 'call_transfer' || nextType === 'voicemail';
+
+            if (!isTerminalNext) {
+              this.state.isWaitingAfterSpoken = true;
+              return {
+                messages,
+                waitingForInput: true,
+                isComplete: false,
+                currentStage: node.data?.label || 'Scripted',
+              };
+            }
+            // Terminal next node — fall through to continue execution immediately
           }
           break;
         }
