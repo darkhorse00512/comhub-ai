@@ -444,32 +444,27 @@ CONTEXT AWARENESS (CRITICAL):
     const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
 
     if (transitions.length > 0) {
-      prompt += `\n\n### Transitions:
-This stage can end by moving to one of these named transitions:
-${transitions.map((t: any) => `- "${t.name}"`).join('\n')}
+      // NOTE: Transition signals are handled by a SEPARATE analysis step after the response.
+      // The AI here should ONLY generate the spoken response — no transition tags.
+      prompt += `\n\n### Available Stage Exits:
+This stage has these possible exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}
+The system will automatically determine when to use them based on the conversation.
+You do NOT need to include any transition signals. Just respond naturally following the Stage Instructions.
 
-### How Transitions Work:
-When the Stage Instructions above tell you to "execute the transition X", append at the END of your response:
-[TRANSITION:exact_name_here]
-
-### TRANSITION RULES (CRITICAL — follow these exactly):
-1. ONLY transition when the Stage Instructions EXPLICITLY say to. Read the Stage Instructions carefully — they describe SPECIFIC conditions for each transition.
-2. Do NOT transition just because the caller said "yes" or agreed to something. Check WHICH STEP in the Stage Instructions the caller is responding to.
-3. If the Stage Instructions have multiple steps (Step 1, Step 2, Step 3...), you MUST complete ALL steps in order before transitioning. A "yes" to Step 1 does NOT mean you should transition — it means you should proceed to Step 2.
-4. Append [TRANSITION:name] at the END of your response text. The caller cannot see it.
-5. Transition name must EXACTLY match one listed above (case-insensitive).
-6. If unsure whether a transition condition is met, continue the conversation — do NOT transition prematurely.
-7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+### RESPONSE RULES:
+1. Follow the Stage Instructions step by step. Do NOT skip steps.
+2. If the Stage Instructions have multiple steps, complete them IN ORDER.
+3. Be natural and helpful. Ask one question at a time.
+4. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
-1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
-2. Follow the stage instructions precisely.
-3. Be natural and helpful. Ask one question at a time.
-4. When you have completed ALL objectives of this stage, append [NEXT] at the end.
-5. NEVER include [NEXT] in your first response. Converse first.
-6. [NEXT] is invisible — never say it aloud.
-7. If more to discuss, do NOT include [NEXT].
-8. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+1. Follow the stage instructions precisely.
+2. Be natural and helpful. Ask one question at a time.
+3. When you have completed ALL objectives of this stage, append [NEXT] at the end.
+4. NEVER include [NEXT] in your first response. Converse first.
+5. [NEXT] is invisible — never say it aloud.
+6. If more to discuss, do NOT include [NEXT].
+7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     }
 
     return prompt;
@@ -479,7 +474,6 @@ When the Stage Instructions above tell you to "execute the transition X", append
 
   /**
    * Generate AI response using the full dialogue history.
-   * History is sent as-is — caller is responsible for adding user messages to dialogueHistory first.
    */
   private async generateAIResponse(): Promise<string | null> {
     try {
@@ -493,6 +487,75 @@ When the Stage Instructions above tell you to "execute the transition X", append
       return aiResponse.text || null;
     } catch (error) {
       logger.error('WorkflowEngine: Failed to generate AI response', { error });
+      return null;
+    }
+  }
+
+  /**
+   * Separate AI call to analyze whether a transition should fire.
+   * This decouples routing decisions from response generation,
+   * preventing the AI from prematurely firing transitions.
+   */
+  private async analyzeTransition(
+    node: WorkflowNode,
+    aiResponseText: string,
+    userMessage: string,
+  ): Promise<string | null> {
+    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+    if (transitions.length === 0) return null;
+
+    const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
+    const transitionList = transitions.map(t => t.name).join(', ');
+
+    // Build a focused prompt for transition analysis
+    const analysisPrompt = `You are a routing analyzer for a voice call workflow. Your ONLY job is to decide if a stage transition should happen NOW.
+
+STAGE: "${node.data?.label}"
+STAGE INSTRUCTIONS (these define when each transition should fire):
+${stageMessage}
+
+AVAILABLE TRANSITIONS: ${transitionList}
+
+RECENT CONVERSATION (last few turns):
+${this.state.conversationContext.slice(-6).map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
+Caller: "${userMessage}"
+Agent: "${aiResponseText}"
+
+RULES:
+- Read the STAGE INSTRUCTIONS carefully. They describe SPECIFIC conditions for each transition.
+- If the stage has multiple steps (Step 1, 2, 3...), a transition should ONLY fire after ALL required steps are completed.
+- A caller saying "yes" does NOT automatically mean a transition. Check WHICH question they are answering.
+- If the agent just asked a new question and is waiting for the answer, do NOT transition yet.
+- If the conversation has clearly reached an outcome that matches a transition condition, output that transition name.
+- If NO transition should fire yet (more steps remain, or conditions not met), output NONE.
+
+Output ONLY one word: either a transition name from the list above, or NONE. Nothing else.`;
+
+    try {
+      const result = await gptService.generateWithCustomPrompt(
+        analysisPrompt,
+        'You are a routing decision engine. Output only the transition name or NONE.',
+        { maxTokens: 20, temperature: 0.1 }
+      );
+
+      const answer = (result.text || '').trim();
+      logger.info('WorkflowEngine: Transition analysis result', {
+        nodeLabel: node.data?.label,
+        userMessage: userMessage.substring(0, 50),
+        aiResponse: aiResponseText.substring(0, 50),
+        analysisResult: answer,
+        validTransitions: transitions.map(t => t.name),
+      });
+
+      if (!answer || answer.toUpperCase() === 'NONE') return null;
+
+      // Validate the answer against available transitions
+      const matched = transitions.find(
+        t => t.name.toLowerCase() === answer.toLowerCase()
+      );
+      return matched ? matched.name : null;
+    } catch (error) {
+      logger.error('WorkflowEngine: Transition analysis failed', { error });
       return null;
     }
   }
@@ -712,15 +775,15 @@ When the Stage Instructions above tell you to "execute the transition X", append
       };
     }
 
-    // Parse the AI response, validating transitions against the actual available names
-    let { text, transition, wantsToComplete, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
+    // Clean the AI response — strip any transition/control tags the AI may have included
+    const { text, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
 
     logger.info('WorkflowEngine: Dialogue AI response', {
-      responsePreview: text.substring(0, 100),
-      wantsToComplete,
+      rawResponse: aiResponse.substring(0, 150),
+      cleanedText: text.substring(0, 100),
       wantsFallback,
-      transition,
       turnCount: this.state.dialogueTurnCount,
+      nodeLabel: dialogueNode.data?.label,
     });
 
     messages.push({
@@ -743,53 +806,46 @@ When the Stage Instructions above tell you to "execute the transition X", append
         this.state.currentNodeId = fallbackNodeId;
         return this.executeFromCurrent(messages);
       }
-      // No fallback node connected — stay in dialogue
       logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected');
     }
 
-    // --- Decide whether to advance ---
-    // A dialogue advances when:
-    //   (a) AI included a VALID transition signal  OR
-    //   (b) AI included [NEXT] and there are NO named transitions  OR
-    //   (c) Max turns reached
+    // --- Separate transition analysis (for nodes with named transitions) ---
+    // This is a SEPARATE AI call that ONLY decides routing — decoupled from response generation.
+    // This prevents the response-generating AI from prematurely firing transitions.
+    let transition: string | null = null;
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
 
-    // If the node HAS named transitions, only advance on a valid transition match
-    // (ignore [NEXT] — the AI should use a named transition)
+    if (validTransitionNames.length > 0) {
+      transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+    }
+
+    // For nodes WITHOUT named transitions, check for [NEXT] signal
+    const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
     let shouldAdvance = false;
     if (transition) {
-      // Valid named transition matched
       shouldAdvance = true;
     } else if (validTransitionNames.length === 0 && wantsToComplete) {
-      // No named transitions — [NEXT] is the only way to advance
       shouldAdvance = true;
     } else if (maxTurnsReached) {
       shouldAdvance = true;
     }
 
     if (shouldAdvance) {
-      if (maxTurnsReached && !transition && !(validTransitionNames.length === 0 && wantsToComplete)) {
-        messages.push({ type: 'system', text: `Max turns reached (${maxTurns})` });
-      }
-
-      // For nodes WITH named transitions, ONLY advance if we have a valid transition.
-      // Max-turns with named transitions but no transition signal should pick the FIRST transition as default.
-      if (!transition && validTransitionNames.length > 0 && maxTurnsReached) {
+      if (maxTurnsReached && !transition && validTransitionNames.length > 0) {
         transition = validTransitionNames[0];
-        logger.info('WorkflowEngine: Max turns reached, defaulting to first transition', { transition });
+        messages.push({ type: 'system', text: `Max turns reached (${maxTurns}), defaulting to "${transition}"` });
       }
 
-      const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition);
+      const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
 
-      // Safety: if transition resolved to null (no matching edge), do NOT advance — stay in dialogue
+      // Safety: if transition resolved to null, stay in dialogue
       if (!nextNodeId) {
-        logger.error('WorkflowEngine: Transition resolved to null target, staying in dialogue', {
-          transition: transition || '(none)',
+        logger.error('WorkflowEngine: Transition resolved to null, staying in dialogue', {
+          transition,
           fromNode: dialogueNode.id,
           fromLabel: dialogueNode.data?.label,
         });
-        // Dialogue continues — wait for the user's next message
         return {
           messages,
           waitingForInput: true,
@@ -798,15 +854,16 @@ When the Stage Instructions above tell you to "execute the transition X", append
         };
       }
 
+      const targetLabel = this.nodes.find(n => n.id === nextNodeId)?.data?.label || nextNodeId;
       logger.info('WorkflowEngine: Dialogue advancing', {
-        transition: transition || '(none)',
+        transition,
         fromNode: dialogueNode.id,
         fromLabel: dialogueNode.data?.label,
         toNodeId: nextNodeId,
-        toLabel: this.nodes.find(n => n.id === nextNodeId)?.data?.label,
+        toLabel: targetLabel,
       });
 
-      // Exit dialogue and continue workflow — mark this dialogue as completed
+      // Exit dialogue and continue workflow — mark as completed
       if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
       if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
         this.state.completedDialogueNodeIds.push(dialogueNode.id);
@@ -815,7 +872,6 @@ When the Stage Instructions above tell you to "execute the transition X", append
       this.state.currentDialogueNodeId = null;
       this.state.currentNodeId = nextNodeId;
 
-      // Continue executing non-interactive nodes
       return this.executeFromCurrent(messages);
     }
 
@@ -978,8 +1034,6 @@ When the Stage Instructions above tell you to "execute the transition X", append
           const callerAlreadyResponded = lastCtx?.role === 'user';
 
           if (callerAlreadyResponded) {
-            // The caller has already responded (e.g., to a scripted question before this node).
-            // Use their response as the first dialogue turn — no need to generate a separate opening.
             logger.info('WorkflowEngine: Caller already responded, using as first turn', {
               callerText: lastCtx.text.substring(0, 100),
             });
@@ -990,38 +1044,34 @@ When the Stage Instructions above tell you to "execute the transition X", append
             ];
             this.state.dialogueTurnCount++;
 
-            // Generate AI response to the caller's actual message
             const aiResponse = await this.generateAIResponse();
 
             if (aiResponse) {
-              // Parse and HONOUR transitions — the caller's message may already satisfy
-              // a transition condition (e.g., confirming identity triggers "Contact Confirmed").
-              const { text, transition, wantsToComplete, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
-
-              logger.info('WorkflowEngine: Dialogue opening response', {
-                responsePreview: text.substring(0, 100),
-                transition,
-                wantsToComplete,
-              });
+              const { text, wantsFallback } = parseAIResponse(aiResponse);
 
               messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
               this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
 
-              // If AI triggered a valid transition, follow it immediately
-              if (transition) {
-                logger.info('WorkflowEngine: Opening response triggered transition', { transition });
-                if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
-                if (!this.state.completedDialogueNodeIds.includes(node.id)) {
-                  this.state.completedDialogueNodeIds.push(node.id);
+              // Use separate transition analysis
+              if (validTransitionNames.length > 0) {
+                const transition = await this.analyzeTransition(node, text, lastCtx.text);
+                if (transition) {
+                  const nextNodeId = this.getDialogueNextNodeId(node, transition);
+                  if (nextNodeId) {
+                    logger.info('WorkflowEngine: Opening triggered transition via analysis', { transition, toNodeId: nextNodeId });
+                    if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+                    if (!this.state.completedDialogueNodeIds.includes(node.id)) {
+                      this.state.completedDialogueNodeIds.push(node.id);
+                    }
+                    this.state.isInDialogue = false;
+                    this.state.currentDialogueNodeId = null;
+                    this.state.currentNodeId = nextNodeId;
+                    return this.executeFromCurrent(messages);
+                  }
                 }
-                this.state.isInDialogue = false;
-                this.state.currentDialogueNodeId = null;
-                this.state.currentNodeId = this.getDialogueNextNodeId(node, transition);
-                return this.executeFromCurrent(messages);
               }
 
-              // Handle fallback
               if (wantsFallback) {
                 const fallbackNodeId = this.getDialogueFallbackNodeId(node);
                 if (fallbackNodeId) {
@@ -1032,15 +1082,12 @@ When the Stage Instructions above tell you to "execute the transition X", append
                 }
               }
             } else {
-              // AI failed — send a fallback and keep dialogue open for retry
-              logger.warn('WorkflowEngine: AI response unavailable in callerAlreadyResponded path');
               const fallback = this.getLanguageAwareFallback('retry');
               messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
               this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
             }
 
-            // Stay in dialogue — wait for user's next message
             return {
               messages,
               waitingForInput: true,
@@ -1063,23 +1110,10 @@ When the Stage Instructions above tell you to "execute the transition X", append
           const openingResponse = await this.generateAIResponse();
 
           if (openingResponse) {
-            const { text, transition: openingTransition, wantsFallback: openingFallback } = parseAIResponse(openingResponse, validTransitionNames);
+            const { text, wantsFallback: openingFallback } = parseAIResponse(openingResponse);
             messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: text });
             this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
-
-            // If the opening triggers a valid transition (e.g., context already satisfies conditions), follow it
-            if (openingTransition) {
-              logger.info('WorkflowEngine: Opening response triggered transition', { transition: openingTransition, nodeLabel: node.data?.label });
-              if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
-              if (!this.state.completedDialogueNodeIds.includes(node.id)) {
-                this.state.completedDialogueNodeIds.push(node.id);
-              }
-              this.state.isInDialogue = false;
-              this.state.currentDialogueNodeId = null;
-              this.state.currentNodeId = this.getDialogueNextNodeId(node, openingTransition);
-              return this.executeFromCurrent(messages);
-            }
 
             if (openingFallback) {
               const fallbackNodeId = this.getDialogueFallbackNodeId(node);
@@ -1091,7 +1125,6 @@ When the Stage Instructions above tell you to "execute the transition X", append
               }
             }
           } else {
-            // AI failed — send a generic opening and keep dialogue open
             const fallback = this.getLanguageAwareFallback('greeting');
             messages.push({ type: 'ai', text: fallback, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
