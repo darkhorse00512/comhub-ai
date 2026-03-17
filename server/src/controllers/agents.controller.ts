@@ -1129,9 +1129,8 @@ export const translateWorkflow = async (req: AuthRequest, res: Response): Promis
     };
     const targetLangName = languageNames[targetLanguage] || targetLanguage;
 
-    // --- Extract ONLY translatable text from each node ---
-    // This avoids sending the full JSON (positions, IDs, types, edges) to AI,
-    // keeps the prompt small, and guarantees no structural data is lost.
+    // --- Extract ALL translatable text from each node ---
+    // Simple string fields per node type
     const translatableFields: Record<string, string[]> = {
       agentSetup:    ['label', 'systemMessage'],
       scripted:      ['label', 'script'],
@@ -1143,24 +1142,23 @@ export const translateWorkflow = async (req: AuthRequest, res: Response): Promis
       call_transfer: ['label', 'transferMessage'],
       voicemail:     ['label', 'greetingMessage'],
       fallback:      ['label', 'fallbackMessage'],
-      end_call:      ['label', 'endMessage'],
+      end_call:      ['label', 'endMessage', 'summaryPrompt'],
       play_audio:    ['label'],
       time_limit:    ['label'],
       reconfigure:   ['label'],
       function:      ['label'],
     };
 
-    // Build a compact translation payload: { nodeId: { field: text } }
+    // Build compact extraction: texts, arrays, and complex nested structures
     const textsToTranslate: Record<string, Record<string, string>> = {};
-    // Also extract extraInstructions arrays separately
-    const extraInstructionsMap: Record<string, string[]> = {};
-    // And switch case labels
-    const switchCasesMap: Record<string, string[]> = {};
+    const arraysToTranslate: Record<string, Record<string, string[]>> = {};
 
     for (const node of nodes) {
       const nodeFields = translatableFields[node.type] || ['label'];
       const texts: Record<string, string> = {};
+      const arrays: Record<string, string[]> = {};
 
+      // Simple string fields
       for (const field of nodeFields) {
         const value = node.data?.[field];
         if (value && typeof value === 'string' && value.trim()) {
@@ -1168,24 +1166,47 @@ export const translateWorkflow = async (req: AuthRequest, res: Response): Promis
         }
       }
 
-      // Handle extraInstructions array (dialogue nodes)
-      if (node.data?.extraInstructions && Array.isArray(node.data.extraInstructions)) {
-        const instructions = node.data.extraInstructions.filter((s: any) => typeof s === 'string' && s.trim());
-        if (instructions.length > 0) {
-          extraInstructionsMap[node.id] = instructions;
+      // --- Dialogue: transitions[].name ---
+      if (node.data?.transitions && Array.isArray(node.data.transitions)) {
+        const names = node.data.transitions.map((t: any) => t.name || '');
+        if (names.some((n: string) => n.trim())) {
+          arrays['transitionNames'] = names;
         }
       }
 
-      // Handle switch case labels
+      // --- Dialogue: extraInstructions[] ---
+      if (node.data?.extraInstructions && Array.isArray(node.data.extraInstructions)) {
+        const instructions = node.data.extraInstructions.filter((s: any) => typeof s === 'string' && s.trim());
+        if (instructions.length > 0) {
+          arrays['extraInstructions'] = instructions;
+        }
+      }
+
+      // --- Switch: cases[].label ---
       if (node.type === 'switch' && node.data?.cases && Array.isArray(node.data.cases)) {
-        const labels = node.data.cases.map((c: any) => c.label || '').filter((l: string) => l.trim());
-        if (labels.length > 0) {
-          switchCasesMap[node.id] = labels;
+        const labels = node.data.cases.map((c: any) => c.label || '');
+        if (labels.some((l: string) => l.trim())) {
+          arrays['switchCaseLabels'] = labels;
+        }
+      }
+
+      // --- End call: results[].description and results[].enumValues ---
+      if (node.type === 'end_call' && node.data?.results && Array.isArray(node.data.results)) {
+        const descriptions = node.data.results.map((r: any) => r.description || '');
+        if (descriptions.some((d: string) => d.trim())) {
+          arrays['resultDescriptions'] = descriptions;
+        }
+        const enumVals = node.data.results.map((r: any) => r.enumValues || '');
+        if (enumVals.some((e: string) => e.trim())) {
+          arrays['resultEnumValues'] = enumVals;
         }
       }
 
       if (Object.keys(texts).length > 0) {
         textsToTranslate[node.id] = texts;
+      }
+      if (Object.keys(arrays).length > 0) {
+        arraysToTranslate[node.id] = arrays;
       }
     }
 
@@ -1194,38 +1215,40 @@ Translate the provided text entries to ${targetLangName}.
 
 RULES:
 - Translate naturally — NOT literal word-for-word. Make it sound native and professional in ${targetLangName}.
-- "systemMessage" fields define the AI agent's personality. Translate the full personality description to ${targetLangName}. This is CRITICAL — the agent must speak in ${targetLangName}.
-- "script" fields are spoken word-for-word to callers. Make them warm and natural in ${targetLangName}.
-- "stageMessage" fields are detailed AI instructions. Translate all instructions while preserving their meaning and specificity.
+- "systemMessage" fields define the AI agent's personality. Translate the FULL content to ${targetLangName}. This is CRITICAL.
+- "script" fields are spoken word-for-word to callers. Make them warm and natural.
+- "stageMessage" fields are detailed AI instructions. Translate all while preserving meaning and specificity.
 - "label" fields are short node titles. Keep them concise.
 - "fallbackMessage", "endMessage", "transferMessage", "greetingMessage" are spoken to callers — make them natural.
-- Preserve {{variableName}} references exactly as-is (do not translate variable names inside double curly braces).
+- "summaryPrompt" is an instruction for the AI — translate it.
+- "transitionNames" are short transition labels (e.g., "Confirmed", "Denied", "Continue"). Translate them.
+- "extraInstructions" — translate each string in the array.
+- "switchCaseLabels" — translate each label.
+- "resultDescriptions" are descriptions explaining how to extract call data. Translate them fully.
+- "resultEnumValues" are comma-separated option values. Translate human-readable values (like "ja" → "yes", "nein" → "no", "unsicher" → "unsure"). Keep technical identifiers (like "dont_know") and compound identifiers (like "Einfamilienhaus" → "detached_house") as translated readable values.
+- Preserve {{variableName}} references exactly as-is (do NOT translate variable names inside double curly braces).
 - Preserve phone numbers, URLs, and technical values as-is.
-- For "extraInstructions" arrays, translate each string in the array.
-- For "switchCaseLabels" arrays, translate each label.
+- Keep the same number of items in every array — translate each item at the same index.
 - Return ONLY valid JSON matching the exact input structure. No markdown, no explanations.
 
-OUTPUT FORMAT — return the exact same structure with translated values:
-{"texts": {...}, "extraInstructions": {...}, "switchCaseLabels": {...}}`;
+OUTPUT FORMAT:
+{"texts": {<nodeId>: {<field>: "<translated>"}}, "arrays": {<nodeId>: {<arrayName>: ["<translated>", ...]}}}`;
 
     const payload: any = { texts: textsToTranslate };
-    if (Object.keys(extraInstructionsMap).length > 0) {
-      payload.extraInstructions = extraInstructionsMap;
-    }
-    if (Object.keys(switchCasesMap).length > 0) {
-      payload.switchCaseLabels = switchCasesMap;
+    if (Object.keys(arraysToTranslate).length > 0) {
+      payload.arrays = arraysToTranslate;
     }
 
     const userPrompt = `Translate ALL of the following to ${targetLangName}:
 
 ${JSON.stringify(payload, null, 2)}
 
-IMPORTANT: You MUST translate every single field including systemMessage, script, stageMessage, label, etc. Return the complete translated JSON.`;
+IMPORTANT: You MUST translate EVERY field. Do not skip systemMessage, transitionNames, resultDescriptions, resultEnumValues, or any other field. Return the complete translated JSON with the exact same structure.`;
 
     const aiResponse = await gptService.generateWithCustomPrompt(
       userPrompt,
       systemPrompt,
-      { maxTokens: 8000, temperature: 0.2 }
+      { maxTokens: 16000, temperature: 0.2 }
     );
 
     // Parse the AI response
@@ -1248,36 +1271,63 @@ IMPORTANT: You MUST translate every single field including systemMessage, script
       }
     }
 
-    const translatedTexts = translationResult.texts || translationResult;
-    const translatedExtraInstructions = translationResult.extraInstructions || {};
-    const translatedSwitchCaseLabels = translationResult.switchCaseLabels || {};
+    const translatedTexts = translationResult.texts || {};
+    const translatedArrays = translationResult.arrays || {};
 
     // --- Merge translations back into ORIGINAL nodes (preserves all structural data) ---
     const translatedNodes = nodes.map((node: any) => {
-      const translated = translatedTexts[node.id];
-      if (!translated) return node; // no translation needed for this node
+      const tTexts = translatedTexts[node.id];
+      const tArrays = translatedArrays[node.id];
+      if (!tTexts && !tArrays) return node;
 
       const newData = { ...node.data };
 
-      // Apply translated text fields
-      for (const [field, value] of Object.entries(translated)) {
-        if (typeof value === 'string' && value.trim()) {
-          newData[field] = value;
+      // Apply translated simple text fields
+      if (tTexts) {
+        for (const [field, value] of Object.entries(tTexts)) {
+          if (typeof value === 'string' && value.trim()) {
+            newData[field] = value;
+          }
         }
       }
 
-      // Apply translated extraInstructions
-      if (translatedExtraInstructions[node.id] && Array.isArray(translatedExtraInstructions[node.id])) {
-        newData.extraInstructions = translatedExtraInstructions[node.id];
-      }
+      if (tArrays) {
+        // Apply translated transition names
+        if (tArrays.transitionNames && Array.isArray(tArrays.transitionNames) && newData.transitions) {
+          newData.transitions = newData.transitions.map((t: any, i: number) => ({
+            ...t,
+            name: tArrays.transitionNames[i] || t.name,
+          }));
+        }
 
-      // Apply translated switch case labels
-      if (translatedSwitchCaseLabels[node.id] && Array.isArray(translatedSwitchCaseLabels[node.id]) && newData.cases) {
-        const labels = translatedSwitchCaseLabels[node.id];
-        newData.cases = newData.cases.map((c: any, i: number) => ({
-          ...c,
-          label: labels[i] || c.label,
-        }));
+        // Apply translated extraInstructions
+        if (tArrays.extraInstructions && Array.isArray(tArrays.extraInstructions)) {
+          newData.extraInstructions = tArrays.extraInstructions;
+        }
+
+        // Apply translated switch case labels
+        if (tArrays.switchCaseLabels && Array.isArray(tArrays.switchCaseLabels) && newData.cases) {
+          newData.cases = newData.cases.map((c: any, i: number) => ({
+            ...c,
+            label: tArrays.switchCaseLabels[i] || c.label,
+          }));
+        }
+
+        // Apply translated end_call result descriptions and enumValues
+        if (newData.results && Array.isArray(newData.results)) {
+          if (tArrays.resultDescriptions && Array.isArray(tArrays.resultDescriptions)) {
+            newData.results = newData.results.map((r: any, i: number) => ({
+              ...r,
+              description: tArrays.resultDescriptions[i] || r.description,
+            }));
+          }
+          if (tArrays.resultEnumValues && Array.isArray(tArrays.resultEnumValues)) {
+            newData.results = newData.results.map((r: any, i: number) => ({
+              ...r,
+              enumValues: tArrays.resultEnumValues[i] || r.enumValues,
+            }));
+          }
+        }
       }
 
       return { ...node, data: newData };
