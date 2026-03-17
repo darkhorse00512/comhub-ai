@@ -385,13 +385,20 @@ export class WorkflowEngine {
     let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
 
     prompt += `\n\nIMPORTANT — VOICE CALL RULES (apply to EVERY response without exception):
+
+ROLE BOUNDARIES (CRITICAL):
+- You are ONLY responsible for THIS stage of the conversation. Do ONLY what the Stage Instructions say.
+- Do NOT say anything beyond the scope of your Stage Instructions — no goodbyes, no farewells, no "have a great day", no closing remarks, no summaries of what was discussed.
+- Do NOT improvise, add pleasantries, or say things the Stage Instructions did not ask you to say.
+- When your stage objectives are complete, just stop. The system handles what comes next.
+
 BREVITY:
 - This is a real-time voice call converted to speech. Every extra word = delay.
 - MAX 1-2 short sentences per response. Keep it concise.
 - No unnecessary filler words or excessive pleasantries.
 - Get to the point. Be human and natural but concise.
 
-CONTEXT AWARENESS (CRITICAL):
+CONTEXT AWARENESS:
 - NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
 - NEVER re-introduce yourself or re-greet if you already did.
 - If the caller already confirmed something (e.g. their name), treat it as confirmed and move forward.
