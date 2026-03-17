@@ -268,11 +268,28 @@ export class WorkflowEngine {
       if (matched) {
         const handleId = matched.id || `t-${matched.name}`;
         const matchEdge = outEdges.find((e) => e.sourceHandle === handleId);
-        if (matchEdge) return matchEdge.target;
-        // If no edge matches the handle, try default/non-handle edge
-        const defaultEdge = outEdges.find((e) => e.sourceHandle === 'default' || !e.sourceHandle);
-        return defaultEdge?.target || null;
+        if (matchEdge) {
+          logger.info('WorkflowEngine: Transition edge matched', {
+            transition: transitionName,
+            handleId,
+            targetNodeId: matchEdge.target,
+          });
+          return matchEdge.target;
+        }
+        // Edge not found for this transition handle — log and return null (do NOT fall through)
+        logger.error('WorkflowEngine: Transition matched but no edge found for handle', {
+          transition: transitionName,
+          handleId,
+          availableHandles: outEdges.map(e => e.sourceHandle),
+        });
+        return null;
       }
+      // Transition name provided but doesn't match any defined transition — return null (do NOT fall through)
+      logger.error('WorkflowEngine: Transition name not found in node transitions', {
+        transition: transitionName,
+        availableTransitions: transitions.map(t => t.name),
+      });
+      return null;
     }
 
     // No specific transition — use default handle or positional fallback
@@ -432,20 +449,17 @@ This stage can end by moving to one of these named transitions:
 ${transitions.map((t: any) => `- "${t.name}"`).join('\n')}
 
 ### How Transitions Work:
-When the Stage Instructions above tell you to "execute the transition X", you MUST append the transition signal at the very end of your response:
-[TRANSITION:transition_name]
-
-Example: "Thank you! [TRANSITION:${transitions[0].name}]"
+When the Stage Instructions above tell you to "execute the transition X", append at the END of your response:
+[TRANSITION:exact_name_here]
 
 ### TRANSITION RULES (CRITICAL — follow these exactly):
-1. The Stage Instructions are your PRIMARY authority. When they say "execute the transition", DO IT IMMEDIATELY in the same response. Do not delay.
-2. Append [TRANSITION:name] at the END of your response text. The caller cannot see it.
-3. Transition name must EXACTLY match one listed above (case-insensitive).
-4. You CAN transition on any turn — including your first response — if the Stage Instructions conditions are met.
-5. If the caller's message clearly matches a transition condition described in Stage Instructions, transition NOW. Do not ask for confirmation.
-6. If unsure whether a condition is met, ask ONE short clarifying question.
-7. [TRANSITION:name] is invisible to the caller — never read it aloud.
-8. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+1. ONLY transition when the Stage Instructions EXPLICITLY say to. Read the Stage Instructions carefully — they describe SPECIFIC conditions for each transition.
+2. Do NOT transition just because the caller said "yes" or agreed to something. Check WHICH STEP in the Stage Instructions the caller is responding to.
+3. If the Stage Instructions have multiple steps (Step 1, Step 2, Step 3...), you MUST complete ALL steps in order before transitioning. A "yes" to Step 1 does NOT mean you should transition — it means you should proceed to Step 2.
+4. Append [TRANSITION:name] at the END of your response text. The caller cannot see it.
+5. Transition name must EXACTLY match one listed above (case-insensitive).
+6. If unsure whether a transition condition is met, continue the conversation — do NOT transition prematurely.
+7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
 1. MAX 1 SHORT SENTENCE per response. This is a voice call — long text = long delay for the caller.
@@ -768,12 +782,28 @@ Example: "Thank you! [TRANSITION:${transitions[0].name}]"
 
       const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition);
 
+      // Safety: if transition resolved to null (no matching edge), do NOT advance — stay in dialogue
+      if (!nextNodeId) {
+        logger.error('WorkflowEngine: Transition resolved to null target, staying in dialogue', {
+          transition: transition || '(none)',
+          fromNode: dialogueNode.id,
+          fromLabel: dialogueNode.data?.label,
+        });
+        // Dialogue continues — wait for the user's next message
+        return {
+          messages,
+          waitingForInput: true,
+          isComplete: false,
+          currentStage: dialogueNode.data?.label || 'AI Dialogue',
+        };
+      }
+
       logger.info('WorkflowEngine: Dialogue advancing', {
         transition: transition || '(none)',
         fromNode: dialogueNode.id,
         fromLabel: dialogueNode.data?.label,
         toNodeId: nextNodeId,
-        toLabel: nextNodeId ? this.nodes.find(n => n.id === nextNodeId)?.data?.label : null,
+        toLabel: this.nodes.find(n => n.id === nextNodeId)?.data?.label,
       });
 
       // Exit dialogue and continue workflow — mark this dialogue as completed
