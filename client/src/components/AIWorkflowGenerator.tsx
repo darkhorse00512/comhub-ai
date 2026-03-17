@@ -13,6 +13,13 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Loader2,
   Sparkles,
   Building2,
@@ -27,6 +34,7 @@ import {
   Clock,
   UserPlus,
   Database,
+  Languages,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Node, Edge } from "@/components/FlowCanvas";
@@ -44,6 +52,8 @@ interface AIWorkflowGeneratorProps {
   existingNodes?: Node[];
   existingEdges?: Edge[];
   existingFields?: WorkflowField[];
+  currentLanguage?: string;
+  onLanguageChange?: (language: string) => void;
 }
 
 const PRESET_FIELDS = [
@@ -55,6 +65,26 @@ const PRESET_FIELDS = [
   { id: "appointment", label: "Appointment Scheduling", icon: "calendar" },
 ];
 
+const LANGUAGE_OPTIONS = [
+  { value: "en-US", label: "English (US)" },
+  { value: "en-GB", label: "English (UK)" },
+  { value: "de-DE", label: "German" },
+  { value: "es-ES", label: "Spanish" },
+  { value: "fr-FR", label: "French" },
+  { value: "it-IT", label: "Italian" },
+  { value: "pt-BR", label: "Portuguese (Brazil)" },
+  { value: "ja-JP", label: "Japanese" },
+  { value: "zh-CN", label: "Chinese (Simplified)" },
+  { value: "ko-KR", label: "Korean" },
+  { value: "ru-RU", label: "Russian" },
+  { value: "tr-TR", label: "Turkish" },
+  { value: "ar-SA", label: "Arabic" },
+  { value: "nl-NL", label: "Dutch" },
+  { value: "pl-PL", label: "Polish" },
+  { value: "sv-SE", label: "Swedish" },
+  { value: "hi-IN", label: "Hindi" },
+];
+
 const AIWorkflowGenerator = ({
   isOpen,
   onClose,
@@ -63,11 +93,18 @@ const AIWorkflowGenerator = ({
   existingNodes,
   existingEdges,
   existingFields,
+  currentLanguage,
+  onLanguageChange,
 }: AIWorkflowGeneratorProps) => {
   const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+
+  // Language change state
+  const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage || "en-US");
+  const [isTranslating, setIsTranslating] = useState(false);
 
   // Form state
   const [businessInfo, setBusinessInfo] = useState({
@@ -204,10 +241,95 @@ const AIWorkflowGenerator = ({
     }
   };
 
+  const handleTranslateWorkflow = async () => {
+    if (!existingNodes || existingNodes.length === 0) {
+      toast({
+        title: "No workflow to translate",
+        description: "Please create a workflow first before changing the language.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (selectedLanguage === currentLanguage) {
+      toast({
+        title: "Same language selected",
+        description: "Please select a different language.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsTranslating(true);
+
+    try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      };
+
+      const token = localStorage.getItem("backend_token");
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api"}/agents/${agentId}/translate-workflow`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            targetLanguage: selectedLanguage,
+            nodes: existingNodes,
+            edges: existingEdges || [],
+            fields: existingFields || [],
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to translate workflow");
+      }
+
+      if (data.success && data.workflow) {
+        // Update the workflow nodes/edges/fields
+        onGenerate(data.workflow.nodes, data.workflow.edges, data.workflow.fields);
+
+        // Update the agent language setting
+        if (onLanguageChange) {
+          onLanguageChange(data.targetLanguage);
+        }
+
+        const targetLabel = LANGUAGE_OPTIONS.find(l => l.value === selectedLanguage)?.label || selectedLanguage;
+        toast({
+          title: "Workflow Translated",
+          description: `Workflow and agent language changed to ${targetLabel}.`,
+        });
+
+        setShowLanguageSelector(false);
+        handleClose();
+      } else {
+        throw new Error(data.error || "Translation failed");
+      }
+    } catch (error) {
+      console.error("Error translating workflow:", error);
+      toast({
+        title: "Translation Failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   const handleClose = () => {
     setStep(1);
     setGenerateError(null);
     setNewCustomField("");
+    setShowLanguageSelector(false);
+    setSelectedLanguage(currentLanguage || "en-US");
     setBusinessInfo({
       businessName: "",
       industry: "",
@@ -275,6 +397,9 @@ const AIWorkflowGenerator = ({
 
   const stepLabels = ["Business Info", "Call Flow", "Review"];
 
+  const currentLangLabel = LANGUAGE_OPTIONS.find(l => l.value === (currentLanguage || "en-US"))?.label || "English (US)";
+  const hasExistingWorkflow = existingNodes && existingNodes.length > 0;
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[680px] max-h-[85vh] overflow-y-auto">
@@ -286,7 +411,7 @@ const AIWorkflowGenerator = ({
             AI Workflow Generator
           </DialogTitle>
           <DialogDescription>
-            {existingNodes && existingNodes.length > 0
+            {hasExistingWorkflow
               ? "AI will improve and complete your existing workflow based on your preferences."
               : "Describe your business and preferences — AI will create a production-ready call workflow."}
           </DialogDescription>
@@ -701,20 +826,90 @@ const AIWorkflowGenerator = ({
           </div>
         )}
 
+        {/* Language Change Selector — shown inline above the footer */}
+        {showLanguageSelector && (
+          <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-3 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+              <Languages className="w-4 h-4" />
+              Change Agent Language
+            </div>
+            <p className="text-xs text-blue-600">
+              AI will translate all workflow nodes (greetings, dialogues, messages) to the selected language and update the agent&apos;s language setting.
+            </p>
+            <div className="flex items-center gap-2">
+              <Select
+                value={selectedLanguage}
+                onValueChange={setSelectedLanguage}
+                disabled={isTranslating}
+              >
+                <SelectTrigger className="flex-1 bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGE_OPTIONS.map((lang) => (
+                    <SelectItem key={lang.value} value={lang.value}>
+                      {lang.label}
+                      {lang.value === currentLanguage && " (current)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleTranslateWorkflow}
+                disabled={isTranslating || selectedLanguage === currentLanguage}
+                className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+              >
+                {isTranslating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    Translating...
+                  </>
+                ) : (
+                  "Change"
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setShowLanguageSelector(false);
+                  setSelectedLanguage(currentLanguage || "en-US");
+                }}
+                disabled={isTranslating}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
         <DialogFooter className="flex justify-between">
-          <div>
+          <div className="flex items-center gap-2">
             {step > 1 && (
               <Button variant="outline" onClick={handleBack} disabled={isGenerating}>
                 Back
               </Button>
             )}
+            {/* Change Agent Language button — only shown on step 1 when there's an existing workflow */}
+            {step === 1 && hasExistingWorkflow && !showLanguageSelector && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowLanguageSelector(true)}
+                disabled={isGenerating || isTranslating}
+                className="text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+              >
+                <Languages className="w-4 h-4 mr-1.5" />
+                {currentLangLabel}
+              </Button>
+            )}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleClose} disabled={isGenerating}>
+            <Button variant="outline" onClick={handleClose} disabled={isGenerating || isTranslating}>
               Cancel
             </Button>
             {step < 3 ? (
-              <Button onClick={handleNext} className="bg-purple-600 hover:bg-purple-700">
+              <Button onClick={handleNext} className="bg-purple-600 hover:bg-purple-700" disabled={isTranslating}>
                 Continue
               </Button>
             ) : (

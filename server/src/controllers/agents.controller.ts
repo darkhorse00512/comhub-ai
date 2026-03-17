@@ -1088,6 +1088,159 @@ Return ONLY the JSON object.`;
   }
 };
 
+/**
+ * Translate all workflow nodes to a target language using AI.
+ * Also updates the agent config language setting.
+ */
+export const translateWorkflow = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { targetLanguage, nodes, edges, fields } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!targetLanguage || !nodes || !Array.isArray(nodes)) {
+      res.status(400).json({ success: false, error: 'targetLanguage and nodes array are required' });
+      return;
+    }
+
+    const access = await getAgentWithAccess(id, userId, 'editor', '*');
+    if (!access) {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+      return;
+    }
+    const agent = access.agent;
+
+    logger.info('Translating workflow', { agentId: id, targetLanguage, nodeCount: nodes.length });
+
+    // Language display names for the prompt
+    const languageNames: Record<string, string> = {
+      'en-US': 'English (US)', 'en-GB': 'English (UK)',
+      'de-DE': 'German', 'es-ES': 'Spanish', 'fr-FR': 'French',
+      'it-IT': 'Italian', 'pt-BR': 'Portuguese (Brazil)',
+      'ja-JP': 'Japanese', 'zh-CN': 'Chinese (Simplified)',
+      'ko-KR': 'Korean', 'ru-RU': 'Russian', 'tr-TR': 'Turkish',
+      'ar-SA': 'Arabic', 'nl-NL': 'Dutch', 'pl-PL': 'Polish',
+      'sv-SE': 'Swedish', 'hi-IN': 'Hindi',
+    };
+    const targetLangName = languageNames[targetLanguage] || targetLanguage;
+
+    const systemPrompt = `You are a professional translator specializing in voice AI call workflows.
+Your task is to translate ALL text content in the provided workflow nodes to ${targetLangName}.
+
+RULES:
+1. Translate ALL human-facing text: labels, scripts, stageMessages, systemMessages, fallbackMessages, endMessages, transferMessages, greetingMessages, extraInstructions.
+2. Keep the EXACT same JSON structure — only change the text values.
+3. Do NOT translate: node IDs, field names (fieldName, switchField), node types, operators, sourceHandle values, technical values like phone numbers, variable references like {{fieldName}}.
+4. Do NOT translate node "type" values (agentSetup, scripted, dialogue, etc.).
+5. Translate node "label" values to be natural and concise in ${targetLangName}.
+6. Translate "script" messages to sound warm and professional in ${targetLangName} — not a literal word-for-word translation, but a natural-sounding equivalent.
+7. Translate "stageMessage" instructions — these guide the AI agent, so translate them clearly and maintain all the specific instructions.
+8. Translate "systemMessage" — the agent personality description — to ${targetLangName}.
+9. For "extraInstructions" arrays, translate each instruction string.
+10. Preserve all edge connections, positions, and structural data exactly as-is.
+11. Return ONLY valid JSON. No markdown, no code blocks, no explanations.
+
+OUTPUT FORMAT:
+{"nodes": [...], "edges": [...], "fields": [...]}
+
+The edges and fields arrays should be returned UNCHANGED (just pass them through).`;
+
+    const userPrompt = `Translate this complete workflow to ${targetLangName}.
+
+CURRENT WORKFLOW:
+${JSON.stringify({ nodes, edges: edges || [], fields: fields || [] }, null, 2)}
+
+Return the complete translated workflow as JSON. Edges and fields stay the same. Only translate text content in nodes.`;
+
+    const aiResponse = await gptService.generateWithCustomPrompt(
+      userPrompt,
+      systemPrompt,
+      { maxTokens: 8000, temperature: 0.2 }
+    );
+
+    // Parse the AI response — same strategy as generateWorkflow
+    let translated;
+    const responseText = aiResponse.text.trim();
+
+    try {
+      translated = JSON.parse(responseText);
+    } catch {
+      // Try extracting from markdown code block
+      const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        translated = JSON.parse(codeBlockMatch[1].trim());
+      } else {
+        // Try finding a JSON object
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          translated = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('AI response did not contain valid JSON');
+        }
+      }
+    }
+
+    if (!translated.nodes || !Array.isArray(translated.nodes)) {
+      throw new Error('Translated workflow is missing nodes array');
+    }
+
+    // Preserve original edges/fields if AI didn't return them properly
+    const translatedNodes = translated.nodes;
+    const translatedEdges = translated.edges && Array.isArray(translated.edges) ? translated.edges : (edges || []);
+    const translatedFields = translated.fields && Array.isArray(translated.fields) ? translated.fields : (fields || []);
+
+    // Update agent config language
+    const updatedConfig = {
+      ...agent.config,
+      settings: {
+        ...(agent.config?.settings || {}),
+        language: targetLanguage,
+      },
+    };
+
+    const { error: updateError } = await supabase
+      .from('agents')
+      .update({ config: updatedConfig })
+      .eq('id', id);
+
+    if (updateError) {
+      logger.error('Failed to update agent language', { error: updateError.message });
+      // Don't fail the whole request — translation succeeded, just language update failed
+    }
+
+    logger.info('Workflow translated successfully', {
+      agentId: id,
+      targetLanguage,
+      nodeCount: translatedNodes.length,
+    });
+
+    res.status(200).json({
+      success: true,
+      workflow: {
+        nodes: translatedNodes,
+        edges: translatedEdges,
+        fields: translatedFields,
+      },
+      languageUpdated: !updateError,
+      targetLanguage,
+    });
+  } catch (error) {
+    logger.error('Failed to translate workflow', {
+      error: error instanceof Error ? error.message : error,
+      agentId: req.params.id,
+    });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // --- Workflow-based test call sessions ---
 
 interface WorkflowSession {
@@ -1563,6 +1716,7 @@ export default {
   cloneAgent,
   testChat,
   generateWorkflow,
+  translateWorkflow,
   getAgentVersions,
   restoreAgentVersion,
   startWorkflowCall,

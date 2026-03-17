@@ -659,6 +659,14 @@ const AgentStudioPage = () => {
         existingNodes={nodes}
         existingEdges={edges}
         existingFields={workflowFields}
+        currentLanguage={agent.config?.settings?.language || "en-US"}
+        onLanguageChange={(language) => {
+          const updatedConfig = {
+            ...agent.config,
+            settings: { ...(agent.config?.settings || {}), language },
+          };
+          onAgentUpdate({ ...agent, config: updatedConfig });
+        }}
       />
 
       <UnsavedChangesModal

@@ -51,6 +51,9 @@ router.post('/:id/test-chat', agentsController.testChat);
 // Generate workflow using AI
 router.post('/:id/generate-workflow', agentsController.generateWorkflow);
 
+// Translate workflow to another language using AI
+router.post('/:id/translate-workflow', agentsController.translateWorkflow);
+
 // Agent version history
 router.get('/:id/versions', agentsController.getAgentVersions);
 
