@@ -179,13 +179,11 @@ const AIWorkflowGenerator = ({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      // Combine preset field IDs and custom field labels into collectInfo
       const allCollectInfo = [
         ...callFlowConfig.collectInfo,
         ...callFlowConfig.customFields,
       ];
 
-      // Include existing workflow so AI can improve/complete it instead of starting from scratch
       const hasExistingWorkflow = existingNodes && existingNodes.length > 0;
       const existingWorkflow = hasExistingWorkflow
         ? {
@@ -293,10 +291,8 @@ const AIWorkflowGenerator = ({
       }
 
       if (data.success && data.workflow) {
-        // Update the workflow nodes/edges/fields
         onGenerate(data.workflow.nodes, data.workflow.edges, data.workflow.fields);
 
-        // Update the agent language setting
         if (onLanguageChange) {
           onLanguageChange(data.targetLanguage);
         }
@@ -384,7 +380,6 @@ const AIWorkflowGenerator = ({
     }));
   };
 
-  // Resolve display labels for summary
   const getFieldLabel = (id: string): string => {
     const preset = PRESET_FIELDS.find((f) => f.id === id);
     return preset ? preset.label : id;
@@ -430,19 +425,19 @@ const AIWorkflowGenerator = ({
                         ? "bg-green-500 text-white"
                         : step === s
                         ? "bg-purple-600 text-white"
-                        : "bg-gray-100 text-gray-400"
+                        : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {step > s ? <CheckCircle2 className="w-4 h-4" /> : s}
                   </div>
-                  <span className={`text-[10px] font-medium ${step >= s ? "text-purple-700" : "text-gray-400"}`}>
+                  <span className={`text-[10px] font-medium ${step >= s ? "text-purple-600 dark:text-purple-400" : "text-muted-foreground"}`}>
                     {label}
                   </span>
                 </div>
                 {s < 3 && (
                   <div
                     className={`w-16 h-0.5 mx-1 mb-4 rounded transition-colors ${
-                      step > s ? "bg-green-400" : "bg-gray-200"
+                      step > s ? "bg-green-400" : "bg-border"
                     }`}
                   />
                 )}
@@ -454,8 +449,8 @@ const AIWorkflowGenerator = ({
         {/* Step 1: Business Information */}
         {step === 1 && (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-base font-semibold text-gray-800">
-              <Building2 className="w-5 h-5 text-purple-600" />
+            <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Building2 className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               Business Information
             </div>
 
@@ -533,8 +528,8 @@ const AIWorkflowGenerator = ({
         {/* Step 2: Call Flow Configuration */}
         {step === 2 && (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-base font-semibold text-gray-800">
-              <Phone className="w-5 h-5 text-purple-600" />
+            <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Phone className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               Call Flow Configuration
             </div>
 
@@ -546,17 +541,17 @@ const AIWorkflowGenerator = ({
                   onClick={() => setCallFlowConfig({ ...callFlowConfig, generateInbound: !callFlowConfig.generateInbound })}
                   className={`p-3 rounded-xl border-2 text-left transition-all ${
                     callFlowConfig.generateInbound
-                      ? "border-blue-400 bg-blue-50"
-                      : "border-gray-200 bg-white hover:border-gray-300"
+                      ? "border-blue-400 dark:border-blue-500 bg-blue-500/10"
+                      : "border-border bg-background hover:border-muted-foreground/30"
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <PhoneIncoming className={`w-4 h-4 ${callFlowConfig.generateInbound ? "text-blue-600" : "text-gray-400"}`} />
-                    <span className={`text-sm font-semibold ${callFlowConfig.generateInbound ? "text-blue-800" : "text-gray-500"}`}>
+                    <PhoneIncoming className={`w-4 h-4 ${callFlowConfig.generateInbound ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`} />
+                    <span className={`text-sm font-semibold ${callFlowConfig.generateInbound ? "text-blue-700 dark:text-blue-300" : "text-muted-foreground"}`}>
                       Inbound Calls
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     Handle incoming customer calls
                   </p>
                 </button>
@@ -566,17 +561,17 @@ const AIWorkflowGenerator = ({
                   onClick={() => setCallFlowConfig({ ...callFlowConfig, generateOutbound: !callFlowConfig.generateOutbound })}
                   className={`p-3 rounded-xl border-2 text-left transition-all ${
                     callFlowConfig.generateOutbound
-                      ? "border-purple-400 bg-purple-50"
-                      : "border-gray-200 bg-white hover:border-gray-300"
+                      ? "border-purple-400 dark:border-purple-500 bg-purple-500/10"
+                      : "border-border bg-background hover:border-muted-foreground/30"
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <PhoneOutgoing className={`w-4 h-4 ${callFlowConfig.generateOutbound ? "text-purple-600" : "text-gray-400"}`} />
-                    <span className={`text-sm font-semibold ${callFlowConfig.generateOutbound ? "text-purple-800" : "text-gray-500"}`}>
+                    <PhoneOutgoing className={`w-4 h-4 ${callFlowConfig.generateOutbound ? "text-purple-600 dark:text-purple-400" : "text-muted-foreground"}`} />
+                    <span className={`text-sm font-semibold ${callFlowConfig.generateOutbound ? "text-purple-700 dark:text-purple-300" : "text-muted-foreground"}`}>
                       Outbound Calls
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     Proactive outreach & follow-ups
                   </p>
                 </button>
@@ -584,8 +579,8 @@ const AIWorkflowGenerator = ({
 
               {/* Inbound Purpose */}
               {callFlowConfig.generateInbound && (
-                <div className="grid gap-1.5 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
-                  <Label htmlFor="inboundPurpose" className="text-sm text-blue-800 font-medium">
+                <div className="grid gap-1.5 p-3 bg-blue-500/10 rounded-lg border border-blue-400/30 dark:border-blue-500/30">
+                  <Label htmlFor="inboundPurpose" className="text-sm text-blue-700 dark:text-blue-300 font-medium">
                     Inbound Call Purpose
                   </Label>
                   <Textarea
@@ -596,15 +591,14 @@ const AIWorkflowGenerator = ({
                     }
                     placeholder="e.g., Answer product questions, schedule appointments, provide technical support, handle billing inquiries..."
                     rows={2}
-                    className="bg-white"
                   />
                 </div>
               )}
 
               {/* Outbound Purpose */}
               {callFlowConfig.generateOutbound && (
-                <div className="grid gap-1.5 p-3 bg-purple-50/50 rounded-lg border border-purple-100">
-                  <Label htmlFor="outboundPurpose" className="text-sm text-purple-800 font-medium">
+                <div className="grid gap-1.5 p-3 bg-purple-500/10 rounded-lg border border-purple-400/30 dark:border-purple-500/30">
+                  <Label htmlFor="outboundPurpose" className="text-sm text-purple-700 dark:text-purple-300 font-medium">
                     Outbound Call Purpose
                   </Label>
                   <Textarea
@@ -615,7 +609,6 @@ const AIWorkflowGenerator = ({
                     }
                     placeholder="e.g., Sales follow-up, appointment reminders, customer satisfaction surveys, renewal notifications..."
                     rows={2}
-                    className="bg-white"
                   />
                 </div>
               )}
@@ -623,10 +616,10 @@ const AIWorkflowGenerator = ({
               {/* Information to Collect */}
               <div className="grid gap-2">
                 <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4 text-gray-500" />
+                  <Database className="w-4 h-4 text-muted-foreground" />
                   <Label className="text-sm font-medium">Information to Collect</Label>
                 </div>
-                <p className="text-xs text-gray-500 -mt-1">
+                <p className="text-xs text-muted-foreground -mt-1">
                   Select common fields or add your own custom fields below.
                 </p>
 
@@ -637,8 +630,8 @@ const AIWorkflowGenerator = ({
                       key={item.id}
                       className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
                         callFlowConfig.collectInfo.includes(item.id)
-                          ? "border-purple-300 bg-purple-50"
-                          : "border-gray-200 hover:border-gray-300 bg-white"
+                          ? "border-purple-400/50 dark:border-purple-500/50 bg-purple-500/10"
+                          : "border-border bg-background hover:border-muted-foreground/30"
                       }`}
                     >
                       <Checkbox
@@ -657,13 +650,13 @@ const AIWorkflowGenerator = ({
                     {callFlowConfig.customFields.map((field) => (
                       <span
                         key={field}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-400/30 dark:border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-medium"
                       >
                         {field}
                         <button
                           type="button"
                           onClick={() => removeCustomField(field)}
-                          className="ml-0.5 hover:text-red-600 transition-colors"
+                          className="ml-0.5 hover:text-red-500 transition-colors"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -702,7 +695,7 @@ const AIWorkflowGenerator = ({
               {/* Options row */}
               <div className="grid grid-cols-2 gap-3">
                 <label className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-                  callFlowConfig.transferToHuman ? "border-green-300 bg-green-50" : "border-gray-200 bg-white"
+                  callFlowConfig.transferToHuman ? "border-green-400/50 dark:border-green-500/50 bg-green-500/10" : "border-border bg-background"
                 }`}>
                   <Checkbox
                     id="transferToHuman"
@@ -713,17 +706,17 @@ const AIWorkflowGenerator = ({
                   />
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <UserPlus className="w-3.5 h-3.5 text-green-600" />
+                      <UserPlus className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                       <span className="text-sm font-medium">Human Transfer</span>
                     </div>
-                    <p className="text-[11px] text-gray-500">Escalate to agent</p>
+                    <p className="text-[11px] text-muted-foreground">Escalate to agent</p>
                   </div>
                 </label>
 
                 <div className="grid gap-1.5">
                   <div className="flex items-center gap-1.5 px-3 pt-1">
-                    <Clock className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="text-xs font-medium text-gray-600">Business Hours</span>
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground">Business Hours</span>
                   </div>
                   <Input
                     id="businessHours"
@@ -743,45 +736,45 @@ const AIWorkflowGenerator = ({
         {/* Step 3: Review & Generate */}
         {step === 3 && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-base font-semibold text-gray-800">
-              <Target className="w-5 h-5 text-purple-600" />
+            <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Target className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               Review & Generate
             </div>
 
             {/* Business Summary */}
-            <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Business</div>
+            <div className="bg-muted/50 rounded-xl p-4 space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Business</div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-900">{businessInfo.businessName}</span>
+                <span className="text-sm font-semibold text-foreground">{businessInfo.businessName}</span>
                 {businessInfo.industry && (
-                  <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">{businessInfo.industry}</span>
+                  <span className="px-2 py-0.5 bg-muted text-muted-foreground rounded text-xs">{businessInfo.industry}</span>
                 )}
               </div>
-              <p className="text-xs text-gray-600 line-clamp-2">{businessInfo.description}</p>
+              <p className="text-xs text-muted-foreground line-clamp-2">{businessInfo.description}</p>
             </div>
 
             {/* Flow Config Summary */}
-            <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Configuration</div>
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Configuration</div>
 
               <div className="flex gap-2 flex-wrap">
                 {callFlowConfig.generateInbound && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 text-blue-800 rounded-lg text-xs font-medium">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/15 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-medium">
                     <PhoneIncoming className="w-3 h-3" /> Inbound
                   </span>
                 )}
                 {callFlowConfig.generateOutbound && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 text-purple-800 rounded-lg text-xs font-medium">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded-lg text-xs font-medium">
                     <PhoneOutgoing className="w-3 h-3" /> Outbound
                   </span>
                 )}
                 {callFlowConfig.transferToHuman && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-100 text-green-800 rounded-lg text-xs font-medium">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-500/15 text-green-700 dark:text-green-300 rounded-lg text-xs font-medium">
                     <UserPlus className="w-3 h-3" /> Human Transfer
                   </span>
                 )}
                 {callFlowConfig.businessHours && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-orange-100 text-orange-800 rounded-lg text-xs font-medium">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-orange-500/15 text-orange-700 dark:text-orange-300 rounded-lg text-xs font-medium">
                     <Clock className="w-3 h-3" /> {callFlowConfig.businessHours}
                   </span>
                 )}
@@ -789,10 +782,10 @@ const AIWorkflowGenerator = ({
 
               {allSelectedFields.length > 0 && (
                 <div>
-                  <span className="text-xs font-medium text-gray-500">Fields to collect:</span>
+                  <span className="text-xs font-medium text-muted-foreground">Fields to collect:</span>
                   <div className="flex flex-wrap gap-1.5 mt-1">
                     {allSelectedFields.map((label) => (
-                      <span key={label} className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-700">
+                      <span key={label} className="px-2 py-0.5 bg-background border border-border rounded text-xs text-foreground">
                         {label}
                       </span>
                     ))}
@@ -802,10 +795,10 @@ const AIWorkflowGenerator = ({
             </div>
 
             {/* AI Info Box */}
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-4">
+            <div className="bg-purple-500/10 border border-purple-400/30 dark:border-purple-500/30 rounded-xl p-4">
               <div className="flex items-start gap-3">
-                <Sparkles className="w-5 h-5 text-purple-600 mt-0.5 shrink-0" />
-                <div className="text-sm text-purple-800">
+                <Sparkles className="w-5 h-5 text-purple-600 dark:text-purple-400 mt-0.5 shrink-0" />
+                <div className="text-sm text-purple-700 dark:text-purple-300">
                   AI will generate a complete workflow with professional greetings, conversation handling,
                   decision routing, field collection{callFlowConfig.transferToHuman ? ", human escalation" : ""},
                   and error fallbacks tailored to <span className="font-semibold">{businessInfo.businessName}</span>.
@@ -815,25 +808,25 @@ const AIWorkflowGenerator = ({
 
             {/* Error display */}
             {generateError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <div className="bg-red-500/10 border border-red-400/30 dark:border-red-500/30 rounded-lg p-3 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
                 <div>
-                  <div className="text-sm font-medium text-red-800">Generation failed</div>
-                  <div className="text-xs text-red-600 mt-0.5">{generateError}</div>
+                  <div className="text-sm font-medium text-red-700 dark:text-red-300">Generation failed</div>
+                  <div className="text-xs text-red-600 dark:text-red-400 mt-0.5">{generateError}</div>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* Language Change Selector — shown inline above the footer */}
+        {/* Language Change Selector */}
         {showLanguageSelector && (
-          <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-3 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-blue-800">
+          <div className="border border-blue-400/30 dark:border-blue-500/30 bg-blue-500/10 rounded-lg p-3 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
               <Languages className="w-4 h-4" />
               Change Agent Language
             </div>
-            <p className="text-xs text-blue-600">
+            <p className="text-xs text-blue-600 dark:text-blue-400">
               AI will translate all workflow nodes (greetings, dialogues, messages) to the selected language and update the agent&apos;s language setting.
             </p>
             <div className="flex items-center gap-2">
@@ -842,7 +835,7 @@ const AIWorkflowGenerator = ({
                 onValueChange={setSelectedLanguage}
                 disabled={isTranslating}
               >
-                <SelectTrigger className="flex-1 bg-white">
+                <SelectTrigger className="flex-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -890,14 +883,13 @@ const AIWorkflowGenerator = ({
                 Back
               </Button>
             )}
-            {/* Change Agent Language button — only shown on step 1 when there's an existing workflow */}
             {step === 1 && hasExistingWorkflow && !showLanguageSelector && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setShowLanguageSelector(true)}
                 disabled={isGenerating || isTranslating}
-                className="text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-500/10"
               >
                 <Languages className="w-4 h-4 mr-1.5" />
                 {currentLangLabel}

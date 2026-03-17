@@ -1129,33 +1129,98 @@ export const translateWorkflow = async (req: AuthRequest, res: Response): Promis
     };
     const targetLangName = languageNames[targetLanguage] || targetLanguage;
 
-    const systemPrompt = `You are a professional translator specializing in voice AI call workflows.
-Your task is to translate ALL text content in the provided workflow nodes to ${targetLangName}.
+    // --- Extract ONLY translatable text from each node ---
+    // This avoids sending the full JSON (positions, IDs, types, edges) to AI,
+    // keeps the prompt small, and guarantees no structural data is lost.
+    const translatableFields: Record<string, string[]> = {
+      agentSetup:    ['label', 'systemMessage'],
+      scripted:      ['label', 'script'],
+      dialogue:      ['label', 'stageMessage'],
+      callDirection: ['label'],
+      field_setter:  ['label'],
+      junction:      ['label'],
+      switch:        ['label'],
+      call_transfer: ['label', 'transferMessage'],
+      voicemail:     ['label', 'greetingMessage'],
+      fallback:      ['label', 'fallbackMessage'],
+      end_call:      ['label', 'endMessage'],
+      play_audio:    ['label'],
+      time_limit:    ['label'],
+      reconfigure:   ['label'],
+      function:      ['label'],
+    };
+
+    // Build a compact translation payload: { nodeId: { field: text } }
+    const textsToTranslate: Record<string, Record<string, string>> = {};
+    // Also extract extraInstructions arrays separately
+    const extraInstructionsMap: Record<string, string[]> = {};
+    // And switch case labels
+    const switchCasesMap: Record<string, string[]> = {};
+
+    for (const node of nodes) {
+      const nodeFields = translatableFields[node.type] || ['label'];
+      const texts: Record<string, string> = {};
+
+      for (const field of nodeFields) {
+        const value = node.data?.[field];
+        if (value && typeof value === 'string' && value.trim()) {
+          texts[field] = value;
+        }
+      }
+
+      // Handle extraInstructions array (dialogue nodes)
+      if (node.data?.extraInstructions && Array.isArray(node.data.extraInstructions)) {
+        const instructions = node.data.extraInstructions.filter((s: any) => typeof s === 'string' && s.trim());
+        if (instructions.length > 0) {
+          extraInstructionsMap[node.id] = instructions;
+        }
+      }
+
+      // Handle switch case labels
+      if (node.type === 'switch' && node.data?.cases && Array.isArray(node.data.cases)) {
+        const labels = node.data.cases.map((c: any) => c.label || '').filter((l: string) => l.trim());
+        if (labels.length > 0) {
+          switchCasesMap[node.id] = labels;
+        }
+      }
+
+      if (Object.keys(texts).length > 0) {
+        textsToTranslate[node.id] = texts;
+      }
+    }
+
+    const systemPrompt = `You are a professional translator for voice AI call workflows.
+Translate the provided text entries to ${targetLangName}.
 
 RULES:
-1. Translate ALL human-facing text: labels, scripts, stageMessages, systemMessages, fallbackMessages, endMessages, transferMessages, greetingMessages, extraInstructions.
-2. Keep the EXACT same JSON structure — only change the text values.
-3. Do NOT translate: node IDs, field names (fieldName, switchField), node types, operators, sourceHandle values, technical values like phone numbers, variable references like {{fieldName}}.
-4. Do NOT translate node "type" values (agentSetup, scripted, dialogue, etc.).
-5. Translate node "label" values to be natural and concise in ${targetLangName}.
-6. Translate "script" messages to sound warm and professional in ${targetLangName} — not a literal word-for-word translation, but a natural-sounding equivalent.
-7. Translate "stageMessage" instructions — these guide the AI agent, so translate them clearly and maintain all the specific instructions.
-8. Translate "systemMessage" — the agent personality description — to ${targetLangName}.
-9. For "extraInstructions" arrays, translate each instruction string.
-10. Preserve all edge connections, positions, and structural data exactly as-is.
-11. Return ONLY valid JSON. No markdown, no code blocks, no explanations.
+- Translate naturally — NOT literal word-for-word. Make it sound native and professional in ${targetLangName}.
+- "systemMessage" fields define the AI agent's personality. Translate the full personality description to ${targetLangName}. This is CRITICAL — the agent must speak in ${targetLangName}.
+- "script" fields are spoken word-for-word to callers. Make them warm and natural in ${targetLangName}.
+- "stageMessage" fields are detailed AI instructions. Translate all instructions while preserving their meaning and specificity.
+- "label" fields are short node titles. Keep them concise.
+- "fallbackMessage", "endMessage", "transferMessage", "greetingMessage" are spoken to callers — make them natural.
+- Preserve {{variableName}} references exactly as-is (do not translate variable names inside double curly braces).
+- Preserve phone numbers, URLs, and technical values as-is.
+- For "extraInstructions" arrays, translate each string in the array.
+- For "switchCaseLabels" arrays, translate each label.
+- Return ONLY valid JSON matching the exact input structure. No markdown, no explanations.
 
-OUTPUT FORMAT:
-{"nodes": [...], "edges": [...], "fields": [...]}
+OUTPUT FORMAT — return the exact same structure with translated values:
+{"texts": {...}, "extraInstructions": {...}, "switchCaseLabels": {...}}`;
 
-The edges and fields arrays should be returned UNCHANGED (just pass them through).`;
+    const payload: any = { texts: textsToTranslate };
+    if (Object.keys(extraInstructionsMap).length > 0) {
+      payload.extraInstructions = extraInstructionsMap;
+    }
+    if (Object.keys(switchCasesMap).length > 0) {
+      payload.switchCaseLabels = switchCasesMap;
+    }
 
-    const userPrompt = `Translate this complete workflow to ${targetLangName}.
+    const userPrompt = `Translate ALL of the following to ${targetLangName}:
 
-CURRENT WORKFLOW:
-${JSON.stringify({ nodes, edges: edges || [], fields: fields || [] }, null, 2)}
+${JSON.stringify(payload, null, 2)}
 
-Return the complete translated workflow as JSON. Edges and fields stay the same. Only translate text content in nodes.`;
+IMPORTANT: You MUST translate every single field including systemMessage, script, stageMessage, label, etc. Return the complete translated JSON.`;
 
     const aiResponse = await gptService.generateWithCustomPrompt(
       userPrompt,
@@ -1163,36 +1228,64 @@ Return the complete translated workflow as JSON. Edges and fields stay the same.
       { maxTokens: 8000, temperature: 0.2 }
     );
 
-    // Parse the AI response — same strategy as generateWorkflow
-    let translated;
+    // Parse the AI response
+    let translationResult;
     const responseText = aiResponse.text.trim();
 
     try {
-      translated = JSON.parse(responseText);
+      translationResult = JSON.parse(responseText);
     } catch {
-      // Try extracting from markdown code block
       const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlockMatch) {
-        translated = JSON.parse(codeBlockMatch[1].trim());
+        translationResult = JSON.parse(codeBlockMatch[1].trim());
       } else {
-        // Try finding a JSON object
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          translated = JSON.parse(jsonMatch[0]);
+          translationResult = JSON.parse(jsonMatch[0]);
         } else {
           throw new Error('AI response did not contain valid JSON');
         }
       }
     }
 
-    if (!translated.nodes || !Array.isArray(translated.nodes)) {
-      throw new Error('Translated workflow is missing nodes array');
-    }
+    const translatedTexts = translationResult.texts || translationResult;
+    const translatedExtraInstructions = translationResult.extraInstructions || {};
+    const translatedSwitchCaseLabels = translationResult.switchCaseLabels || {};
 
-    // Preserve original edges/fields if AI didn't return them properly
-    const translatedNodes = translated.nodes;
-    const translatedEdges = translated.edges && Array.isArray(translated.edges) ? translated.edges : (edges || []);
-    const translatedFields = translated.fields && Array.isArray(translated.fields) ? translated.fields : (fields || []);
+    // --- Merge translations back into ORIGINAL nodes (preserves all structural data) ---
+    const translatedNodes = nodes.map((node: any) => {
+      const translated = translatedTexts[node.id];
+      if (!translated) return node; // no translation needed for this node
+
+      const newData = { ...node.data };
+
+      // Apply translated text fields
+      for (const [field, value] of Object.entries(translated)) {
+        if (typeof value === 'string' && value.trim()) {
+          newData[field] = value;
+        }
+      }
+
+      // Apply translated extraInstructions
+      if (translatedExtraInstructions[node.id] && Array.isArray(translatedExtraInstructions[node.id])) {
+        newData.extraInstructions = translatedExtraInstructions[node.id];
+      }
+
+      // Apply translated switch case labels
+      if (translatedSwitchCaseLabels[node.id] && Array.isArray(translatedSwitchCaseLabels[node.id]) && newData.cases) {
+        const labels = translatedSwitchCaseLabels[node.id];
+        newData.cases = newData.cases.map((c: any, i: number) => ({
+          ...c,
+          label: labels[i] || c.label,
+        }));
+      }
+
+      return { ...node, data: newData };
+    });
+
+    // Edges and fields are NEVER sent to AI — always preserved from originals
+    const translatedEdges = edges || [];
+    const translatedFields = fields || [];
 
     // Update agent config language
     const updatedConfig = {
