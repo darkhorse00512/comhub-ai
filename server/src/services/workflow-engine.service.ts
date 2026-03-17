@@ -1127,24 +1127,14 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
               this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
 
-              // Use separate transition analysis
-              if (validTransitionNames.length > 0) {
-                const transition = await this.analyzeTransition(node, text, lastCtx.text);
-                if (transition) {
-                  const nextNodeId = this.getDialogueNextNodeId(node, transition);
-                  if (nextNodeId) {
-                    logger.info('WorkflowEngine: Opening triggered transition via analysis', { transition, toNodeId: nextNodeId });
-                    if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
-                    if (!this.state.completedDialogueNodeIds.includes(node.id)) {
-                      this.state.completedDialogueNodeIds.push(node.id);
-                    }
-                    this.state.isInDialogue = false;
-                    this.state.currentDialogueNodeId = null;
-                    this.state.currentNodeId = nextNodeId;
-                    return this.executeFromCurrent(messages);
-                  }
-                }
-              }
+              // IMPORTANT: Do NOT run transition analysis on the first turn of entering
+              // a dialogue node. The user's carried-over message was a response to the
+              // PREVIOUS stage, not to this dialogue's questions. The AI just asked its
+              // first question — we must wait for the user to respond to THIS dialogue
+              // before evaluating transitions.
+              logger.info('WorkflowEngine: Skipping transition analysis on dialogue entry (user has not responded to this stage yet)', {
+                nodeLabel: node.data?.label,
+              });
 
               if (wantsFallback) {
                 const fallbackNodeId = this.getDialogueFallbackNodeId(node);
