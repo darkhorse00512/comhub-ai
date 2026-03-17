@@ -118,6 +118,23 @@ function parseAIResponse(response: string, validTransitionNames?: string[]): Par
     }
   }
 
+  // Also detect bare transition names as tags (e.g. [Confirmed], [No Need])
+  // AI sometimes outputs these instead of [TRANSITION:xxx]
+  if (!transition && validTransitionNames && validTransitionNames.length > 0) {
+    for (const name of validTransitionNames) {
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const bareMatch = response.match(new RegExp(`\\[${escapedName}\\]`, 'i'));
+      if (bareMatch) {
+        transition = name;
+        logger.info('WorkflowEngine: Detected bare transition tag in AI response', {
+          tag: bareMatch[0],
+          transition: name,
+        });
+        break;
+      }
+    }
+  }
+
   const wantsToComplete =
     !!transition ||
     response.includes('[NEXT]') ||
@@ -125,12 +142,21 @@ function parseAIResponse(response: string, validTransitionNames?: string[]): Par
 
   const wantsFallback = response.includes('[FALLBACK]');
 
-  const text = response
+  // Strip all control tags from the spoken text
+  let text = response
     .replace(/\[TRANSITION:[^\]]+\]/g, '')
     .replace(/\[NEXT\]/g, '')
     .replace(/\[STAGE_COMPLETE\]/g, '')
     .replace(/\[FALLBACK\]/g, '')
     .trim();
+
+  // Strip bare transition name tags (e.g. [Confirmed], [No Need])
+  if (validTransitionNames && validTransitionNames.length > 0) {
+    for (const name of validTransitionNames) {
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(`\\[${escapedName}\\]`, 'gi'), '').trim();
+    }
+  }
 
   return { text, transition, wantsToComplete, wantsFallback };
 }
@@ -451,25 +477,37 @@ CONTEXT AWARENESS:
     // When includeTranscript=false, full history is provided as actual chat messages
     // (better AI comprehension), so we skip the text dump to avoid redundancy.
     if (includeTranscript && this.state.conversationContext.length > 0) {
-      prompt += `\n\n### CALL TRANSCRIPT SO FAR (read carefully before responding):`;
-      for (const entry of this.state.conversationContext) {
+      // Only include the LAST few turns as transcript to prevent the AI from getting
+      // confused by earlier stages' conversations (e.g. Survey Q&A bleeding into
+      // Qualification). The collected fields already capture what was learned.
+      // Show up to 8 most recent entries — enough for continuity without stage confusion.
+      const recentContext = this.state.conversationContext.slice(-8);
+      const skippedCount = this.state.conversationContext.length - recentContext.length;
+
+      prompt += `\n\n### RECENT CALL TRANSCRIPT (last few turns — read carefully before responding):`;
+      if (skippedCount > 0) {
+        prompt += `\n(${skippedCount} earlier messages omitted — all collected information is shown in Known Information above)`;
+      }
+      for (const entry of recentContext) {
         if (entry.role === 'agent') {
           prompt += `\nYou: "${entry.text}"`;
         } else {
           prompt += `\nCaller: "${entry.text}"`;
         }
       }
-      prompt += `\n\n⚠️ STRICT RULES — violating these makes the call sound robotic and unprofessional:
-- You ALREADY said everything above. Do NOT say it again. Do NOT rephrase it. Do NOT ask the same question differently.
-- The caller ALREADY answered the questions above. Their answers are final — use them, don't re-verify.
-- If an error/fallback occurred, just continue from the last unanswered question — do NOT restart from the beginning.
-- Continue the conversation as if you remember everything above perfectly.`;
+      prompt += `\n\n⚠️ STRICT RULES:
+- Do NOT repeat anything from the transcript above. Do NOT rephrase previous questions.
+- The caller's previous answers are final — use them, don't re-verify.
+- If an error/fallback occurred, just continue from the last unanswered question — do NOT restart.
+- Continue the conversation from exactly where it left off.
+- ONLY follow YOUR Stage Instructions. Do NOT respond about topics from earlier stages.`;
     } else if (!includeTranscript) {
-      prompt += `\n\n⚠️ STRICT RULES — violating these makes the call sound robotic and unprofessional:
+      prompt += `\n\n⚠️ STRICT RULES:
 - The full call history is provided as chat messages above. You remember everything perfectly.
 - Do NOT repeat anything you already said. Do NOT rephrase previous questions.
 - The caller's previous answers are final — use them, don't re-verify.
-- Continue the conversation from exactly where it left off.`;
+- Continue the conversation from exactly where it left off.
+- ONLY follow YOUR Stage Instructions. Do NOT respond about topics from earlier stages.`;
     }
 
     const maxTurns = parseInt(node.data?.maxTurns);
@@ -539,9 +577,12 @@ You do NOT need to include any transition signals. Just respond naturally follow
 
     const history: ChatMessage[] = [{ role: 'system', content: stagePrompt }];
 
-    // Include full call history as structured chat messages
+    // Include recent call history as structured chat messages.
+    // Limit to last 12 messages to prevent earlier stages' conversations
+    // from confusing the AI about its current role/stage.
     if (hasFullHistory) {
-      history.push(...fullHistoryMessages!);
+      const recentMessages = fullHistoryMessages!.slice(-12);
+      history.push(...recentMessages);
     }
 
     if (firstUserMessage) {
@@ -586,7 +627,13 @@ You do NOT need to include any transition signals. Just respond naturally follow
     const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
     const transitionList = transitions.map(t => t.name).join(', ');
 
-    // Build a focused prompt for transition analysis
+    // Build a focused prompt for transition analysis.
+    // Only include conversation from THIS stage (filtered by nodeLabel) to prevent
+    // earlier stages' content from confusing the routing decision.
+    const currentStageContext = this.state.conversationContext
+      .filter(e => e.nodeLabel === node.data?.label || !e.nodeLabel)
+      .slice(-6);
+
     const analysisPrompt = `You are a routing analyzer for a voice call workflow. Your ONLY job is to decide if a stage transition should happen NOW.
 
 STAGE: "${node.data?.label}"
@@ -595,8 +642,8 @@ ${stageMessage}
 
 AVAILABLE TRANSITIONS: ${transitionList}
 
-RECENT CONVERSATION (last few turns):
-${this.state.conversationContext.slice(-6).map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
+CONVERSATION IN THIS STAGE (only this stage's turns):
+${currentStageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
 Caller: "${userMessage}"
 Agent: "${aiResponseText}"
 
