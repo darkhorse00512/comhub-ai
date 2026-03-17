@@ -268,6 +268,10 @@ class VoiceConversationService {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
           conversation.callSettings = workflow.callSettings;
+
+          // Wire up full history callback so end_call analysis gets ALL messages
+          workflow.engine.fetchFullHistory = () => this.fetchCallMessages(conversation.callSessionId);
+
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for inbound call', {
@@ -383,6 +387,10 @@ class VoiceConversationService {
           conversation.workflowEngine = workflow.engine;
           conversation.voiceSettings = workflow.voiceSettings;
           conversation.callSettings = workflow.callSettings;
+
+          // Wire up full history callback so end_call analysis gets ALL messages
+          workflow.engine.fetchFullHistory = () => this.fetchCallMessages(conversation.callSessionId);
+
           const spokenText = this.combineMessages(workflow.initialResult.messages);
           if (spokenText) greetingText = spokenText;
           logger.info('Workflow engine loaded for outbound call', {
@@ -601,6 +609,13 @@ class VoiceConversationService {
       } else {
         const aiResponse = await gptService.generateResponse(speechResult, conversation.history, { voiceMode: true });
         responseText = aiResponse.text;
+
+        // Sync messages to workflow engine's conversationContext so that
+        // end_call summary/analysis has the complete conversation history
+        if (conversation.workflowEngine) {
+          conversation.workflowEngine.addToConversationContext('user', speechResult);
+          conversation.workflowEngine.addToConversationContext('agent', responseText);
+        }
       }
 
       const aiAudioUrl = await this.generateAndSaveAudio(
@@ -877,6 +892,29 @@ class VoiceConversationService {
   }
 
   // ===== Database =====
+
+  /**
+   * Fetch all messages for a call session from the database.
+   * Used by WorkflowEngine's end_call node to send the complete
+   * conversation history to AI for accurate analysis/summary.
+   */
+  private async fetchCallMessages(callSessionId: string): Promise<Array<{ role: string; content: string }>> {
+    const { data, error } = await this.supabase
+      .from('call_messages')
+      .select('role, content')
+      .eq('call_session_id', callSessionId)
+      .order('timestamp', { ascending: true });
+
+    if (error) {
+      logger.error('Failed to fetch call messages for analysis', { callSessionId, error });
+      throw error;
+    }
+
+    return (data || []).map((m: any) => ({
+      role: m.role === 'ai' ? 'agent' : m.role,
+      content: m.content,
+    }));
+  }
 
   private async saveMessage(
     callSessionId: string,

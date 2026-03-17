@@ -149,6 +149,11 @@ export class WorkflowEngine {
   private edges: WorkflowEdge[];
   private state: WorkflowEngineState;
   private _processing = false;
+  /**
+   * Optional callback to fetch full call message history from the database.
+   * Set by VoiceConversationService to ensure end_call analysis gets ALL messages.
+   */
+  public fetchFullHistory?: () => Promise<Array<{ role: string; content: string }>>;
 
   constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string) {
     this.nodes = nodes;
@@ -185,6 +190,22 @@ export class WorkflowEngine {
 
   isWorkflowComplete(): boolean {
     return this.state.isComplete;
+  }
+
+  /**
+   * Add an entry to conversationContext from outside the engine.
+   * Used to ensure messages handled by direct GPT path are still
+   * available for end_call summary/analysis.
+   */
+  addToConversationContext(role: 'agent' | 'user', text: string, nodeLabel?: string): void {
+    this.state.conversationContext.push({ role, text, nodeLabel });
+  }
+
+  /**
+   * Get the full conversation context (read-only copy).
+   */
+  getConversationContext(): ConversationEntry[] {
+    return [...this.state.conversationContext];
   }
 
   /** Restore engine from serialized state (for persisting across HTTP requests) */
@@ -360,7 +381,7 @@ export class WorkflowEngine {
 
   // --- System prompt builder for dialogue stages ---
 
-  private buildDialogueSystemPrompt(node: WorkflowNode): string {
+  private buildDialogueSystemPrompt(node: WorkflowNode, includeTranscript = true): string {
     let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
 
     prompt += `\n\nIMPORTANT — VOICE CALL RULES (apply to EVERY response without exception):
@@ -420,7 +441,9 @@ CONTEXT AWARENESS (CRITICAL):
     }
 
     // --- CONVERSATION CONTEXT: what happened before this stage ---
-    if (this.state.conversationContext.length > 0) {
+    // When includeTranscript=false, full history is provided as actual chat messages
+    // (better AI comprehension), so we skip the text dump to avoid redundancy.
+    if (includeTranscript && this.state.conversationContext.length > 0) {
       prompt += `\n\n### CALL TRANSCRIPT SO FAR (read carefully before responding):`;
       for (const entry of this.state.conversationContext) {
         if (entry.role === 'agent') {
@@ -434,6 +457,12 @@ CONTEXT AWARENESS (CRITICAL):
 - The caller ALREADY answered the questions above. Their answers are final — use them, don't re-verify.
 - If an error/fallback occurred, just continue from the last unanswered question — do NOT restart from the beginning.
 - Continue the conversation as if you remember everything above perfectly.`;
+    } else if (!includeTranscript) {
+      prompt += `\n\n⚠️ STRICT RULES — violating these makes the call sound robotic and unprofessional:
+- The full call history is provided as chat messages above. You remember everything perfectly.
+- Do NOT repeat anything you already said. Do NOT rephrase previous questions.
+- The caller's previous answers are final — use them, don't re-verify.
+- Continue the conversation from exactly where it left off.`;
     }
 
     const maxTurns = parseInt(node.data?.maxTurns);
@@ -471,6 +500,49 @@ You do NOT need to include any transition signals. Just respond naturally follow
   }
 
   // --- AI response generation ---
+
+  /**
+   * Build initial dialogueHistory for a dialogue node.
+   * When fetchFullHistory is available, fetches ALL call messages from the DB
+   * and includes them as proper user/assistant chat messages so the AI
+   * has full structured context (not just a text dump in the system prompt).
+   */
+  private async buildInitialDialogueHistory(
+    node: WorkflowNode,
+    firstUserMessage?: string
+  ): Promise<ChatMessage[]> {
+    let fullHistoryMessages: ChatMessage[] | null = null;
+
+    if (this.fetchFullHistory) {
+      try {
+        const dbMessages = await this.fetchFullHistory();
+        if (dbMessages.length > 0) {
+          fullHistoryMessages = dbMessages.map((m) => ({
+            role: (m.role === 'agent' || m.role === 'ai') ? 'assistant' : 'user',
+            content: m.content,
+          } as ChatMessage));
+        }
+      } catch (err) {
+        logger.warn('WorkflowEngine: Failed to fetch full history for dialogue, using conversationContext', { error: err });
+      }
+    }
+
+    const hasFullHistory = fullHistoryMessages !== null && fullHistoryMessages.length > 0;
+    const stagePrompt = this.buildDialogueSystemPrompt(node, !hasFullHistory);
+
+    const history: ChatMessage[] = [{ role: 'system', content: stagePrompt }];
+
+    // Include full call history as structured chat messages
+    if (hasFullHistory) {
+      history.push(...fullHistoryMessages!);
+    }
+
+    if (firstUserMessage) {
+      history.push({ role: 'user', content: firstUserMessage });
+    }
+
+    return history;
+  }
 
   /**
    * Generate AI response using the full dialogue history.
@@ -1026,9 +1098,6 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
             });
           }
 
-          // Build system prompt (includes conversationContext for full awareness)
-          const stagePrompt = this.buildDialogueSystemPrompt(node);
-
           // Check if the caller already said something (e.g., responded to a scripted message)
           const lastCtx = this.state.conversationContext[this.state.conversationContext.length - 1];
           const callerAlreadyResponded = lastCtx?.role === 'user';
@@ -1038,10 +1107,8 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
               callerText: lastCtx.text.substring(0, 100),
             });
 
-            this.state.dialogueHistory = [
-              { role: 'system', content: stagePrompt },
-              { role: 'user', content: lastCtx.text },
-            ];
+            // Build dialogue history with full call history as proper chat messages
+            this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, lastCtx.text);
             this.state.dialogueTurnCount++;
 
             const aiResponse = await this.generateAIResponse();
@@ -1102,10 +1169,8 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
             ? 'Continue from where the call left off. The caller is waiting. Do NOT greet again, do NOT introduce yourself again, do NOT repeat anything from the transcript above. Just continue with the next thing according to your stage instructions.'
             : 'The caller just connected. Follow your stage instructions to begin the conversation.';
 
-          this.state.dialogueHistory = [
-            { role: 'system', content: stagePrompt },
-            { role: 'user', content: trigger },
-          ];
+          // Build dialogue history with full call history as proper chat messages
+          this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, trigger);
 
           const openingResponse = await this.generateAIResponse();
 
@@ -1299,11 +1364,31 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
           const summaryPrompt = node.data?.summaryPrompt;
           if (summaryPrompt) {
             try {
-              const conversationText = this.state.conversationContext
-                .map((e) => `${e.role}: ${e.text}`)
-                .join('\n');
+              // Prefer full call history from database (includes ALL messages)
+              // to ensure AI analysis is based on the complete conversation
+              let conversationText: string;
+
+              if (this.fetchFullHistory) {
+                try {
+                  const fullHistory = await this.fetchFullHistory();
+                  conversationText = fullHistory
+                    .map((m) => `${m.role}: ${m.content}`)
+                    .join('\n');
+                  logger.info('WorkflowEngine: Using full DB history for summary', { messageCount: fullHistory.length });
+                } catch (historyErr) {
+                  logger.warn('WorkflowEngine: Failed to fetch full history, falling back to conversationContext', { error: historyErr });
+                  conversationText = this.state.conversationContext
+                    .map((e) => `${e.role}: ${e.text}`)
+                    .join('\n');
+                }
+              } else {
+                conversationText = this.state.conversationContext
+                  .map((e) => `${e.role}: ${e.text}`)
+                  .join('\n');
+              }
+
               const summaryResult = await gptService.generateWithCustomPrompt(
-                `Here is the conversation:\n${conversationText}\n\nPlease provide the summary.`,
+                `Here is the full conversation:\n${conversationText}\n\nPlease provide the summary.`,
                 summaryPrompt,
               );
               if (summaryResult.text) {
