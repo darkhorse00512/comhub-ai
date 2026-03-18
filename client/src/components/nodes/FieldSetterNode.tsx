@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { Copy, Pencil, Trash2, Database, ChevronRight, HelpCircle, AlertCircle } from "lucide-react";
+import { Copy, Pencil, Trash2, Database, ChevronRight, HelpCircle, AlertCircle, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,12 @@ import {
 import { nodeDescriptions } from "@/data/nodeDescriptions";
 import type { WorkflowField } from "@/components/FieldsPanel";
 
+interface FieldAssignment {
+  fieldName: string;
+  value: any;
+  valueType: string;
+}
+
 interface FieldSetterNodeProps {
   id: string;
   data: any;
@@ -27,13 +33,23 @@ interface FieldSetterNodeProps {
   workflowFields?: WorkflowField[];
 }
 
+/** Migrate legacy single-field data to assignments array */
+function getAssignments(data: any): FieldAssignment[] {
+  if (Array.isArray(data.assignments) && data.assignments.length > 0) {
+    return data.assignments;
+  }
+  // Legacy: single fieldName/value/valueType
+  if (data.fieldName) {
+    return [{ fieldName: data.fieldName, value: data.value ?? "", valueType: data.valueType || "text" }];
+  }
+  return [];
+}
+
 const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields = [] }: FieldSetterNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editedName, setEditedName] = useState(data.label || "");
-  const [editedFieldName, setEditedFieldName] = useState(data.fieldName || "");
-  const [editedValue, setEditedValue] = useState(data.value || "");
-  const [editedValueType, setEditedValueType] = useState(data.valueType || "text");
+  const [editedName, setEditedName] = useState("");
+  const [editedAssignments, setEditedAssignments] = useState<FieldAssignment[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleClone = (e: React.MouseEvent) => {
@@ -49,64 +65,88 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditedName(data.label || "");
-    setEditedFieldName(data.fieldName || "");
-    setEditedValue(data.value || "");
-    setEditedValueType(data.valueType || "text");
+    setEditedAssignments(getAssignments(data).map((a) => ({ ...a })));
+    setErrors({});
     setIsEditModalOpen(true);
   };
 
-  const handleFieldSelection = (fieldName: string) => {
-    setEditedFieldName(fieldName);
-    if (errors.fieldName) setErrors({ ...errors, fieldName: "" });
-    // Auto-set the value type from the workflow field definition
+  // --- Assignment helpers ---
+  const addAssignment = () => {
+    setEditedAssignments([...editedAssignments, { fieldName: "", value: "", valueType: "text" }]);
+  };
+
+  const removeAssignment = (index: number) => {
+    setEditedAssignments(editedAssignments.filter((_, i) => i !== index));
+  };
+
+  const updateAssignmentField = (index: number, fieldName: string) => {
+    const updated = [...editedAssignments];
+    updated[index] = { ...updated[index], fieldName };
+    // Auto-set type from workflow field definition
     const field = workflowFields.find((f) => f.name === fieldName);
     if (field) {
-      setEditedValueType(field.type);
-      // Reset value when type changes
+      updated[index].valueType = field.type;
       if (field.type === "boolean") {
-        setEditedValue("true");
-      } else if (field.type !== editedValueType) {
-        setEditedValue("");
+        updated[index].value = "true";
+      } else if (field.type !== updated[index].valueType) {
+        updated[index].value = "";
       }
+    }
+    setEditedAssignments(updated);
+    if (errors[`field_${index}`]) {
+      const newErrors = { ...errors };
+      delete newErrors[`field_${index}`];
+      setErrors(newErrors);
+    }
+  };
+
+  const updateAssignmentValue = (index: number, value: any) => {
+    const updated = [...editedAssignments];
+    updated[index] = { ...updated[index], value };
+    setEditedAssignments(updated);
+    if (errors[`value_${index}`]) {
+      const newErrors = { ...errors };
+      delete newErrors[`value_${index}`];
+      setErrors(newErrors);
     }
   };
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
-
-    if (!editedName.trim()) {
-      newErrors.label = "Name is required";
-    }
-
-    if (!editedFieldName.trim()) {
-      newErrors.fieldName = "Please select a field";
-    }
-
-    if (editedValueType === 'number' && isNaN(Number(editedValue))) {
-      newErrors.value = "Value must be a valid number";
-    }
-
+    if (!editedName.trim()) newErrors.label = "Name is required";
+    if (editedAssignments.length === 0) newErrors.assignments = "Add at least one field assignment";
+    editedAssignments.forEach((a, i) => {
+      if (!a.fieldName.trim()) newErrors[`field_${i}`] = "Select a field";
+      if (a.valueType === "number" && isNaN(Number(a.value))) newErrors[`value_${i}`] = "Must be a number";
+    });
+    // Check for duplicate field names
+    const seen = new Set<string>();
+    editedAssignments.forEach((a, i) => {
+      if (a.fieldName && seen.has(a.fieldName)) {
+        newErrors[`field_${i}`] = "Duplicate field";
+      }
+      seen.add(a.fieldName);
+    });
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSaveEdit = () => {
     if (!validateForm()) {
-      toast({
-        title: "Validation Error",
-        description: "Please fix the errors before saving",
-        variant: "destructive"
-      });
+      toast({ title: "Validation Error", description: "Please fix the errors before saving", variant: "destructive" });
       return;
     }
-
     if (onUpdate) {
+      // Save both new format (assignments) and legacy fields for backward compat
+      const first = editedAssignments[0];
       onUpdate(id, {
         ...data,
         label: editedName,
-        fieldName: editedFieldName,
-        value: editedValue,
-        valueType: editedValueType,
+        assignments: editedAssignments,
+        // Legacy compat: keep first assignment as top-level fields
+        fieldName: first?.fieldName || "",
+        value: first?.value ?? "",
+        valueType: first?.valueType || "text",
       });
     }
     setIsEditModalOpen(false);
@@ -114,11 +154,15 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
   };
 
   const handleCancel = () => {
-    setEditedName(data.label || "");
-    setEditedFieldName(data.fieldName || "");
-    setEditedValue(data.value || "");
-    setEditedValueType(data.valueType || "text");
     setIsEditModalOpen(false);
+    setErrors({});
+  };
+
+  // Display data
+  const assignments = getAssignments(data);
+  // Fields already used in assignments (for filtering dropdown options)
+  const usedFields = (index: number) => {
+    return new Set(editedAssignments.filter((_, i) => i !== index).map((a) => a.fieldName));
   };
 
   return (
@@ -126,7 +170,6 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
       <div className="bg-white rounded-2xl shadow-lg border border-gray-200 min-w-[280px] max-w-[320px] overflow-auto">
         {/* Header */}
         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100">
-          {/* Type Badge */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-yellow-100">
             <Database className="w-4 h-4 text-yellow-700" />
             <span className="text-sm font-medium text-yellow-700">Field Setter</span>
@@ -152,27 +195,14 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
             </TooltipProvider>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center gap-0.5">
-            <button
-              onClick={handleClone}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
-              title="Clone"
-            >
+            <button onClick={handleClone} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700" title="Clone">
               <Copy className="w-4 h-4" />
             </button>
-            <button
-              onClick={handleEdit}
-              className="p-1.5 rounded-lg hover:bg-blue-50 transition-colors text-blue-500 hover:text-blue-700"
-              title="Edit"
-            >
+            <button onClick={handleEdit} className="p-1.5 rounded-lg hover:bg-blue-50 transition-colors text-blue-500 hover:text-blue-700" title="Edit">
               <Pencil className="w-4 h-4" />
             </button>
-            <button
-              onClick={handleDelete}
-              className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-red-500 hover:text-red-700"
-              title="Delete"
-            >
+            <button onClick={handleDelete} className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-red-500 hover:text-red-700" title="Delete">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -180,29 +210,24 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
 
         {/* Node Content */}
         <div className="px-4 py-3">
-          {/* Node Name */}
           <h3 className="font-semibold text-gray-900 text-base mb-2">
             {data.label || "Field Setter Node"}
           </h3>
 
-          {/* Preview - Enhanced */}
-          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[50px]">
-            {data.fieldName ? (
-              <>
-                <div className="flex items-center gap-2 font-mono text-xs mb-1.5">
-                  <Database className="w-4 h-4 text-yellow-600" />
-                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold">
-                    {data.fieldName}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm min-h-[50px] space-y-1.5">
+            {assignments.length > 0 ? (
+              assignments.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 font-mono text-xs">
+                  <Database className="w-3.5 h-3.5 text-yellow-600 shrink-0" />
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold truncate">
+                    {a.fieldName}
                   </span>
-                  <span className="text-gray-400">←</span>
-                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded">
-                    {String(data.value || '')}
+                  <span className="text-gray-400">=</span>
+                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded truncate">
+                    {String(a.value ?? "")}
                   </span>
                 </div>
-                <div className="text-xs text-gray-500">
-                  Type: <span className="font-medium">{data.valueType || 'text'}</span>
-                </div>
-              </>
+              ))
             ) : (
               <span className="text-gray-400">No field configured</span>
             )}
@@ -220,51 +245,36 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
 
       {/* Edit Modal */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4 shrink-0 border-b">
             <DialogTitle>Field Setter Configuration</DialogTitle>
             <DialogDescription>
-              Select a workflow field and set its value. Fields must be defined in Workflow Fields first.
+              Set one or more workflow fields. Fields must be defined in Workflow Fields first.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            {/* Name */}
+            <div className="space-y-2">
               <Label htmlFor="nodeName">Name</Label>
               <Input
                 id="nodeName"
                 value={editedName}
                 onChange={(e) => {
                   setEditedName(e.target.value);
-                  if (errors.label) setErrors({...errors, label: ""});
+                  if (errors.label) setErrors({ ...errors, label: "" });
                 }}
                 placeholder="Enter node name..."
                 className={errors.label ? "border-red-500" : ""}
               />
-              {errors.label && (
-                <p className="text-xs text-red-600 mt-1">{errors.label}</p>
-              )}
+              {errors.label && <p className="text-xs text-red-600">{errors.label}</p>}
             </div>
 
-            <div className="grid gap-2">
-              <Label>Field Name</Label>
-              {workflowFields.length > 0 ? (
-                <Select value={editedFieldName} onValueChange={handleFieldSelection}>
-                  <SelectTrigger className={errors.fieldName ? "border-red-500" : ""}>
-                    <SelectValue placeholder="Select a field..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {workflowFields.map((field) => (
-                      <SelectItem key={field.name} value={field.name}>
-                        <span className="flex items-center gap-2">
-                          <span className="font-mono">{field.name}</span>
-                          <span className="text-xs text-muted-foreground">({field.type})</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
+            {/* Field assignments */}
+            <div className="space-y-3">
+              <Label>Field assignments</Label>
+
+              {workflowFields.length === 0 && (
                 <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-700">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <p className="text-xs">
@@ -272,60 +282,105 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
                   </p>
                 </div>
               )}
-              {errors.fieldName && (
-                <p className="text-xs text-red-600 mt-1">{errors.fieldName}</p>
-              )}
-            </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="valueType">Value Type</Label>
-              <Select value={editedValueType} disabled>
-                <SelectTrigger className="opacity-60">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">Text</SelectItem>
-                  <SelectItem value="boolean">Boolean (true/false)</SelectItem>
-                  <SelectItem value="number">Number</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Type is determined by the field definition in Workflow Fields
-              </p>
-            </div>
+              {editedAssignments.map((assignment, index) => {
+                const used = usedFields(index);
+                const availableFields = workflowFields.filter((f) => !used.has(f.name));
+                return (
+                  <div key={index} className="rounded-lg border bg-gray-50 p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">Assignment {index + 1}</span>
+                      <button
+                        onClick={() => removeAssignment(index)}
+                        className="text-red-400 hover:text-red-600 p-0.5 transition-colors"
+                        title="Remove"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="value">Value</Label>
-              {editedValueType === "boolean" ? (
-                <Select value={String(editedValue)} onValueChange={(v) => setEditedValue(v === "true")}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select value" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="true">true</SelectItem>
-                    <SelectItem value="false">false</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  id="value"
-                  type={editedValueType === "number" ? "number" : "text"}
-                  value={editedValue}
-                  onChange={(e) => {
-                    setEditedValue(editedValueType === "number" ? Number(e.target.value) : e.target.value);
-                    if (errors.value) setErrors({...errors, value: ""});
-                  }}
-                  placeholder="Enter value..."
-                  className={errors.value ? "border-red-500" : ""}
-                />
+                    {/* Field selector */}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Field</Label>
+                      <Select value={assignment.fieldName} onValueChange={(v) => updateAssignmentField(index, v)}>
+                        <SelectTrigger className={`h-9 ${errors[`field_${index}`] ? "border-red-500" : ""}`}>
+                          <SelectValue placeholder="Select a field..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {/* Show current selection + available (unused) fields */}
+                          {workflowFields
+                            .filter((f) => f.name === assignment.fieldName || !used.has(f.name))
+                            .map((field) => (
+                              <SelectItem key={field.name} value={field.name}>
+                                <span className="flex items-center gap-2">
+                                  <span className="font-mono">{field.name}</span>
+                                  <span className="text-xs text-muted-foreground">({field.type})</span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      {errors[`field_${index}`] && (
+                        <p className="text-xs text-red-600">{errors[`field_${index}`]}</p>
+                      )}
+                    </div>
+
+                    {/* Value input */}
+                    <div className="space-y-1">
+                      <Label className="text-xs">Value</Label>
+                      {assignment.valueType === "boolean" ? (
+                        <Select
+                          value={String(assignment.value)}
+                          onValueChange={(v) => updateAssignmentValue(index, v === "true")}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select value" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">true</SelectItem>
+                            <SelectItem value="false">false</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          type={assignment.valueType === "number" ? "number" : "text"}
+                          value={assignment.value ?? ""}
+                          onChange={(e) =>
+                            updateAssignmentValue(
+                              index,
+                              assignment.valueType === "number" ? Number(e.target.value) : e.target.value
+                            )
+                          }
+                          placeholder="Enter value..."
+                          className={`h-9 ${errors[`value_${index}`] ? "border-red-500" : ""}`}
+                        />
+                      )}
+                      {errors[`value_${index}`] && (
+                        <p className="text-xs text-red-600">{errors[`value_${index}`]}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {errors.assignments && editedAssignments.length === 0 && (
+                <p className="text-xs text-red-600">{errors.assignments}</p>
               )}
-              {errors.value && (
-                <p className="text-xs text-red-600 mt-1">{errors.value}</p>
-              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addAssignment}
+                className="w-full gap-2"
+                disabled={workflowFields.length === 0 || editedAssignments.length >= workflowFields.length}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add field
+              </Button>
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="px-6 py-4 border-t shrink-0">
             <Button variant="outline" onClick={handleCancel}>
               Cancel
             </Button>

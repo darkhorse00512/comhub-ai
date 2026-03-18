@@ -1299,20 +1299,27 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
         }
 
         case 'field_setter': {
-          const fieldName = node.data?.fieldName;
-          const value = node.data?.value;
-          const valueType = node.data?.valueType || 'text';
+          // Support both new multi-field format (assignments[]) and legacy single-field format
+          const assignments: Array<{ fieldName: string; value: any; valueType?: string }> =
+            Array.isArray(node.data?.assignments) && node.data.assignments.length > 0
+              ? node.data.assignments
+              : node.data?.fieldName
+                ? [{ fieldName: node.data.fieldName, value: node.data.value, valueType: node.data.valueType }]
+                : [];
 
-          if (fieldName) {
-            let parsedValue: any = value;
-            if (valueType === 'number') parsedValue = Number(value);
-            if (valueType === 'boolean') parsedValue = value === 'true' || value === true;
+          for (const assignment of assignments) {
+            const { fieldName, value, valueType = 'text' } = assignment;
+            if (fieldName) {
+              let parsedValue: any = value;
+              if (valueType === 'number') parsedValue = Number(value);
+              if (valueType === 'boolean') parsedValue = value === 'true' || value === true;
 
-            this.state.fields[fieldName] = parsedValue;
-            messages.push({
-              type: 'system',
-              text: `Set ${fieldName} = ${JSON.stringify(parsedValue)}`,
-            });
+              this.state.fields[fieldName] = parsedValue;
+              messages.push({
+                type: 'system',
+                text: `Set ${fieldName} = ${JSON.stringify(parsedValue)}`,
+              });
+            }
           }
           this.state.currentNodeId = this.getNextNodeId(this.state.currentNodeId);
           break;
