@@ -103,22 +103,30 @@ const DialogueNode = ({
     if (textarea) {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
+      const scrollTop = textarea.scrollTop;
       const newValue =
         editedStageMessage.substring(0, start) +
         tag +
         editedStageMessage.substring(end);
       setEditedStageMessage(newValue);
       if (errors.stageMessage) setErrors({ ...errors, stageMessage: "" });
-      // Restore focus and set cursor after the inserted tag
+      // Restore focus, cursor position, and scroll position
       requestAnimationFrame(() => {
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
         const newPos = start + tag.length;
         textarea.setSelectionRange(newPos, newPos);
+        textarea.scrollTop = scrollTop;
       });
     } else {
-      // Fallback: append to the end
       setEditedStageMessage(editedStageMessage + tag);
     }
+  };
+
+  // Color classes per field type
+  const fieldTypeStyles: Record<string, string> = {
+    text: "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:border-blue-300",
+    number: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300",
+    boolean: "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:border-purple-300",
   };
 
   // Handlers
@@ -510,11 +518,12 @@ const DialogueNode = ({
                       <button
                         key={field.name}
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => insertFieldTag(field.name)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 transition-colors cursor-pointer"
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${fieldTypeStyles[field.type] || fieldTypeStyles.text}`}
                         title={`Insert {{${field.name}}} (${field.type})`}
                       >
-                        {`{{${field.name}}}`}
+                        {field.name}
                       </button>
                     ))}
                   </div>
