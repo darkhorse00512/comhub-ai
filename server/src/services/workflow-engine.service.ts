@@ -630,9 +630,11 @@ The system will automatically route to the correct exit based on the conversatio
     // Build a focused prompt for transition analysis.
     // Only include conversation from THIS stage (filtered by nodeLabel) to prevent
     // earlier stages' content from confusing the routing decision.
+    // Note: the current user message and AI response are already in conversationContext
+    // (pushed at lines above), so we just use the filtered context — no need to add them again.
     const currentStageContext = this.state.conversationContext
       .filter(e => e.nodeLabel === node.data?.label || !e.nodeLabel)
-      .slice(-6);
+      .slice(-10);
 
     const analysisPrompt = `You are a routing analyzer for a voice call workflow. Your ONLY job is to decide if a stage transition should happen NOW.
 
@@ -644,8 +646,6 @@ AVAILABLE TRANSITIONS: ${transitionList}
 
 CONVERSATION IN THIS STAGE (only this stage's turns):
 ${currentStageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
-Caller: "${userMessage}"
-Agent: "${aiResponseText}"
 
 RULES:
 - Read the STAGE INSTRUCTIONS carefully. They describe SPECIFIC conditions for each transition.
@@ -879,8 +879,9 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
     });
 
     // Add user message to dialogue history and conversation context
+    // IMPORTANT: Include nodeLabel so transition analysis can filter by stage correctly.
     this.state.dialogueHistory.push({ role: 'user', content: userMessage });
-    this.state.conversationContext.push({ role: 'user', text: userMessage });
+    this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
     this.state.dialogueTurnCount++;
 
     // Generate AI response using full conversation history
@@ -1066,28 +1067,32 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
   }
 
   private async _executeFromCurrentInternal(messages: WorkflowMessage[]): Promise<WorkflowStepResult> {
-    // Cycle detection: prevent infinite loops in non-interactive node chains
-    const MAX_NON_INTERACTIVE_STEPS = 50;
+    // Cycle detection: prevent infinite loops in ANY node chain (including dialogue skips)
+    const MAX_STEPS = 50;
     let stepCount = 0;
+    const visitedNodeIds = new Set<string>();
 
     while (this.state.currentNodeId) {
       const node = this.nodes.find((n) => n.id === this.state.currentNodeId);
       if (!node) break;
 
-      // Prevent infinite loops in non-interactive nodes
-      const nodeType = node.data?.type || node.type;
-      if (!['dialogue', 'scripted'].includes(nodeType)) {
-        stepCount++;
-        if (stepCount > MAX_NON_INTERACTIVE_STEPS) {
-          logger.error('WorkflowEngine: Max non-interactive steps exceeded, breaking potential loop', {
-            currentNodeId: this.state.currentNodeId,
-            stepCount,
-          });
-          this.state.isComplete = true;
-          messages.push({ type: 'system', text: 'Workflow stopped: loop detected' });
-          return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
-        }
+      // Prevent infinite loops — track ALL visited nodes in this execution chain
+      stepCount++;
+      if (stepCount > MAX_STEPS || visitedNodeIds.has(node.id)) {
+        logger.error('WorkflowEngine: Cycle detected or max steps exceeded in execution chain', {
+          currentNodeId: this.state.currentNodeId,
+          currentLabel: node.data?.label,
+          stepCount,
+          revisitedNode: visitedNodeIds.has(node.id),
+          visitedNodes: Array.from(visitedNodeIds),
+        });
+        this.state.isComplete = true;
+        messages.push({ type: 'system', text: 'Workflow stopped: loop detected' });
+        return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
       }
+      visitedNodeIds.add(node.id);
+
+      const nodeType = node.data?.type || node.type;
 
       switch (nodeType) {
         case 'agentSetup': {
@@ -1140,18 +1145,18 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
 
         case 'dialogue': {
           // GUARD: If this dialogue was already completed (transitioned out of),
-          // do NOT re-enter it — skip to the default next node.
-          // This prevents loops caused by stale state after server restarts.
+          // do NOT re-enter it — skip to the next node.
+          // The visitedNodeIds cycle detection above will catch any infinite loops.
           if (this.state.completedDialogueNodeIds?.includes(node.id)) {
             logger.warn('WorkflowEngine: Skipping already-completed dialogue node', {
               nodeId: node.id,
               nodeLabel: node.data?.label,
-            });
-            messages.push({
-              type: 'system',
-              text: `Skipping already-completed stage "${node.data?.label || node.id}"`,
+              completedDialogues: this.state.completedDialogueNodeIds,
             });
             this.state.currentNodeId = this.getNextNodeId(node.id);
+            if (!this.state.currentNodeId) {
+              logger.warn('WorkflowEngine: No next node after completed dialogue, ending workflow');
+            }
             break;
           }
 
