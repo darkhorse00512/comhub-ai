@@ -267,7 +267,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
                 placeholder="Enter node name..."
                 className={errors.label ? "border-red-500" : ""}
               />
-              {errors.label && <p className="text-xs text-red-600">{errors.label}</p>}
+              {errors.label && <p className="text-xs text-red-400">{errors.label}</p>}
             </div>
 
             {/* Field assignments */}
@@ -275,7 +275,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
               <Label>Field assignments</Label>
 
               {workflowFields.length === 0 && (
-                <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-700">
+                <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/10 text-amber-400">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <p className="text-xs">
                     No fields defined yet. Add fields in <span className="font-semibold">Workflow Fields</span> panel first.
@@ -287,7 +287,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
                 const used = usedFields(index);
                 const availableFields = workflowFields.filter((f) => !used.has(f.name));
                 return (
-                  <div key={index} className="rounded-lg border bg-gray-50 p-3 space-y-2.5">
+                  <div key={index} className="rounded-lg border border-border bg-secondary/50 p-3 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-muted-foreground">Assignment {index + 1}</span>
                       <button
@@ -321,7 +321,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
                         </SelectContent>
                       </Select>
                       {errors[`field_${index}`] && (
-                        <p className="text-xs text-red-600">{errors[`field_${index}`]}</p>
+                        <p className="text-xs text-red-400">{errors[`field_${index}`]}</p>
                       )}
                     </div>
 
@@ -356,7 +356,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
                         />
                       )}
                       {errors[`value_${index}`] && (
-                        <p className="text-xs text-red-600">{errors[`value_${index}`]}</p>
+                        <p className="text-xs text-red-400">{errors[`value_${index}`]}</p>
                       )}
                     </div>
                   </div>
@@ -364,7 +364,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
               })}
 
               {errors.assignments && editedAssignments.length === 0 && (
-                <p className="text-xs text-red-600">{errors.assignments}</p>
+                <p className="text-xs text-red-400">{errors.assignments}</p>
               )}
 
               <Button
@@ -384,7 +384,7 @@ const FieldSetterNode = ({ id, data, onClone, onDelete, onUpdate, workflowFields
             <Button variant="outline" onClick={handleCancel}>
               Cancel
             </Button>
-            <Button onClick={handleSaveEdit} className="bg-yellow-600 hover:bg-yellow-700">
+            <Button onClick={handleSaveEdit} className="bg-amber-600 hover:bg-amber-500 text-white">
               Save Changes
             </Button>
           </DialogFooter>
