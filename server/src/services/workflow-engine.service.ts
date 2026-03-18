@@ -518,18 +518,18 @@ CONTEXT AWARENESS:
     const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
 
     if (transitions.length > 0) {
-      // NOTE: Transition signals are handled by a SEPARATE analysis step after the response.
-      // The AI here should ONLY generate the spoken response — no transition tags.
       prompt += `\n\n### Available Stage Exits:
 This stage has these possible exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}
-The system will automatically determine when to use them based on the conversation.
-You do NOT need to include any transition signals. Just respond naturally following the Stage Instructions.
+The system will automatically route to the correct exit based on the conversation.
 
 ### RESPONSE RULES:
 1. Follow the Stage Instructions step by step. Do NOT skip steps.
 2. If the Stage Instructions have multiple steps, complete them IN ORDER.
 3. Be natural and helpful. Ask one question at a time.
-4. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+4. When you have completed ALL objectives of this stage, append [NEXT] at the very end of your response.
+5. [NEXT] is invisible to the caller — never say it aloud, just append it.
+6. Do NOT include [NEXT] until ALL steps/questions in the Stage Instructions are completed.
+7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
 1. Follow the stage instructions precisely.
@@ -912,15 +912,16 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
       nodeLabel: dialogueNode.data?.label,
     });
 
-    messages.push({
-      type: 'ai',
-      text,
-      nodeLabel: dialogueNode.data?.label,
-    });
-
-    // Track in both dialogue history and conversation context
-    this.state.dialogueHistory.push({ role: 'assistant', content: text });
-    this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
+    // Only add non-empty text to messages/history (AI might output only control tags)
+    if (text) {
+      messages.push({
+        type: 'ai',
+        text,
+        nodeLabel: dialogueNode.data?.label,
+      });
+      this.state.dialogueHistory.push({ role: 'assistant', content: text });
+      this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
+    }
 
     // --- Handle AI-triggered fallback ---
     if (wantsFallback) {
@@ -946,13 +947,22 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
       transition = await this.analyzeTransition(dialogueNode, text, userMessage);
     }
 
-    // For nodes WITHOUT named transitions, check for [NEXT] signal
+    // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
     const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
     let shouldAdvance = false;
     if (transition) {
       shouldAdvance = true;
-    } else if (validTransitionNames.length === 0 && wantsToComplete) {
+    } else if (wantsToComplete) {
+      // AI signaled completion — works for both nodes with and without transitions.
+      // For nodes WITH transitions: if analyzer didn't pick one, default to first transition.
       shouldAdvance = true;
+      if (validTransitionNames.length > 0 && !transition) {
+        transition = validTransitionNames[0];
+        logger.info('WorkflowEngine: AI signaled [NEXT] but analyzer returned NONE, defaulting to first transition', {
+          transition,
+          nodeLabel: dialogueNode.data?.label,
+        });
+      }
     } else if (maxTurnsReached) {
       shouldAdvance = true;
     }
