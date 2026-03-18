@@ -651,10 +651,10 @@ RULES:
 - Read the STAGE INSTRUCTIONS carefully. They describe SPECIFIC conditions for each transition.
 - If the stage has multiple steps (Step 1, 2, 3...), a transition should ONLY fire after ALL required steps are completed.
 - A caller saying "yes" does NOT automatically mean a transition. Check WHICH question they are answering.
-- CRITICAL: Look at the Agent's LAST message above. If it ends with a question or asks the caller something, the caller has NOT answered it yet. You MUST output NONE — wait for the caller's response before transitioning.
-- Only transition when the caller's LAST message is a clear answer to the agent's LAST question, AND all stage objectives are complete.
-- If the conversation has clearly reached an outcome that matches a transition condition, output that transition name.
-- If NO transition should fire yet (more steps remain, or conditions not met), output NONE.
+- Look at the FULL conversation above. Determine whether the caller has answered ALL the questions required by the stage instructions.
+- If the caller has answered ALL required questions and their answers clearly match a transition condition, output that transition name — even if the agent's last message asks a new or repeated question.
+- If the caller has NOT yet answered all required questions (some steps remain), output NONE.
+- If NO transition condition has been met, output NONE.
 
 Output ONLY one word: either a transition name from the list above, or NONE. Nothing else.`;
 
@@ -948,26 +948,25 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
     // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
     let wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
 
-    // Guard: if the AI's cleaned response ends with a question mark, the agent is still
-    // asking the caller something — do NOT advance, even if the AI mistakenly included [NEXT].
-    // This prevents premature transitions in multi-step dialogues (e.g. surveys).
+    // Guard: if the AI's cleaned response ends with a question mark, suppress the [NEXT]
+    // signal — the response AI is confused (asking a question while signaling completion).
+    // However, still run the separate transition analysis — it has its own rules and may
+    // correctly detect that the dialogue objectives are already fully met.
     const cleanedTextTrimmed = text.trim();
     const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
 
-    if (aiEndsWithQuestion && !maxTurnsReached) {
-      if (wantsToComplete) {
-        logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — ignoring [NEXT], agent is still asking a question', {
-          nodeLabel: dialogueNode.data?.label,
-          turnCount: this.state.dialogueTurnCount,
-        });
-        wantsToComplete = false;
-      }
-      logger.info('WorkflowEngine: Skipping transition analysis — AI response ends with a question, waiting for caller answer', {
+    if (aiEndsWithQuestion && !maxTurnsReached && wantsToComplete) {
+      logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — ignoring [NEXT], will rely on transition analysis only', {
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
       });
-      transition = null;
-    } else if (validTransitionNames.length > 0) {
+      wantsToComplete = false;
+    }
+
+    // Always run transition analysis for nodes with named transitions.
+    // The analyzer has its own rules about when to fire (it checks whether the agent's
+    // last message is a question, whether all objectives are met, etc.)
+    if (validTransitionNames.length > 0) {
       transition = await this.analyzeTransition(dialogueNode, text, userMessage);
     }
 
