@@ -600,27 +600,27 @@ The system will automatically route to the correct exit based on the conversatio
    * This prevents the AI from re-asking questions that were already answered.
    */
   private buildAnsweredSummary(): string | null {
-    // Scan dialogue history for Q&A pairs (skip system messages)
-    const turns = this.state.dialogueHistory.filter(m => m.role !== 'system');
-    if (turns.length < 4) return null; // Too few turns, no need for a reminder
-
+    // Scan dialogue history for assistant→user pairs
+    const allMessages = this.state.dialogueHistory;
     const qaPairs: string[] = [];
-    for (let i = 0; i < turns.length - 1; i += 2) {
-      const agentMsg = turns[i]?.role === 'assistant' ? turns[i] : null;
-      const userMsg = turns[i + 1]?.role === 'user' ? turns[i + 1] : null;
-      if (agentMsg && userMsg && userMsg.content.trim()) {
-        // Extract a short version of the question (first sentence or up to 80 chars)
-        const question = agentMsg.content.split(/[.!?]/)[0]?.trim() || agentMsg.content.substring(0, 80);
-        const answer = userMsg.content.trim();
-        if (answer && answer !== '[SPEECH_NOT_RECOGNIZED]') {
-          qaPairs.push(`  Q: "${question}..." → A: "${answer}"`);
-        }
+
+    for (let i = 0; i < allMessages.length - 1; i++) {
+      if (allMessages[i].role === 'assistant' && allMessages[i + 1]?.role === 'user') {
+        const agentText = allMessages[i].content;
+        const userText = allMessages[i + 1].content.trim();
+        if (!userText || userText === '[SPEECH_NOT_RECOGNIZED]') continue;
+        // Skip trigger messages injected by the engine
+        if (userText.startsWith('Continue from where')) continue;
+
+        // Extract a short version of the question
+        const question = agentText.split(/[.!?]/)[0]?.trim() || agentText.substring(0, 80);
+        qaPairs.push(`  Agent asked: "${question}" → Caller answered: "${userText}"`);
       }
     }
 
-    if (qaPairs.length === 0) return null;
+    if (qaPairs.length < 2) return null; // Need at least 2 Q&A pairs to be useful
 
-    return `CRITICAL REMINDER — The following questions have ALREADY been asked and answered in this conversation. Do NOT repeat or re-ask any of them. Move on to the NEXT unanswered question:\n${qaPairs.join('\n')}`;
+    return `CRITICAL REMINDER — These questions have ALREADY been asked and answered. NEVER re-ask them. Continue to the NEXT unanswered question:\n${qaPairs.join('\n')}`;
   }
 
   /**
@@ -862,6 +862,22 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         isComplete: true,
         currentStage: null,
       };
+    }
+
+    // GUARD: If the current dialogue was already completed (stale state from disk restore),
+    // do NOT process messages in it. Instead, re-execute from this node to advance past it.
+    if (this.state.completedDialogueNodeIds?.includes(dialogueNode.id)) {
+      logger.warn('WorkflowEngine: processMessage called in already-completed dialogue — re-executing from current position', {
+        nodeId: dialogueNode.id,
+        nodeLabel: dialogueNode.data?.label,
+        completedDialogues: this.state.completedDialogueNodeIds,
+      });
+      this.state.isInDialogue = false;
+      this.state.currentDialogueNodeId = null;
+      this.state.currentNodeId = dialogueNode.id;
+      // Add the user's message to context so it's not lost
+      this.state.conversationContext.push({ role: 'user', text: userMessage });
+      return this.executeFromCurrent(messages);
     }
 
     // Collect the valid transition names for this dialogue node
@@ -1192,23 +1208,15 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
         case 'dialogue': {
           // GUARD: If this dialogue was already completed (transitioned out of),
-          // do NOT re-enter it. This means the workflow took a wrong path —
-          // stop the execution chain rather than picking a random edge.
+          // do NOT re-enter it — skip to its default next node.
+          // The visitedNodeIds set will catch any cycles.
           if (this.state.completedDialogueNodeIds?.includes(node.id)) {
-            logger.error('WorkflowEngine: Attempted to re-enter completed dialogue — halting execution chain', {
+            logger.warn('WorkflowEngine: Skipping already-completed dialogue', {
               nodeId: node.id,
               nodeLabel: node.data?.label,
-              completedDialogues: this.state.completedDialogueNodeIds,
-              visitedInThisChain: Array.from(visitedNodeIds),
             });
-            // End workflow gracefully — re-entering a completed dialogue means routing error
-            this.state.isComplete = true;
-            this.state.currentNodeId = null;
-            messages.push({
-              type: 'system',
-              text: `Workflow ended: attempted to re-enter completed stage "${node.data?.label}"`,
-            });
-            return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
+            this.state.currentNodeId = this.getNextNodeId(node.id);
+            break;
           }
 
           // Enter dialogue mode — user STAYS here until a valid transition is triggered
