@@ -526,10 +526,12 @@ The system will automatically route to the correct exit based on the conversatio
 1. Follow the Stage Instructions step by step. Do NOT skip steps.
 2. If the Stage Instructions have multiple steps, complete them IN ORDER.
 3. Be natural and helpful. Ask one question at a time.
-4. When you have completed ALL objectives of this stage, append [NEXT] at the very end of your response.
-5. [NEXT] is invisible to the caller — never say it aloud, just append it.
-6. Do NOT include [NEXT] until ALL steps/questions in the Stage Instructions are completed.
-7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+4. NEVER re-ask a question the caller has already answered. Review the full conversation above before responding.
+5. If the caller corrects information, acknowledge the correction and continue to the NEXT unanswered question.
+6. When you have completed ALL objectives of this stage, append [NEXT] at the very end of your response.
+7. [NEXT] is invisible to the caller — never say it aloud, just append it.
+8. Do NOT include [NEXT] until ALL steps/questions in the Stage Instructions are completed.
+9. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
 1. Follow the stage instructions precisely.
@@ -636,26 +638,32 @@ The system will automatically route to the correct exit based on the conversatio
       .filter(e => e.nodeLabel === node.data?.label || !e.nodeLabel)
       .slice(-10);
 
-    const analysisPrompt = `You are a routing analyzer for a voice call workflow. Your job is to detect if the caller has indicated a SPECIFIC exit condition.
+    const analysisPrompt = `You are a routing analyzer for a voice call workflow. Your job is to decide if the conversation should exit this stage.
 
 STAGE: "${node.data?.label}"
 STAGE INSTRUCTIONS:
 ${stageMessage}
 
 AVAILABLE TRANSITIONS: ${transitionList}
-The FIRST transition ("${transitions[0]?.name}") is the default completion path. The OTHER transitions are early exits for specific caller responses.
+The FIRST transition ("${transitions[0]?.name}") is the default completion path — it fires when ALL stage objectives are complete.
+The OTHER transitions are early exits for specific caller responses (e.g. caller refuses, denies, ends call).
 
 CONVERSATION IN THIS STAGE:
 ${currentStageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
 
 RULES:
-- Your PRIMARY job is to detect EARLY EXIT conditions — when the caller says something that matches a NON-DEFAULT transition (e.g. "Not Owner", "No Need", "Denied", "End").
-- For the DEFAULT/FIRST transition ("${transitions[0]?.name}"): ONLY output this if the caller has clearly answered ALL questions/steps in the stage instructions and the conversation is fully complete.
-- If the stage instructions describe multiple steps or questions, ALL must be completed before outputting the default transition.
-- If the agent is still asking questions and the caller is cooperating, output NONE — the stage is still in progress.
+- CAREFULLY read the AGENT'S LAST message to understand WHAT was being asked.
+- Then read the CALLER'S LAST response IN CONTEXT of what was asked.
+- CRITICAL: A caller saying "no" does NOT automatically mean an early exit. You MUST check WHAT they are saying "no" TO:
+  * If the agent asked to confirm/verify data and the caller says "no" to correct it → that is a DATA CORRECTION, NOT an exit. Output NONE.
+  * If the agent asked "are you the owner?" and the caller says "no" → that IS an early exit ("Not Owner").
+  * If the agent asked a survey question and the caller declines → that IS an early exit.
+- For early exit transitions: ONLY fire when the caller EXPLICITLY and UNAMBIGUOUSLY indicates the exit condition in direct response to a relevant question.
+- For the DEFAULT transition ("${transitions[0]?.name}"): output this ONLY if ALL questions/steps in the stage instructions are complete.
+- If the agent is still asking questions and the caller is cooperating (even if correcting data), output NONE.
 - When in doubt, output NONE.
 
-Output ONLY one word: either a transition name from the list above, or NONE. Nothing else.`;
+Output ONLY one word: either a transition name from the list above, or NONE.`;
 
     try {
       const result = await gptService.generateWithCustomPrompt(
@@ -980,11 +988,31 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
 
     if (isEarlyExit) {
       // Early exit (Not Owner, No Need, etc.) — fire immediately, no [NEXT] needed.
-      shouldAdvance = true;
-      logger.info('WorkflowEngine: Early exit transition detected', {
-        transition,
-        nodeLabel: dialogueNode.data?.label,
-      });
+      // BUT validate: check if the target would lead to a completed dialogue (bad routing).
+      const earlyExitTarget = this.getDialogueNextNodeId(dialogueNode, transition!);
+      const earlyExitTargetNode = earlyExitTarget ? this.nodes.find(n => n.id === earlyExitTarget) : null;
+      const earlyExitTargetCompleted = earlyExitTarget && this.state.completedDialogueNodeIds?.includes(earlyExitTarget);
+
+      if (earlyExitTarget && !earlyExitTargetCompleted) {
+        shouldAdvance = true;
+        logger.info('WorkflowEngine: Early exit transition detected', {
+          transition,
+          nodeLabel: dialogueNode.data?.label,
+          targetLabel: earlyExitTargetNode?.data?.label,
+          userMessage: userMessage.substring(0, 80),
+        });
+      } else {
+        // Early exit would route to a completed/invalid node — likely a misdetection.
+        // Ignore the early exit and stay in dialogue.
+        logger.warn('WorkflowEngine: Early exit transition ignored — target is invalid or already completed', {
+          transition,
+          nodeLabel: dialogueNode.data?.label,
+          earlyExitTarget,
+          earlyExitTargetCompleted,
+          userMessage: userMessage.substring(0, 80),
+        });
+        transition = null;
+      }
     } else if (effectiveComplete) {
       // Response AI signaled completion and is not asking a question.
       // Use the analyzer's pick, or default to first transition.
@@ -1158,19 +1186,23 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
 
         case 'dialogue': {
           // GUARD: If this dialogue was already completed (transitioned out of),
-          // do NOT re-enter it — skip to the next node.
-          // The visitedNodeIds cycle detection above will catch any infinite loops.
+          // do NOT re-enter it. This means the workflow took a wrong path —
+          // stop the execution chain rather than picking a random edge.
           if (this.state.completedDialogueNodeIds?.includes(node.id)) {
-            logger.warn('WorkflowEngine: Skipping already-completed dialogue node', {
+            logger.error('WorkflowEngine: Attempted to re-enter completed dialogue — halting execution chain', {
               nodeId: node.id,
               nodeLabel: node.data?.label,
               completedDialogues: this.state.completedDialogueNodeIds,
+              visitedInThisChain: Array.from(visitedNodeIds),
             });
-            this.state.currentNodeId = this.getNextNodeId(node.id);
-            if (!this.state.currentNodeId) {
-              logger.warn('WorkflowEngine: No next node after completed dialogue, ending workflow');
-            }
-            break;
+            // End workflow gracefully — re-entering a completed dialogue means routing error
+            this.state.isComplete = true;
+            this.state.currentNodeId = null;
+            messages.push({
+              type: 'system',
+              text: `Workflow ended: attempted to re-enter completed stage "${node.data?.label}"`,
+            });
+            return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
           }
 
           // Enter dialogue mode — user STAYS here until a valid transition is triggered
