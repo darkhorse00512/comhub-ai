@@ -651,7 +651,8 @@ RULES:
 - Read the STAGE INSTRUCTIONS carefully. They describe SPECIFIC conditions for each transition.
 - If the stage has multiple steps (Step 1, 2, 3...), a transition should ONLY fire after ALL required steps are completed.
 - A caller saying "yes" does NOT automatically mean a transition. Check WHICH question they are answering.
-- If the agent just asked a new question and is waiting for the answer, do NOT transition yet.
+- CRITICAL: Look at the Agent's LAST message above. If it ends with a question or asks the caller something, the caller has NOT answered it yet. You MUST output NONE — wait for the caller's response before transitioning.
+- Only transition when the caller's LAST message is a clear answer to the agent's LAST question, AND all stage objectives are complete.
 - If the conversation has clearly reached an outcome that matches a transition condition, output that transition name.
 - If NO transition should fire yet (more steps remain, or conditions not met), output NONE.
 
@@ -943,12 +944,26 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
 
-    if (validTransitionNames.length > 0) {
-      transition = await this.analyzeTransition(dialogueNode, text, userMessage);
-    }
-
     // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
     const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
+
+    // Guard: if the AI's response ends with a question, it's still waiting for the caller's
+    // answer — do NOT run transition analysis yet (unless the AI explicitly signaled [NEXT]).
+    // This prevents premature transitions when the agent asks a multi-step survey.
+    const cleanedTextTrimmed = text.trim();
+    const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
+
+    if (validTransitionNames.length > 0) {
+      if (aiEndsWithQuestion && !wantsToComplete && !maxTurnsReached) {
+        logger.info('WorkflowEngine: Skipping transition analysis — AI response ends with a question, waiting for caller answer', {
+          nodeLabel: dialogueNode.data?.label,
+          turnCount: this.state.dialogueTurnCount,
+        });
+        transition = null;
+      } else {
+        transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+      }
+    }
     let shouldAdvance = false;
     if (transition) {
       shouldAdvance = true;
