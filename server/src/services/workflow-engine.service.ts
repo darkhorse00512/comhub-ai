@@ -181,6 +181,13 @@ export class WorkflowEngine {
    */
   public fetchFullHistory?: () => Promise<Array<{ role: string; content: string }>>;
 
+  /**
+   * Optional callback to persist state during long processMessage calls.
+   * Called after state transitions (entering/exiting dialogues) so that
+   * server restarts during AI calls don't revert to stale state.
+   */
+  public onStateChange?: () => void;
+
   constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string) {
     this.nodes = nodes;
     this.edges = edges;
@@ -1093,6 +1100,11 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       this.state.currentDialogueNodeId = null;
       this.state.currentNodeId = nextNodeId;
 
+      // Persist state NOW — before the async executeFromCurrent call.
+      // This ensures that if the server restarts during the next AI call,
+      // the disk state reflects the transition (dialogue completed, new node active).
+      if (this.onStateChange) this.onStateChange();
+
       return this.executeFromCurrent(messages);
     }
 
@@ -1223,6 +1235,11 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           this.state.isInDialogue = true;
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
+
+          // Persist state NOW — we've entered a new dialogue. If the server
+          // restarts during the upcoming AI call, the disk state will reflect
+          // the new dialogue (not the old one we just transitioned from).
+          if (this.onStateChange) this.onStateChange();
 
           // Collect valid transition names for this dialogue node
           const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];

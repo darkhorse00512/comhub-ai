@@ -1450,6 +1450,15 @@ function loadSessionFromDisk(sessionId: string): WorkflowSession | null {
       createdAt: new Date(data.createdAt),
     };
 
+    // Wire up state-change callback for disk persistence during transitions
+    engine.onStateChange = () => {
+      try {
+        persistSession(sessionId, session);
+      } catch (err) {
+        logger.error('Failed to persist session on state change', { sessionId, error: err });
+      }
+    };
+
     // Re-hydrate in-memory cache
     workflowSessions.set(sessionId, session);
     logger.info('Workflow session restored from disk', { sessionId });
@@ -1535,10 +1544,7 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
     // Create workflow engine
     const engine = new WorkflowEngine(nodes, edges);
 
-    // Start the workflow
-    const result = await engine.start(direction);
-
-    // Generate session ID and store (both in-memory and on disk)
+    // Generate session ID first so we can wire up the state-change callback
     const sessionId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const session: WorkflowSession = {
       engine,
@@ -1550,6 +1556,20 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       createdAt: new Date(),
     };
     workflowSessions.set(sessionId, session);
+
+    // Wire up state-change callback: persists to disk whenever the engine
+    // transitions between dialogue stages. This protects against server
+    // restarts during long AI calls reverting to stale dialogue state.
+    engine.onStateChange = () => {
+      try {
+        persistSession(sessionId, session);
+      } catch (err) {
+        logger.error('Failed to persist session on state change', { sessionId, error: err });
+      }
+    };
+
+    // Start the workflow
+    const result = await engine.start(direction);
     persistSession(sessionId, session);
 
     logger.info('Workflow call started', {
