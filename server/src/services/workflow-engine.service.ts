@@ -595,11 +595,49 @@ The system will automatically route to the correct exit based on the conversatio
   }
 
   /**
+   * Build a summary of agent questions and caller answers from dialogue history.
+   * This prevents the AI from re-asking questions that were already answered.
+   */
+  private buildAnsweredSummary(): string | null {
+    // Scan dialogue history for Q&A pairs (skip system messages)
+    const turns = this.state.dialogueHistory.filter(m => m.role !== 'system');
+    if (turns.length < 4) return null; // Too few turns, no need for a reminder
+
+    const qaPairs: string[] = [];
+    for (let i = 0; i < turns.length - 1; i += 2) {
+      const agentMsg = turns[i]?.role === 'assistant' ? turns[i] : null;
+      const userMsg = turns[i + 1]?.role === 'user' ? turns[i + 1] : null;
+      if (agentMsg && userMsg && userMsg.content.trim()) {
+        // Extract a short version of the question (first sentence or up to 80 chars)
+        const question = agentMsg.content.split(/[.!?]/)[0]?.trim() || agentMsg.content.substring(0, 80);
+        const answer = userMsg.content.trim();
+        if (answer && answer !== '[SPEECH_NOT_RECOGNIZED]') {
+          qaPairs.push(`  Q: "${question}..." → A: "${answer}"`);
+        }
+      }
+    }
+
+    if (qaPairs.length === 0) return null;
+
+    return `CRITICAL REMINDER — The following questions have ALREADY been asked and answered in this conversation. Do NOT repeat or re-ask any of them. Move on to the NEXT unanswered question:\n${qaPairs.join('\n')}`;
+  }
+
+  /**
    * Generate AI response using the full dialogue history.
+   * Injects a fresh "already answered" reminder to prevent question repetition.
    */
   private async generateAIResponse(): Promise<string | null> {
     try {
       const messages: ChatMessage[] = [...this.state.dialogueHistory];
+
+      // Inject a fresh reminder of already-answered questions before the AI generates.
+      // This is a transient injection — NOT persisted in dialogueHistory.
+      const answeredSummary = this.buildAnsweredSummary();
+      if (answeredSummary) {
+        // Insert as a system message just before the last user message
+        const lastUserIdx = messages.length - 1;
+        messages.splice(lastUserIdx, 0, { role: 'system', content: answeredSummary });
+      }
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
@@ -1492,33 +1530,31 @@ Output ONLY one word: either a transition name from the list above, or NONE.`;
         }
 
         case 'end_call': {
-          // Generate summary if summaryPrompt is configured
+          // --- Build full conversation transcript ---
+          let conversationText: string;
+          if (this.fetchFullHistory) {
+            try {
+              const fullHistory = await this.fetchFullHistory();
+              conversationText = fullHistory
+                .map((m) => `${m.role}: ${m.content}`)
+                .join('\n');
+              logger.info('WorkflowEngine: Using full DB history for end_call analysis', { messageCount: fullHistory.length });
+            } catch (historyErr) {
+              logger.warn('WorkflowEngine: Failed to fetch full history, falling back to conversationContext', { error: historyErr });
+              conversationText = this.state.conversationContext
+                .map((e) => `${e.role}: ${e.text}`)
+                .join('\n');
+            }
+          } else {
+            conversationText = this.state.conversationContext
+              .map((e) => `${e.role}: ${e.text}`)
+              .join('\n');
+          }
+
+          // --- Generate summary if summaryPrompt is configured ---
           const summaryPrompt = node.data?.summaryPrompt;
           if (summaryPrompt) {
             try {
-              // Prefer full call history from database (includes ALL messages)
-              // to ensure AI analysis is based on the complete conversation
-              let conversationText: string;
-
-              if (this.fetchFullHistory) {
-                try {
-                  const fullHistory = await this.fetchFullHistory();
-                  conversationText = fullHistory
-                    .map((m) => `${m.role}: ${m.content}`)
-                    .join('\n');
-                  logger.info('WorkflowEngine: Using full DB history for summary', { messageCount: fullHistory.length });
-                } catch (historyErr) {
-                  logger.warn('WorkflowEngine: Failed to fetch full history, falling back to conversationContext', { error: historyErr });
-                  conversationText = this.state.conversationContext
-                    .map((e) => `${e.role}: ${e.text}`)
-                    .join('\n');
-                }
-              } else {
-                conversationText = this.state.conversationContext
-                  .map((e) => `${e.role}: ${e.text}`)
-                  .join('\n');
-              }
-
               const summaryResult = await gptService.generateWithCustomPrompt(
                 `Here is the full conversation:\n${conversationText}\n\nPlease provide the summary.`,
                 summaryPrompt,
@@ -1532,15 +1568,88 @@ Output ONLY one word: either a transition name from the list above, or NONE.`;
             }
           }
 
-          // Extract results based on configured result definitions
+          // --- AI-powered result extraction ---
+          // Analyze the full conversation with AI to extract all required data fields.
+          // This extracts data mentioned in conversation (e.g. customer name, property type,
+          // roof area) even if it was never explicitly stored in workflow fields.
           const resultDefs: Array<{ name: string; type: string; description?: string; enumValues?: string }> = node.data?.results || [];
           if (resultDefs.length > 0) {
+            // First, try AI extraction from the conversation
+            let aiExtracted: Record<string, any> = {};
+            try {
+              const fieldDescriptions = resultDefs
+                .filter(d => d.name)
+                .map(def => {
+                  let desc = `- "${def.name}" (type: ${def.type || 'text'})`;
+                  if (def.description) desc += `: ${def.description}`;
+                  if (def.type === 'enum' && def.enumValues) {
+                    desc += ` [allowed values: ${def.enumValues}]`;
+                  }
+                  if (def.type === 'boolean') {
+                    desc += ` [true or false]`;
+                  }
+                  return desc;
+                })
+                .join('\n');
+
+              const extractionPrompt = `You are a data extraction engine. Analyze the conversation below and extract the requested fields.
+
+CONVERSATION:
+${conversationText}
+
+FIELDS TO EXTRACT:
+${fieldDescriptions}
+
+RULES:
+- Extract values ONLY from what was explicitly said in the conversation.
+- If a field was not discussed or the caller did not provide the information, set it to null.
+- For boolean fields: output true or false.
+- For integer/real fields: output the number only (no units, no text).
+- For enum fields: output one of the allowed values, or null if no match.
+- For text fields: output the exact value mentioned by the caller.
+- If the caller corrected a value, use the LATEST corrected value.
+- Output ONLY valid JSON, no explanation.
+
+Output a JSON object with the field names as keys. Example: {"field1": "value1", "field2": 42, "field3": null}`;
+
+              const extractionResult = await gptService.generateWithCustomPrompt(
+                extractionPrompt,
+                'You are a precise data extraction engine. Output ONLY valid JSON, nothing else.',
+                { maxTokens: 500, temperature: 0.1 }
+              );
+
+              if (extractionResult.text) {
+                // Parse JSON — handle markdown code blocks if AI wraps output
+                let jsonText = extractionResult.text.trim();
+                const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+                if (jsonMatch) jsonText = jsonMatch[1].trim();
+
+                try {
+                  aiExtracted = JSON.parse(jsonText);
+                  logger.info('WorkflowEngine: AI extracted results from conversation', {
+                    extracted: aiExtracted,
+                  });
+                } catch (parseErr) {
+                  logger.error('WorkflowEngine: Failed to parse AI extraction JSON', {
+                    rawText: extractionResult.text.substring(0, 300),
+                    error: parseErr,
+                  });
+                }
+              }
+            } catch (err) {
+              logger.error('WorkflowEngine: AI extraction failed', { error: err });
+            }
+
+            // Merge: AI-extracted values fill in gaps, workflow fields take precedence
             const extracted: Record<string, any> = {};
             for (const def of resultDefs) {
               if (!def.name) continue;
-              let value = this.state.fields[def.name] ?? null;
+              // Workflow fields (set by field_setter nodes) take precedence
+              // AI-extracted values fill in anything not already in fields
+              let value = this.state.fields[def.name] ?? aiExtracted[def.name] ?? null;
+
               // Type coercion
-              if (value !== null && def.type) {
+              if (value !== null && value !== undefined && def.type) {
                 switch (def.type) {
                   case 'integer':
                     value = parseInt(String(value), 10) || 0;
@@ -1549,7 +1658,7 @@ Output ONLY one word: either a transition name from the list above, or NONE.`;
                     value = parseFloat(String(value)) || 0;
                     break;
                   case 'boolean':
-                    value = value === true || value === 'true' || value === '1';
+                    value = value === true || value === 'true' || value === '1' || value === 1;
                     break;
                   case 'enum': {
                     const allowed = (def.enumValues || '').split(',').map((v: string) => v.trim()).filter(Boolean);
@@ -1561,8 +1670,11 @@ Output ONLY one word: either a transition name from the list above, or NONE.`;
                 }
               }
               extracted[def.name] = value;
+              // Also store in fields so they're accessible via getFields()
+              this.state.fields[def.name] = value;
             }
-            logger.info('WorkflowEngine: End node extracting results', { extracted });
+
+            logger.info('WorkflowEngine: End node final extracted results', { extracted });
             messages.push({
               type: 'system',
               text: `Results: ${Object.entries(extracted).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ')}`,
