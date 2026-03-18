@@ -945,25 +945,31 @@ Output ONLY one word: either a transition name from the list above, or NONE. Not
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
 
     // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
-    const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
+    let wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
 
-    // Guard: if the AI's response ends with a question, it's still waiting for the caller's
-    // answer — do NOT run transition analysis yet (unless the AI explicitly signaled [NEXT]).
-    // This prevents premature transitions when the agent asks a multi-step survey.
+    // Guard: if the AI's cleaned response ends with a question mark, the agent is still
+    // asking the caller something — do NOT advance, even if the AI mistakenly included [NEXT].
+    // This prevents premature transitions in multi-step dialogues (e.g. surveys).
     const cleanedTextTrimmed = text.trim();
     const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
 
-    if (validTransitionNames.length > 0) {
-      if (aiEndsWithQuestion && !wantsToComplete && !maxTurnsReached) {
-        logger.info('WorkflowEngine: Skipping transition analysis — AI response ends with a question, waiting for caller answer', {
+    if (aiEndsWithQuestion && !maxTurnsReached) {
+      if (wantsToComplete) {
+        logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — ignoring [NEXT], agent is still asking a question', {
           nodeLabel: dialogueNode.data?.label,
           turnCount: this.state.dialogueTurnCount,
         });
-        transition = null;
-      } else {
-        transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+        wantsToComplete = false;
       }
+      logger.info('WorkflowEngine: Skipping transition analysis — AI response ends with a question, waiting for caller answer', {
+        nodeLabel: dialogueNode.data?.label,
+        turnCount: this.state.dialogueTurnCount,
+      });
+      transition = null;
+    } else if (validTransitionNames.length > 0) {
+      transition = await this.analyzeTransition(dialogueNode, text, userMessage);
     }
+
     let shouldAdvance = false;
     if (transition) {
       shouldAdvance = true;
