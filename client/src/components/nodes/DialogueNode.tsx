@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, useRef } from "react";
 import {
   Copy,
   Pencil,
@@ -10,6 +10,7 @@ import {
   Plus,
   X,
   Check,
+  Braces,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,11 @@ import {
 } from "@/components/ui/dialog";
 import { nodeDescriptions } from "@/data/nodeDescriptions";
 
+interface WorkflowField {
+  name: string;
+  type: "text" | "number" | "boolean";
+}
+
 interface DialogueNodeProps {
   id: string;
   data: any;
@@ -45,6 +51,7 @@ interface DialogueNodeProps {
   onClone?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   onUpdate?: (nodeId: string, data: any) => void;
+  workflowFields?: WorkflowField[];
 }
 
 const DialogueNode = ({
@@ -53,6 +60,7 @@ const DialogueNode = ({
   onClone,
   onDelete,
   onUpdate,
+  workflowFields = [],
 }: DialogueNodeProps) => {
   const { toast } = useToast();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -86,6 +94,32 @@ const DialogueNode = ({
   );
   const [editingTransitionName, setEditingTransitionName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const stageMessageRef = useRef<HTMLTextAreaElement>(null);
+
+  // Insert a field variable tag at the cursor position in the stage message textarea
+  const insertFieldTag = (fieldName: string) => {
+    const tag = `{{${fieldName}}}`;
+    const textarea = stageMessageRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const newValue =
+        editedStageMessage.substring(0, start) +
+        tag +
+        editedStageMessage.substring(end);
+      setEditedStageMessage(newValue);
+      if (errors.stageMessage) setErrors({ ...errors, stageMessage: "" });
+      // Restore focus and set cursor after the inserted tag
+      requestAnimationFrame(() => {
+        textarea.focus();
+        const newPos = start + tag.length;
+        textarea.setSelectionRange(newPos, newPos);
+      });
+    } else {
+      // Fallback: append to the end
+      setEditedStageMessage(editedStageMessage + tag);
+    }
+  };
 
   // Handlers
   const handleClone = (e: React.MouseEvent) => {
@@ -449,6 +483,7 @@ const DialogueNode = ({
               <Label htmlFor="stageMessage">Stage message</Label>
               <Textarea
                 id="stageMessage"
+                ref={stageMessageRef}
                 value={editedStageMessage}
                 onChange={(e) => {
                   setEditedStageMessage(e.target.value);
@@ -460,6 +495,30 @@ const DialogueNode = ({
               />
               {errors.stageMessage && (
                 <p className="text-xs text-red-600">{errors.stageMessage}</p>
+              )}
+              {/* Field variable tags */}
+              {workflowFields.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Braces className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">
+                      Click a field to insert into message
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {workflowFields.map((field) => (
+                      <button
+                        key={field.name}
+                        type="button"
+                        onClick={() => insertFieldTag(field.name)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 transition-colors cursor-pointer"
+                        title={`Insert {{${field.name}}} (${field.type})`}
+                      >
+                        {`{{${field.name}}}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 

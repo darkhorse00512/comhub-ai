@@ -231,7 +231,7 @@ const AgentStudioPage = () => {
       <ScriptedNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
     dialogue: (props: any) => (
-      <DialogueNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
+      <DialogueNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} workflowFields={workflowFields} />
     ),
     field_setter: (props: any) => (
       <FieldSetterNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} workflowFields={workflowFields} />

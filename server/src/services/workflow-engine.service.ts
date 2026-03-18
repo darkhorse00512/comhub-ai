@@ -439,7 +439,7 @@ CONTEXT AWARENESS:
     if (extraInstructions.length > 0) {
       prompt += `\n\n### Additional Instructions:`;
       extraInstructions.forEach((inst: string, idx: number) => {
-        prompt += `\n${idx + 1}. ${inst}`;
+        prompt += `\n${idx + 1}. ${this.substituteFieldVariables(inst)}`;
       });
     }
 
