@@ -182,11 +182,18 @@ export class WorkflowEngine {
   public fetchFullHistory?: () => Promise<Array<{ role: string; content: string }>>;
 
   /**
-   * Optional callback to persist state during long processMessage calls.
-   * Called after state transitions (entering/exiting dialogues) so that
-   * server restarts during AI calls don't revert to stale state.
+   * Optional callback to persist state to disk.
+   * Called frequently during processMessage to ensure server restarts
+   * don't revert to stale dialogue state.
    */
   public onStateChange?: () => void;
+
+  /** Persist current state to disk (if callback is set). */
+  private persistState(): void {
+    if (this.onStateChange) {
+      try { this.onStateChange(); } catch {}
+    }
+  }
 
   constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string) {
     this.nodes = nodes;
@@ -897,21 +904,45 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       };
     }
 
-    // GUARD: If the current dialogue was already completed (stale state from disk restore),
-    // do NOT process messages in it. End the workflow — we cannot safely determine
-    // which transition was originally used, and picking a random edge causes misrouting.
-    if (this.state.completedDialogueNodeIds?.includes(dialogueNode.id)) {
-      logger.error('WorkflowEngine: processMessage in already-completed dialogue — ending workflow to prevent misrouting', {
+    // GUARD: Detect stale state from server restarts.
+    // Check TWO signals:
+    // 1. completedDialogueNodeIds includes this dialogue (explicit completion marker)
+    // 2. conversationContext has agent messages from LATER stages (means we already moved past this one)
+    const currentLabel = dialogueNode.data?.label;
+    let stateIsStale = this.state.completedDialogueNodeIds?.includes(dialogueNode.id) || false;
+
+    if (!stateIsStale && currentLabel) {
+      // Check if conversationContext has agent messages from stages that come AFTER this one.
+      // Build ordered list of unique stage labels from agent messages.
+      const visitedLabels: string[] = [];
+      for (const entry of this.state.conversationContext) {
+        if (entry.role === 'agent' && entry.nodeLabel && !visitedLabels.includes(entry.nodeLabel)) {
+          visitedLabels.push(entry.nodeLabel);
+        }
+      }
+      const currentIdx = visitedLabels.indexOf(currentLabel);
+      // If we have agent messages from stages AFTER this one, state is stale
+      if (currentIdx >= 0 && currentIdx < visitedLabels.length - 1) {
+        stateIsStale = true;
+        logger.warn('WorkflowEngine: Stale state detected via conversationContext — stages after current exist', {
+          currentLabel,
+          visitedLabels,
+          currentIdx,
+        });
+      }
+    }
+
+    if (stateIsStale) {
+      logger.error('WorkflowEngine: processMessage in stale dialogue — ending workflow', {
         nodeId: dialogueNode.id,
-        nodeLabel: dialogueNode.data?.label,
-        completedDialogues: this.state.completedDialogueNodeIds,
+        nodeLabel: currentLabel,
       });
       this.state.isInDialogue = false;
       this.state.currentDialogueNodeId = null;
       this.state.isComplete = true;
       messages.push({
         type: 'system',
-        text: `Session state was lost (server may have restarted). Please start a new test call.`,
+        text: `Session state was lost (server restarted). Please start a new test call.`,
       });
       return {
         messages,
@@ -980,7 +1011,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     // - If the server restarts during the call, the disk state must reflect
     //   the current dialogue with the user's latest message
     // - Without this, a restart loads stale state from the previous turn
-    if (this.onStateChange) this.onStateChange();
+    this.persistState();
 
     // Generate AI response using full conversation history
     const aiResponse = await this.generateAIResponse();
@@ -1025,7 +1056,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
     // Persist AFTER AI response — captures the response before transition logic.
     // If server restarts during transition analysis, the AI response is not lost.
-    if (this.onStateChange) this.onStateChange();
+    this.persistState();
 
     // --- Handle AI-triggered fallback ---
     if (wantsFallback) {
@@ -1161,7 +1192,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       // Persist state NOW — before the async executeFromCurrent call.
       // This ensures that if the server restarts during the next AI call,
       // the disk state reflects the transition (dialogue completed, new node active).
-      if (this.onStateChange) this.onStateChange();
+      this.persistState();
 
       return this.executeFromCurrent(messages);
     }
@@ -1306,7 +1337,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           // Persist state NOW — we've entered a new dialogue. If the server
           // restarts during the upcoming AI call, the disk state will reflect
           // the new dialogue (not the old one we just transitioned from).
-          if (this.onStateChange) this.onStateChange();
+          this.persistState();
 
           // Collect valid transition names for this dialogue node
           const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
