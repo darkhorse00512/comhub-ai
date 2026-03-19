@@ -35,7 +35,7 @@ const menuItems = [
   { id: "configure", label: "Configure", icon: Settings, path: "configure" },
   { id: "outbound", label: "Outbound", icon: PhoneOutgoing, path: "outbound" },
   { id: "calls", label: "Calls", icon: Phone, path: "calls" },
-  { id: "chats", label: "Chats", icon: MessageCircle, path: "chats" },
+  // { id: "chats", label: "Chats", icon: MessageCircle, path: "chats" },
   { id: "analytics", label: "Analytics", icon: BarChart3, path: "analytics" },
 ];
 
