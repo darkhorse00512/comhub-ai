@@ -603,23 +603,51 @@ The system will automatically route to the correct exit based on the conversatio
   }
 
   /**
-   * Build a summary of agent questions and caller answers from dialogue history.
-   * This prevents the AI from re-asking questions that were already answered.
+   * Build a summary of agent questions and caller answers to prevent repetition.
+   * Scans BOTH dialogueHistory (current conversation) AND conversationContext
+   * (full call history) for the current stage.
    */
   private buildAnsweredSummary(): string | null {
-    // Scan dialogue history for assistant→user pairs
-    const allMessages = this.state.dialogueHistory;
     const qaPairs: string[] = [];
+    const seen = new Set<string>(); // deduplicate
 
+    // 1. Scan dialogueHistory for assistant→user pairs
+    const allMessages = this.state.dialogueHistory;
     for (let i = 0; i < allMessages.length - 1; i++) {
       if (allMessages[i].role === 'assistant' && allMessages[i + 1]?.role === 'user') {
         const agentText = allMessages[i].content;
         const userText = allMessages[i + 1].content.trim();
         if (!userText || userText === '[SPEECH_NOT_RECOGNIZED]') continue;
-        // Skip trigger messages injected by the engine
         if (userText.startsWith('Continue from where')) continue;
 
-        qaPairs.push(`  - You asked: "${agentText.substring(0, 120)}" → Caller said: "${userText}"`);
+        const key = agentText.substring(0, 60);
+        if (!seen.has(key)) {
+          seen.add(key);
+          qaPairs.push(`  - You asked: "${agentText.substring(0, 120)}" → Caller said: "${userText}"`);
+        }
+      }
+    }
+
+    // 2. Also scan conversationContext for the current stage label
+    //    This catches Q&A from earlier dialogue entries (e.g. after server restart rebuilds history)
+    const currentLabel = this.state.currentDialogueNodeId
+      ? this.nodes.find(n => n.id === this.state.currentDialogueNodeId)?.data?.label
+      : null;
+    if (currentLabel) {
+      const ctx = this.state.conversationContext;
+      for (let i = 0; i < ctx.length - 1; i++) {
+        if (ctx[i].role === 'agent' && ctx[i].nodeLabel === currentLabel &&
+            ctx[i + 1]?.role === 'user') {
+          const agentText = ctx[i].text;
+          const userText = ctx[i + 1].text?.trim();
+          if (!userText || userText === '[SPEECH_NOT_RECOGNIZED]') continue;
+
+          const key = agentText.substring(0, 60);
+          if (!seen.has(key)) {
+            seen.add(key);
+            qaPairs.push(`  - You asked: "${agentText.substring(0, 120)}" → Caller said: "${userText}"`);
+          }
+        }
       }
     }
 
@@ -946,6 +974,13 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     this.state.dialogueHistory.push({ role: 'user', content: userMessage });
     this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
     this.state.dialogueTurnCount++;
+
+    // Persist state BEFORE the AI call. This is critical because:
+    // - The AI call takes seconds (GPT API)
+    // - If the server restarts during the call, the disk state must reflect
+    //   the current dialogue with the user's latest message
+    // - Without this, a restart loads stale state from the previous turn
+    if (this.onStateChange) this.onStateChange();
 
     // Generate AI response using full conversation history
     const aiResponse = await this.generateAIResponse();
