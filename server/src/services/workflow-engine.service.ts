@@ -913,15 +913,15 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     }
 
     // GUARD: Detect stale state from server restarts.
-    // Check TWO signals:
-    // 1. completedDialogueNodeIds includes this dialogue (explicit completion marker)
-    // 2. conversationContext has agent messages from LATER stages (means we already moved past this one)
+    // Check THREE signals:
+    // 1. completedDialogueNodeIds includes this dialogue
+    // 2. conversationContext has agent messages from LATER stages
+    // 3. dialogueHistory's system prompt doesn't match current dialogue (wrong history loaded)
     const currentLabel = dialogueNode.data?.label;
     let stateIsStale = this.state.completedDialogueNodeIds?.includes(dialogueNode.id) || false;
 
     if (!stateIsStale && currentLabel) {
       // Check if conversationContext has agent messages from stages that come AFTER this one.
-      // Build ordered list of unique stage labels from agent messages.
       const visitedLabels: string[] = [];
       for (const entry of this.state.conversationContext) {
         if (entry.role === 'agent' && entry.nodeLabel && !visitedLabels.includes(entry.nodeLabel)) {
@@ -929,13 +929,23 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         }
       }
       const currentIdx = visitedLabels.indexOf(currentLabel);
-      // If we have agent messages from stages AFTER this one, state is stale
       if (currentIdx >= 0 && currentIdx < visitedLabels.length - 1) {
         stateIsStale = true;
-        logger.warn('WorkflowEngine: Stale state detected via conversationContext — stages after current exist', {
+        logger.warn('WorkflowEngine: Stale state detected — stages after current exist', {
+          currentLabel, visitedLabels,
+        });
+      }
+    }
+
+    // Check 3: dialogueHistory's system prompt should mention the current stage.
+    // If it mentions a DIFFERENT stage, the history is from a previous dialogue (stale).
+    if (!stateIsStale && currentLabel && this.state.dialogueHistory.length > 0) {
+      const sysPrompt = this.state.dialogueHistory[0]?.content || '';
+      if (sysPrompt && !sysPrompt.includes(currentLabel)) {
+        stateIsStale = true;
+        logger.warn('WorkflowEngine: Stale state detected — dialogueHistory system prompt does not match current stage', {
           currentLabel,
-          visitedLabels,
-          currentIdx,
+          promptSnippet: sysPrompt.substring(0, 100),
         });
       }
     }
@@ -1349,11 +1359,6 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
 
-          // Persist state NOW — we've entered a new dialogue. If the server
-          // restarts during the upcoming AI call, the disk state will reflect
-          // the new dialogue (not the old one we just transitioned from).
-          this.persistState();
-
           // Collect valid transition names for this dialogue node
           const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
           const validTransitionNames = dialogueTransitions.map((t) => t.name);
@@ -1424,6 +1429,10 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
               this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
             }
 
+            // Persist AFTER dialogue history + opening message are fully built.
+            // This ensures a restart loads the correct dialogue with its history.
+            this.persistState();
+
             return {
               messages,
               waitingForInput: true,
@@ -1464,6 +1473,9 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
             this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
             this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: node.data?.label });
           }
+
+          // Persist AFTER dialogue history + opening message are fully built.
+          this.persistState();
 
           // Stay in dialogue — wait for user's first real message
           return {
