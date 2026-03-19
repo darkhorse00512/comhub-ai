@@ -1139,7 +1139,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           transition = validTransitionNames[0]; // default to first
         }
       }
-      // Log detailed transition info including the target node
+      // Log transition with visible message so user can see routing
       const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
       const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
       logger.info('WorkflowEngine: AI signaled completion, advancing', {
@@ -1149,7 +1149,11 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         targetNodeId: advanceTargetId,
         targetLabel: advanceTarget?.data?.label,
         targetType: advanceTarget?.data?.type || advanceTarget?.type,
-        aiResponse: text.substring(0, 100),
+      });
+      // Show visible routing message to help debug
+      messages.push({
+        type: 'system',
+        text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
       });
     } else if (maxTurnsReached) {
       // Safety net: max turns exceeded — force advance.
@@ -1333,25 +1337,28 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         }
 
         case 'dialogue': {
-          // GUARD: If this dialogue was already completed (transitioned out of),
-          // do NOT re-enter it and do NOT pick a random edge. End the execution
-          // chain — the workflow reached this node through a wrong path.
-          if (this.state.completedDialogueNodeIds?.includes(node.id)) {
-            logger.error('WorkflowEngine: Reached already-completed dialogue — stopping execution', {
+          // GUARD: If this dialogue was already visited (completed or has messages in context),
+          // do NOT re-enter it. End the execution chain.
+          const dialogueLabel = node.data?.label;
+          const alreadyCompleted = this.state.completedDialogueNodeIds?.includes(node.id);
+          const alreadyVisited = dialogueLabel && this.state.conversationContext.some(
+            e => e.role === 'agent' && e.nodeLabel === dialogueLabel
+          );
+
+          if (alreadyCompleted || alreadyVisited) {
+            logger.error('WorkflowEngine: Reached already-visited dialogue — stopping execution', {
               nodeId: node.id,
-              nodeLabel: node.data?.label,
-              completedDialogues: this.state.completedDialogueNodeIds,
-              visitedInThisChain: Array.from(visitedNodeIds),
+              nodeLabel: dialogueLabel,
+              alreadyCompleted,
+              alreadyVisited,
             });
-            // Don't pick a random edge — just end this execution chain gracefully.
-            // The workflow either completed naturally or hit a routing dead end.
             this.state.currentNodeId = null;
             this.state.isComplete = true;
             messages.push({
               type: 'system',
-              text: `Workflow ended (reached already-completed stage "${node.data?.label}")`,
+              text: `Workflow ended (reached already-visited stage "${dialogueLabel}")`,
             });
-            return { messages, waitingForInput: false, isComplete: true, currentStage: node.data?.label || 'Error' };
+            return { messages, waitingForInput: false, isComplete: true, currentStage: dialogueLabel || 'Error' };
           }
 
           // Enter dialogue mode — user STAYS here until a valid transition is triggered
