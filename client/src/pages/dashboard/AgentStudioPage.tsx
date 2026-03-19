@@ -50,6 +50,7 @@ import { validateWorkflow, ValidationItem } from "@/utils/workflowValidator";
 import { useAgentContext } from "@/components/agent/AgentLayout";
 
 const nodeCategories = [
+  { type: "callDirection", label: "Call Type", icon: Phone, color: "bg-cyan-100 text-cyan-600", borderColor: "border-cyan-400" },
   { type: "scripted", label: "Scripted", icon: FileCode, color: "bg-blue-100 text-blue-600", borderColor: "border-blue-400" },
   { type: "dialogue", label: "Dialogue", icon: MessageSquare, color: "bg-green-100 text-green-600", borderColor: "border-green-400" },
   { type: "field_setter", label: "Field Setter", icon: Zap, color: "bg-yellow-100 text-yellow-600", borderColor: "border-yellow-400" },
@@ -224,9 +225,14 @@ const AgentStudioPage = () => {
 
   const nodeComponents = {
     agentSetup: AgentSetupNode,
-    callDirection: (props: any) => (
-      <CallDirectionNode {...props} onDelete={handleDeleteNode} />
-    ),
+    callDirection: (props: any) => {
+      const otherDirections = nodes
+        .filter((n: Node) => n.type === "callDirection" && n.id !== props.id)
+        .map((n: Node) => n.data.direction);
+      return (
+        <CallDirectionNode {...props} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} existingDirections={otherDirections} />
+      );
+    },
     scripted: (props: any) => (
       <ScriptedNode {...props} onClone={handleCloneNode} onDelete={handleDeleteNode} onUpdate={handleUpdateNode} />
     ),
@@ -458,6 +464,41 @@ const AgentStudioPage = () => {
 
       const nodeCategory = nodeCategories.find((n) => n.type === type);
       if (!nodeCategory) return;
+
+      // Call Type node: enforce max 1 inbound + 1 outbound
+      if (type === "callDirection") {
+        setNodes((currentNodes) => {
+          const existingDirections = currentNodes
+            .filter(n => n.type === "callDirection")
+            .map(n => n.data.direction);
+
+          const hasInbound = existingDirections.includes("inbound");
+          const hasOutbound = existingDirections.includes("outbound");
+
+          if (hasInbound && hasOutbound) {
+            toast({
+              title: "Cannot add Call Type",
+              description: "You already have both inbound and outbound call type nodes.",
+              variant: "destructive",
+            });
+            return currentNodes;
+          }
+
+          // Auto-assign direction: pick whichever is missing
+          const direction = !hasInbound ? "inbound" : "outbound";
+          const label = direction === "inbound" ? "Inbound Call" : "Outbound Call";
+
+          const newNode: Node = {
+            id: `callDirection-${Date.now()}`,
+            type: "callDirection",
+            position,
+            data: { label, direction },
+          };
+
+          return [...currentNodes, newNode];
+        });
+        return;
+      }
 
       const newNode: Node = {
         id: `${type}-${Date.now()}`,

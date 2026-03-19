@@ -18,11 +18,11 @@ import {
 } from "lucide-react";
 
 interface DebugItem {
-  type: "error" | "warning";
   message: string;
   nodeId?: string;
   nodeLabel?: string;
   nodeType?: string;
+  severity?: "error" | "warning";
 }
 
 interface DebugPanelProps {
