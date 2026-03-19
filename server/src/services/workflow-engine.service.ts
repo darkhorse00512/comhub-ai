@@ -1099,31 +1099,14 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     const cleanedTextTrimmed = text.trim();
     const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
 
-    // Count how many questions the AI has asked in this dialogue (assistant messages ending with ?)
-    const questionsAsked = this.state.dialogueHistory
-      .filter(m => m.role === 'assistant' && m.content.trim().endsWith('?'))
-      .length;
-
-    // Minimum turns before [NEXT] is honored: at least 3 turns, or more if many questions were asked.
-    // This prevents premature completion when the AI skips questions.
-    const MIN_TURNS_BEFORE_COMPLETE = 3;
-    const tooEarlyForCompletion = this.state.dialogueTurnCount < MIN_TURNS_BEFORE_COMPLETE;
-
     // Determine effective completion signal:
-    // [NEXT] is only trusted when:
-    // 1. AI is NOT asking a question (no trailing "?")
-    // 2. Enough turns have passed (not premature)
-    let effectiveComplete = wantsToComplete && !aiEndsWithQuestion && !tooEarlyForCompletion;
+    // [NEXT] is only trusted when the AI is NOT asking a question (no trailing "?").
+    const effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
 
-    if (wantsToComplete && !effectiveComplete) {
-      const reasons: string[] = [];
-      if (aiEndsWithQuestion) reasons.push('response ends with "?"');
-      if (tooEarlyForCompletion) reasons.push(`too early (turn ${this.state.dialogueTurnCount}/${MIN_TURNS_BEFORE_COMPLETE})`);
-      logger.info('WorkflowEngine: AI included [NEXT] but suppressed', {
+    if (aiEndsWithQuestion && wantsToComplete) {
+      logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — suppressing', {
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
-        questionsAsked,
-        reasons: reasons.join(', '),
       });
     }
 
@@ -1152,7 +1135,6 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         transition,
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
-        questionsAsked,
         targetNodeId: advanceTargetId,
         targetLabel: advanceTarget?.data?.label,
         targetType: advanceTarget?.data?.type || advanceTarget?.type,
