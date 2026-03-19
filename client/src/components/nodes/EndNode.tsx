@@ -216,7 +216,7 @@ const EndNode = ({ data }: EndNodeProps) => {
                     <button
                       type="button"
                       onClick={() => removeResult(index)}
-                      className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-red-100 text-red-500 hover:text-red-700 transition-colors"
+                      className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
                       title="Remove result"
                     >
                       <Trash2 className="w-4 h-4" />

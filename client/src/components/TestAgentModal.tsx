@@ -1550,13 +1550,13 @@ const CallHistoryView = ({
   if (selectedCall) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="rounded-lg border border-gray-200 p-3 mb-3 shrink-0">
+        <div className="rounded-lg border border-border bg-secondary/50 p-3 mb-3 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {selectedCall.direction === "inbound" ? (
-                <PhoneIncoming className="w-4 h-4 text-blue-500" />
+                <PhoneIncoming className="w-4 h-4 text-blue-400" />
               ) : (
-                <PhoneOutgoing className="w-4 h-4 text-green-500" />
+                <PhoneOutgoing className="w-4 h-4 text-green-400" />
               )}
               <span className="text-sm font-medium capitalize">{selectedCall.direction}</span>
             </div>
@@ -1565,24 +1565,24 @@ const CallHistoryView = ({
               <span>{selectedCall.messageCount} messages</span>
             </div>
           </div>
-          <p className="text-[11px] text-gray-400 mt-1">
+          <p className="text-[11px] text-muted-foreground mt-1">
             {format(new Date(selectedCall.startedAt), "MMM d, yyyy 'at' h:mm a")}
           </p>
         </div>
 
         {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
-          <div className="rounded-lg border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-800 p-3 mb-3 shrink-0">
-            <p className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-2 flex items-center gap-1.5">
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 mb-3 shrink-0">
+            <p className="text-xs font-medium text-purple-300 mb-2 flex items-center gap-1.5">
               <ClipboardList className="w-3.5 h-3.5" />
               Collected Information
             </p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {Object.entries(selectedCall.collectedData).map(([key, value]) => (
                 <div key={key} className="flex flex-col">
-                  <span className="text-[10px] text-purple-500 dark:text-purple-400 capitalize">
+                  <span className="text-[10px] text-purple-400 capitalize">
                     {key.replace(/_/g, " ")}
                   </span>
-                  <span className="text-xs text-gray-800 dark:text-gray-200 font-medium truncate">
+                  <span className="text-xs text-foreground font-medium truncate">
                     {String(value)}
                   </span>
                 </div>
@@ -1600,7 +1600,7 @@ const CallHistoryView = ({
           </div>
         ) : selectedCallMessages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center">
-            <MessageSquare className="w-7 h-7 text-gray-300 mb-2" />
+            <MessageSquare className="w-7 h-7 text-muted-foreground mb-2" />
             <p className="text-sm text-muted-foreground">No messages in this call</p>
           </div>
         ) : (
@@ -1611,8 +1611,8 @@ const CallHistoryView = ({
                 className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 {msg.role === "ai" && (
-                  <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Bot className="w-3.5 h-3.5 text-purple-600" />
+                  <div className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-purple-400" />
                   </div>
                 )}
                 <div
@@ -1630,8 +1630,8 @@ const CallHistoryView = ({
                   </span>
                 </div>
                 {msg.role === "user" && (
-                  <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <User className="w-3.5 h-3.5 text-blue-600" />
+                  <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <User className="w-3.5 h-3.5 text-blue-400" />
                   </div>
                 )}
               </div>
@@ -1654,10 +1654,10 @@ const CallHistoryView = ({
         </div>
       ) : calls.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center">
-          <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
-            <Phone className="w-7 h-7 text-gray-300" />
+          <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-3">
+            <Phone className="w-7 h-7 text-muted-foreground" />
           </div>
-          <p className="font-medium text-gray-700 mb-1">No test calls yet</p>
+          <p className="font-medium text-foreground mb-1">No test calls yet</p>
           <p className="text-xs text-muted-foreground max-w-[250px]">
             Start a test call to begin recording conversation history
           </p>
@@ -1669,14 +1669,14 @@ const CallHistoryView = ({
               <button
                 key={call.id}
                 onClick={() => onSelectCall(call)}
-                className="w-full group rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all p-3.5 text-left"
+                className="w-full group rounded-xl border border-border hover:border-purple-500/50 hover:bg-purple-500/10 transition-all p-3.5 text-left"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
                       call.direction === "inbound"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-green-100 text-green-700"
+                        ? "bg-blue-500/20 text-blue-400"
+                        : "bg-green-500/20 text-green-400"
                     }`}>
                       {call.direction === "inbound" ? (
                         <PhoneIncoming className="w-4 h-4" />
@@ -1685,10 +1685,10 @@ const CallHistoryView = ({
                       )}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-gray-900 capitalize">
+                      <p className="text-sm font-medium text-foreground capitalize">
                         {call.direction} Call
                       </p>
-                      <p className="text-[11px] text-gray-400">
+                      <p className="text-[11px] text-muted-foreground">
                         {getTimeAgo(call.startedAt)} ·{" "}
                         {formatCallDuration(call.startedAt, call.endedAt)} ·{" "}
                         {call.messageCount} msg{call.messageCount !== 1 ? "s" : ""}
@@ -1697,10 +1697,10 @@ const CallHistoryView = ({
                   </div>
                   <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${
                     call.status === "ended"
-                      ? "bg-green-100 text-green-700"
+                      ? "bg-green-500/20 text-green-400"
                       : call.status === "active"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-gray-100 text-gray-600"
+                        ? "bg-blue-500/20 text-blue-400"
+                        : "bg-secondary text-muted-foreground"
                   }`}>
                     {call.status === "ended" ? "Completed" : call.status}
                   </span>

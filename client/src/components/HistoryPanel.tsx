@@ -151,10 +151,10 @@ const HistoryPanel = ({ isOpen, onClose, agentId, onRestore }: HistoryPanelProps
             </div>
           ) : versions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
-                <Save className="w-7 h-7 text-gray-300" />
+              <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-3">
+                <Save className="w-7 h-7 text-muted-foreground" />
               </div>
-              <p className="font-medium text-gray-700 mb-1">No version history yet</p>
+              <p className="font-medium text-foreground mb-1">No version history yet</p>
               <p className="text-xs text-muted-foreground max-w-[280px]">
                 Version history will appear here after you save your agent for the first time.
               </p>
@@ -164,31 +164,31 @@ const HistoryPanel = ({ isOpen, onClose, agentId, onRestore }: HistoryPanelProps
               {versions.map((version, index) => (
                 <div
                   key={version.id}
-                  className="group relative rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-all p-4"
+                  className="group relative rounded-xl border border-border hover:border-purple-500/50 hover:bg-purple-500/10 transition-all p-4"
                 >
                   <div className="flex items-start justify-between mb-2.5">
                     <div className="flex items-center gap-2.5">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
                         index === 0
-                          ? "bg-purple-100 text-purple-700"
-                          : "bg-gray-100 text-gray-600"
+                          ? "bg-purple-500/20 text-purple-400"
+                          : "bg-secondary text-muted-foreground"
                       }`}>
                         v{version.version_number}
                       </div>
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-medium text-gray-900">
+                          <p className="text-sm font-medium text-foreground">
                             {index === 0 ? "Latest" : `Version ${version.version_number}`}
                           </p>
                           {index === 0 && (
-                            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded-full">
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/20 text-green-400 rounded-full">
                               Current
                             </span>
                           )}
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
-                          <Clock className="w-3 h-3 text-gray-400" />
-                          <span className="text-[11px] text-gray-400">
+                          <Clock className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-[11px] text-muted-foreground">
                             {getTimeAgo(version.created_at)}
                           </span>
                         </div>
@@ -213,7 +213,7 @@ const HistoryPanel = ({ isOpen, onClose, agentId, onRestore }: HistoryPanelProps
                     )}
                   </div>
 
-                  <div className="flex items-center gap-3 text-[11px] text-gray-500 ml-[42px]">
+                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground ml-[42px]">
                     <div className="flex items-center gap-1">
                       <Layers className="w-3 h-3" />
                       <span>{version.node_count} nodes</span>
@@ -222,7 +222,7 @@ const HistoryPanel = ({ isOpen, onClose, agentId, onRestore }: HistoryPanelProps
                       <GitBranch className="w-3 h-3" />
                       <span>{version.edge_count} edges</span>
                     </div>
-                    <span className="text-gray-300">|</span>
+                    <span className="text-border">|</span>
                     <span>{format(new Date(version.created_at), "MMM d, yyyy h:mm a")}</span>
                   </div>
                 </div>
