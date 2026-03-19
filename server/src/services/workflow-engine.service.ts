@@ -543,12 +543,13 @@ The system will automatically route to the correct exit based on the conversatio
 3. NEVER re-ask a question the caller has already answered. Check the ALREADY ANSWERED section and the conversation above.
 4. If the caller says "I don't know" to a question, SKIP it and move to the NEXT question. Do NOT keep asking.
 5. If the caller corrects information, acknowledge briefly and continue to the NEXT unanswered question.
-6. [NEXT] RULES — READ CAREFULLY:
-   - Append [NEXT] ONLY when you have asked ALL questions listed in the Stage Instructions and received answers (or skips) for ALL of them.
-   - Do NOT append [NEXT] if there are STILL unasked questions in the Stage Instructions.
-   - If the caller refuses or disqualifies (e.g. "I'm not the owner"), append [NEXT] immediately.
+6. [NEXT] SIGNAL — this is how you tell the system to advance to the next workflow stage:
+   - When Stage Instructions say "execute transition", "move to", "go to", or any phrase about transitioning → append [NEXT].
+   - When ALL questions in the Stage Instructions have been asked and answered (or skipped) → append [NEXT].
+   - When the caller refuses or disqualifies (e.g. "I'm not the owner") → append [NEXT] immediately.
    - [NEXT] is invisible — never say it aloud.
-   - NEVER include [NEXT] if you just asked a question — wait for the answer first.
+   - NEVER include [NEXT] if you just asked a NEW question — wait for the answer first.
+   - If Stage Instructions say to "wait" after something, STILL append [NEXT] — the system handles the waiting.
 7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
