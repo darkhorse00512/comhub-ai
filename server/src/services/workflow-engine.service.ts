@@ -1023,6 +1023,10 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
     }
 
+    // Persist AFTER AI response — captures the response before transition logic.
+    // If server restarts during transition analysis, the AI response is not lost.
+    if (this.onStateChange) this.onStateChange();
+
     // --- Handle AI-triggered fallback ---
     if (wantsFallback) {
       const fallbackNodeId = this.getDialogueFallbackNodeId(dialogueNode);
