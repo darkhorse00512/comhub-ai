@@ -537,17 +537,19 @@ CONTEXT AWARENESS:
 This stage has these possible exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}
 The system will automatically route to the correct exit based on the conversation.
 
-### RESPONSE RULES:
-1. Follow the Stage Instructions step by step. Do NOT skip steps.
-2. If the Stage Instructions have multiple steps, complete them IN ORDER.
-3. Be natural and helpful. Ask one question at a time.
-4. NEVER re-ask a question the caller has already answered. Review the full conversation above before responding.
-5. If the caller corrects information, acknowledge the correction and continue to the NEXT unanswered question.
-6. When you have completed ALL objectives of this stage, append [NEXT] at the very end of your response.
-7. ALSO append [NEXT] immediately if the caller clearly disqualifies themselves or refuses to continue (e.g. says they are not the owner, not interested, wants to end the call). Give a brief polite response and append [NEXT].
-8. [NEXT] is invisible to the caller — never say it aloud, just append it.
-9. Do NOT include [NEXT] if you are still asking questions or the stage is still in progress.
-10. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+### RESPONSE RULES (HIGH PRIORITY — these override everything else):
+1. Follow the Stage Instructions step by step. Complete ALL steps IN ORDER.
+2. Ask ONE question at a time. Wait for the answer before asking the next.
+3. NEVER re-ask a question the caller has already answered. Check the ALREADY ANSWERED section and the conversation above.
+4. If the caller says "I don't know" to a question, SKIP it and move to the NEXT question. Do NOT keep asking.
+5. If the caller corrects information, acknowledge briefly and continue to the NEXT unanswered question.
+6. [NEXT] RULES — READ CAREFULLY:
+   - Append [NEXT] ONLY when you have asked ALL questions listed in the Stage Instructions and received answers (or skips) for ALL of them.
+   - Do NOT append [NEXT] if there are STILL unasked questions in the Stage Instructions.
+   - If the caller refuses or disqualifies (e.g. "I'm not the owner"), append [NEXT] immediately.
+   - [NEXT] is invisible — never say it aloud.
+   - NEVER include [NEXT] if you just asked a question — wait for the answer first.
+7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
     } else {
       prompt += `\n\n### CRITICAL RULES:
 1. Follow the stage instructions precisely.
@@ -1097,14 +1099,31 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     const cleanedTextTrimmed = text.trim();
     const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
 
-    // Determine effective completion signal:
-    // [NEXT] is only trusted when the AI is NOT asking a question.
-    const effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
+    // Count how many questions the AI has asked in this dialogue (assistant messages ending with ?)
+    const questionsAsked = this.state.dialogueHistory
+      .filter(m => m.role === 'assistant' && m.content.trim().endsWith('?'))
+      .length;
 
-    if (aiEndsWithQuestion && wantsToComplete) {
-      logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — suppressing completion signal', {
+    // Minimum turns before [NEXT] is honored: at least 3 turns, or more if many questions were asked.
+    // This prevents premature completion when the AI skips questions.
+    const MIN_TURNS_BEFORE_COMPLETE = 3;
+    const tooEarlyForCompletion = this.state.dialogueTurnCount < MIN_TURNS_BEFORE_COMPLETE;
+
+    // Determine effective completion signal:
+    // [NEXT] is only trusted when:
+    // 1. AI is NOT asking a question (no trailing "?")
+    // 2. Enough turns have passed (not premature)
+    let effectiveComplete = wantsToComplete && !aiEndsWithQuestion && !tooEarlyForCompletion;
+
+    if (wantsToComplete && !effectiveComplete) {
+      const reasons: string[] = [];
+      if (aiEndsWithQuestion) reasons.push('response ends with "?"');
+      if (tooEarlyForCompletion) reasons.push(`too early (turn ${this.state.dialogueTurnCount}/${MIN_TURNS_BEFORE_COMPLETE})`);
+      logger.info('WorkflowEngine: AI included [NEXT] but suppressed', {
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
+        questionsAsked,
+        reasons: reasons.join(', '),
       });
     }
 
@@ -1126,10 +1145,18 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           transition = validTransitionNames[0]; // default to first
         }
       }
+      // Log detailed transition info including the target node
+      const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
+      const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
       logger.info('WorkflowEngine: AI signaled completion, advancing', {
         transition,
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
+        questionsAsked,
+        targetNodeId: advanceTargetId,
+        targetLabel: advanceTarget?.data?.label,
+        targetType: advanceTarget?.data?.type || advanceTarget?.type,
+        aiResponse: text.substring(0, 100),
       });
     } else if (maxTurnsReached) {
       // Safety net: max turns exceeded — force advance.
