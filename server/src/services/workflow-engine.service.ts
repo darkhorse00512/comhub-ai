@@ -432,11 +432,12 @@ ROLE BOUNDARIES (CRITICAL):
 - Do NOT improvise, add pleasantries, or say things the Stage Instructions did not ask you to say.
 - When your stage objectives are complete, just stop. The system handles what comes next.
 
-BREVITY:
-- This is a real-time voice call converted to speech. Every extra word = delay.
-- MAX 1-2 short sentences per response. Keep it concise.
-- No unnecessary filler words or excessive pleasantries.
-- Get to the point. Be human and natural but concise.
+SPEECH STYLE:
+- This is a real-time voice call. Every extra word = delay for the caller.
+- MAX 1 short sentence per response. Be extremely concise.
+- Be formal, polite, and kind — but brief. No filler words, no extra pleasantries.
+- Never say "Unfortunately, many people feel the same way" or similar padding. Just ask the next question.
+- When the caller answers, acknowledge briefly (e.g. "Thank you.") then immediately ask the NEXT question.
 
 CONTEXT AWARENESS:
 - NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
@@ -660,29 +661,33 @@ The system will automatically route to the correct exit based on the conversatio
 
     if (qaPairs.length === 0) return null;
 
-    return `ALREADY SAID — You have already asked these questions and received answers. Do NOT repeat any of them. Say something NEW:\n${qaPairs.join('\n')}`;
+    return qaPairs.join('\n');
   }
 
   /**
    * Generate AI response using the full dialogue history.
-   * Injects a fresh "already answered" reminder to prevent question repetition.
+   * Updates the system prompt with a fresh "already answered" list before each call.
    */
   private async generateAIResponse(): Promise<string | null> {
     try {
       const messages: ChatMessage[] = [...this.state.dialogueHistory];
 
-      // Inject a fresh reminder of already-answered questions before the AI generates.
-      // This is a transient injection — NOT persisted in dialogueHistory.
+      // Update the system prompt (first message) with fresh answered Q&A.
+      // This is more reliable than injecting a separate system message —
+      // the AI pays most attention to the system prompt at position [0].
       const answeredSummary = this.buildAnsweredSummary();
-      if (answeredSummary) {
-        // Insert as a system message just before the last user message
-        const lastUserIdx = messages.length - 1;
-        messages.splice(lastUserIdx, 0, { role: 'system', content: answeredSummary });
+      if (answeredSummary && messages.length > 0 && messages[0].role === 'system') {
+        // Strip any previous ALREADY ANSWERED section and append fresh one
+        let sysContent = messages[0].content;
+        const markerIdx = sysContent.indexOf('\n\n### ALREADY ANSWERED');
+        if (markerIdx >= 0) sysContent = sysContent.substring(0, markerIdx);
+        sysContent += `\n\n### ALREADY ANSWERED — DO NOT re-ask these:\n${answeredSummary}\n\nYou MUST ask the NEXT unanswered question from the Stage Instructions. If you repeat a question listed above, the call will fail.`;
+        messages[0] = { role: 'system', content: sysContent };
       }
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 200, temperature: 0.3 }
+        { maxTokens: 150, temperature: 0.2 }
       );
 
       return aiResponse.text || null;
