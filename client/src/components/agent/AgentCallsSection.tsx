@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api, AgentCallHistoryItem } from "@/services/api";
+import CallResultsModal from "@/components/CallResultsModal";
 
 interface CallMessageItem {
   id: string;
@@ -59,6 +60,7 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
   const [selectedCall, setSelectedCall] = useState<AgentCallHistoryItem | null>(null);
   const [callMessages, setCallMessages] = useState<CallMessageItem[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [resultsModalCall, setResultsModalCall] = useState<AgentCallHistoryItem | null>(null);
 
   const loadCallHistory = async () => {
     setLoading(true);
@@ -133,8 +135,8 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                     selectedCall.direction === "inbound"
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-green-100 text-green-700"
+                      ? "bg-blue-500/20 text-blue-400"
+                      : "bg-green-500/20 text-green-400"
                   }`}>
                     {selectedCall.direction === "inbound" ? (
                       <PhoneIncoming className="w-5 h-5" />
@@ -151,39 +153,30 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                     </p>
                   </div>
                 </div>
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                  selectedCall.status === "ended"
-                    ? "bg-green-100 text-green-700"
-                    : selectedCall.status === "active"
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-gray-100 text-gray-600"
-                }`}>
-                  {selectedCall.status === "ended" ? "Completed" : selectedCall.status}
-                </span>
-              </div>
-            </div>
-
-            {/* Collected Data */}
-            {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
-              <div className="rounded-lg border border-purple-200 bg-purple-50/50 p-3 mb-4 shrink-0">
-                <p className="text-xs font-medium text-purple-700 mb-2 flex items-center gap-1.5">
-                  <ClipboardList className="w-3.5 h-3.5" />
-                  Collected Information
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
-                  {Object.entries(selectedCall.collectedData).map(([key, value]) => (
-                    <div key={key} className="flex flex-col">
-                      <span className="text-[10px] text-purple-500 capitalize">
-                        {key.replace(/_/g, " ")}
-                      </span>
-                      <span className="text-xs text-gray-800 font-medium truncate">
-                        {String(value)}
-                      </span>
-                    </div>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-purple-400 border-purple-500/30 hover:bg-purple-500/10"
+                      onClick={() => setResultsModalCall(selectedCall)}
+                    >
+                      <ClipboardList className="w-3.5 h-3.5" />
+                      Call Results
+                    </Button>
+                  )}
+                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                    selectedCall.status === "ended"
+                      ? "bg-green-500/20 text-green-400"
+                      : selectedCall.status === "active"
+                        ? "bg-blue-500/20 text-blue-400"
+                        : "bg-secondary text-muted-foreground"
+                  }`}>
+                    {selectedCall.status === "ended" ? "Completed" : selectedCall.status}
+                  </span>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Messages */}
             {loadingMessages ? (
@@ -207,8 +200,8 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                       className={`flex gap-2.5 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                     >
                       {msg.role === "ai" && (
-                        <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Bot className="w-4 h-4 text-purple-600" />
+                        <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Bot className="w-4 h-4 text-purple-400" />
                         </div>
                       )}
                       <div
@@ -228,8 +221,8 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                         </span>
                       </div>
                       {msg.role === "user" && (
-                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <User className="w-4 h-4 text-blue-600" />
+                        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <User className="w-4 h-4 text-blue-400" />
                         </div>
                       )}
                     </div>
@@ -262,17 +255,19 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
               <ScrollArea className="h-full">
                 <div className="space-y-2 pr-2 pb-4">
                   {calls.map((call) => (
-                    <button
+                    <div
                       key={call.id}
-                      onClick={() => handleSelectCall(call)}
-                      className="w-full group rounded-xl border border-border hover:border-primary/30 hover:bg-primary/5 transition-all p-4 text-left"
+                      className="group rounded-xl border border-border hover:border-primary/30 hover:bg-primary/5 transition-all p-4"
                     >
                       <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                        <button
+                          onClick={() => handleSelectCall(call)}
+                          className="flex items-center gap-3 text-left flex-1 min-w-0"
+                        >
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                             call.direction === "inbound"
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-green-100 text-green-700"
+                              ? "bg-blue-500/20 text-blue-400"
+                              : "bg-green-500/20 text-green-400"
                           }`}>
                             {call.direction === "inbound" ? (
                               <PhoneIncoming className="w-5 h-5" />
@@ -280,7 +275,7 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                               <PhoneOutgoing className="w-5 h-5" />
                             )}
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className="text-sm font-medium text-foreground capitalize">
                               {call.direction} Call
                             </p>
@@ -290,26 +285,29 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
                               {call.messageCount} msg{call.messageCount !== 1 ? "s" : ""}
                             </p>
                           </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
+                        </button>
+                        <div className="flex flex-col items-end gap-1.5 shrink-0 ml-3">
                           <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${
                             call.status === "ended"
-                              ? "bg-green-100 text-green-700"
+                              ? "bg-green-500/20 text-green-400"
                               : call.status === "active"
-                                ? "bg-blue-100 text-blue-700"
-                                : "bg-gray-100 text-gray-600"
+                                ? "bg-blue-500/20 text-blue-400"
+                                : "bg-secondary text-muted-foreground"
                           }`}>
                             {call.status === "ended" ? "Completed" : call.status}
                           </span>
                           {call.collectedData && Object.keys(call.collectedData).length > 0 && (
-                            <span className="text-[10px] text-purple-500 flex items-center gap-0.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setResultsModalCall(call); }}
+                              className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-0.5 transition-colors"
+                            >
                               <ClipboardList className="w-3 h-3" />
-                              {Object.keys(call.collectedData).length} fields
-                            </span>
+                              {Object.keys(call.collectedData).length} results
+                            </button>
                           )}
                         </div>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </ScrollArea>
@@ -317,6 +315,17 @@ const AgentCallsSection = ({ agentId }: AgentCallsSectionProps) => {
           </div>
         )}
       </motion.div>
+
+      {/* Call Results Modal */}
+      {resultsModalCall?.collectedData && (
+        <CallResultsModal
+          isOpen={!!resultsModalCall}
+          onClose={() => setResultsModalCall(null)}
+          data={resultsModalCall.collectedData}
+          callDirection={resultsModalCall.direction}
+          callStatus={resultsModalCall.status}
+        />
+      )}
     </div>
   );
 };

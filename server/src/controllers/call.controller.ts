@@ -103,7 +103,7 @@ export class CallController {
 
       res.status(200).json({
         success: true,
-        callSessions: callSessions.map((session) => ({
+        callSessions: callSessions.map((session: any) => ({
           id: session.id,
           status: session.status,
           direction: session.direction,
@@ -112,6 +112,7 @@ export class CallController {
           startedAt: session.startedAt,
           endedAt: session.endedAt,
           recordingUrl: recordings.get(session.id) || null,
+          collectedData: session.collectedData || session.collected_data || null,
         })),
       });
     } catch (error) {

@@ -33,6 +33,7 @@ import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
 import { Node, Edge } from "@/components/FlowCanvas";
+import CallResultsModal from "@/components/CallResultsModal";
 
 interface AgentCallHistoryItem {
   id: string;
@@ -162,6 +163,7 @@ const TestAgentModal = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState<AgentCallHistoryItem | null>(null);
   const [selectedCallMessages, setSelectedCallMessages] = useState<CallMessageItem[]>([]);
+  const [resultsModalCall, setResultsModalCall] = useState<AgentCallHistoryItem | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1348,6 +1350,7 @@ const TestAgentModal = ({
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-auto">
         <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
@@ -1397,6 +1400,7 @@ const TestAgentModal = ({
               selectedCallMessages={selectedCallMessages}
               loadingMessages={loadingMessages}
               onSelectCall={selectHistoryCall}
+              onShowResults={(call) => setResultsModalCall(call)}
             />
           ) : (
           <Tabs
@@ -1501,6 +1505,18 @@ const TestAgentModal = ({
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Call Results Modal */}
+    {resultsModalCall?.collectedData && (
+      <CallResultsModal
+        isOpen={!!resultsModalCall}
+        onClose={() => setResultsModalCall(null)}
+        data={resultsModalCall.collectedData}
+        callDirection={resultsModalCall.direction}
+        callStatus={resultsModalCall.status}
+      />
+    )}
+    </>
   );
 };
 
@@ -1512,6 +1528,7 @@ interface CallHistoryViewProps {
   selectedCallMessages: CallMessageItem[];
   loadingMessages: boolean;
   onSelectCall: (call: AgentCallHistoryItem) => void;
+  onShowResults?: (call: AgentCallHistoryItem) => void;
 }
 
 const CallHistoryView = ({
@@ -1521,6 +1538,7 @@ const CallHistoryView = ({
   selectedCallMessages,
   loadingMessages,
   onSelectCall,
+  onShowResults,
 }: CallHistoryViewProps) => {
   const formatCallDuration = (startedAt: string, endedAt: string | null): string => {
     if (!endedAt) return "0:00";
@@ -1571,23 +1589,16 @@ const CallHistoryView = ({
         </div>
 
         {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
-          <div className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 mb-3 shrink-0">
-            <p className="text-xs font-medium text-purple-300 mb-2 flex items-center gap-1.5">
+          <div className="mb-3 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-purple-400 border-purple-500/30 hover:bg-purple-500/10"
+              onClick={() => onShowResults?.(selectedCall)}
+            >
               <ClipboardList className="w-3.5 h-3.5" />
-              Collected Information
-            </p>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-              {Object.entries(selectedCall.collectedData).map(([key, value]) => (
-                <div key={key} className="flex flex-col">
-                  <span className="text-[10px] text-purple-400 capitalize">
-                    {key.replace(/_/g, " ")}
-                  </span>
-                  <span className="text-xs text-foreground font-medium truncate">
-                    {String(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
+              Call Results ({Object.keys(selectedCall.collectedData).length} fields)
+            </Button>
           </div>
         )}
 

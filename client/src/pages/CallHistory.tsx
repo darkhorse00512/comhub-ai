@@ -3,10 +3,11 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { ArrowLeft, Phone, Clock, Play, Pause, CheckCircle, XCircle, AlertCircle, Loader2, Volume2 } from "lucide-react";
+import { ArrowLeft, Phone, Clock, Play, Pause, CheckCircle, XCircle, AlertCircle, Loader2, Volume2, ClipboardList } from "lucide-react";
 import { format } from "date-fns";
 import { api, type CallHistoryItem } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import CallResultsModal from "@/components/CallResultsModal";
 
 const formatDuration = (startedAt: string, endedAt: string | null): string => {
   if (!endedAt) return "0:00";
@@ -36,6 +37,7 @@ const CallHistory = () => {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [resultsModalCall, setResultsModalCall] = useState<CallHistoryItem | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -255,6 +257,19 @@ const CallHistory = () => {
                   </div>
                 </div>
 
+                {selectedCall.collectedData && Object.keys(selectedCall.collectedData).length > 0 && (
+                  <div className="mb-6">
+                    <Button
+                      variant="outline"
+                      className="gap-2 text-purple-400 border-purple-500/30 hover:bg-purple-500/10"
+                      onClick={() => setResultsModalCall(selectedCall)}
+                    >
+                      <ClipboardList className="w-4 h-4" />
+                      Call Results ({Object.keys(selectedCall.collectedData).length} fields)
+                    </Button>
+                  </div>
+                )}
+
                 {loadingMessages ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -356,6 +371,17 @@ const CallHistory = () => {
           </motion.div>
         </div>
       </main>
+
+      {/* Call Results Modal */}
+      {resultsModalCall?.collectedData && (
+        <CallResultsModal
+          isOpen={!!resultsModalCall}
+          onClose={() => setResultsModalCall(null)}
+          data={resultsModalCall.collectedData}
+          callDirection={resultsModalCall.direction}
+          callStatus={resultsModalCall.status}
+        />
+      )}
     </div>
   );
 };

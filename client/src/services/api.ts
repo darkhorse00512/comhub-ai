@@ -24,6 +24,7 @@ interface CallHistoryItem {
   calleeNumber: string | null;
   transcript?: string;
   recordingUrl?: string;
+  collectedData?: Record<string, any> | null;
 }
 
 export interface AgentCallHistoryItem {
