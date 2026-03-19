@@ -870,19 +870,27 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     }
 
     // GUARD: If the current dialogue was already completed (stale state from disk restore),
-    // do NOT process messages in it. Instead, re-execute from this node to advance past it.
+    // do NOT process messages in it. End the workflow — we cannot safely determine
+    // which transition was originally used, and picking a random edge causes misrouting.
     if (this.state.completedDialogueNodeIds?.includes(dialogueNode.id)) {
-      logger.warn('WorkflowEngine: processMessage called in already-completed dialogue — re-executing from current position', {
+      logger.error('WorkflowEngine: processMessage in already-completed dialogue — ending workflow to prevent misrouting', {
         nodeId: dialogueNode.id,
         nodeLabel: dialogueNode.data?.label,
         completedDialogues: this.state.completedDialogueNodeIds,
       });
       this.state.isInDialogue = false;
       this.state.currentDialogueNodeId = null;
-      this.state.currentNodeId = dialogueNode.id;
-      // Add the user's message to context so it's not lost
-      this.state.conversationContext.push({ role: 'user', text: userMessage });
-      return this.executeFromCurrent(messages);
+      this.state.isComplete = true;
+      messages.push({
+        type: 'system',
+        text: `Session state was lost (server may have restarted). Please start a new test call.`,
+      });
+      return {
+        messages,
+        waitingForInput: false,
+        isComplete: true,
+        currentStage: 'Error',
+      };
     }
 
     // Collect the valid transition names for this dialogue node
@@ -1065,17 +1073,30 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
       const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
 
-      // Safety: if transition resolved to null, stay in dialogue
+      // If the transition edge isn't connected, end the workflow.
+      // Do NOT stay in dialogue — that creates an infinite loop where
+      // the AI keeps signaling [NEXT] but the engine can't advance.
       if (!nextNodeId) {
-        logger.error('WorkflowEngine: Transition resolved to null, staying in dialogue', {
+        logger.error('WorkflowEngine: Transition edge not connected — ending workflow', {
           transition,
           fromNode: dialogueNode.id,
           fromLabel: dialogueNode.data?.label,
         });
+        if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+        if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
+          this.state.completedDialogueNodeIds.push(dialogueNode.id);
+        }
+        this.state.isInDialogue = false;
+        this.state.currentDialogueNodeId = null;
+        this.state.isComplete = true;
+        messages.push({
+          type: 'system',
+          text: `Workflow ended: "${transition}" transition from "${dialogueNode.data?.label}" is not connected to any node.`,
+        });
         return {
           messages,
-          waitingForInput: true,
-          isComplete: false,
+          waitingForInput: false,
+          isComplete: true,
           currentStage: dialogueNode.data?.label || 'AI Dialogue',
         };
       }
@@ -1218,15 +1239,24 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
         case 'dialogue': {
           // GUARD: If this dialogue was already completed (transitioned out of),
-          // do NOT re-enter it — skip to its default next node.
-          // The visitedNodeIds set will catch any cycles.
+          // do NOT re-enter it and do NOT pick a random edge. End the execution
+          // chain — the workflow reached this node through a wrong path.
           if (this.state.completedDialogueNodeIds?.includes(node.id)) {
-            logger.warn('WorkflowEngine: Skipping already-completed dialogue', {
+            logger.error('WorkflowEngine: Reached already-completed dialogue — stopping execution', {
               nodeId: node.id,
               nodeLabel: node.data?.label,
+              completedDialogues: this.state.completedDialogueNodeIds,
+              visitedInThisChain: Array.from(visitedNodeIds),
             });
-            this.state.currentNodeId = this.getNextNodeId(node.id);
-            break;
+            // Don't pick a random edge — just end this execution chain gracefully.
+            // The workflow either completed naturally or hit a routing dead end.
+            this.state.currentNodeId = null;
+            this.state.isComplete = true;
+            messages.push({
+              type: 'system',
+              text: `Workflow ended (reached already-completed stage "${node.data?.label}")`,
+            });
+            return { messages, waitingForInput: false, isComplete: true, currentStage: node.data?.label || 'Error' };
           }
 
           // Enter dialogue mode — user STAYS here until a valid transition is triggered
