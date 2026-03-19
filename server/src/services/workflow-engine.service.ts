@@ -619,15 +619,13 @@ The system will automatically route to the correct exit based on the conversatio
         // Skip trigger messages injected by the engine
         if (userText.startsWith('Continue from where')) continue;
 
-        // Extract a short version of the question
-        const question = agentText.split(/[.!?]/)[0]?.trim() || agentText.substring(0, 80);
-        qaPairs.push(`  Agent asked: "${question}" → Caller answered: "${userText}"`);
+        qaPairs.push(`  - You asked: "${agentText.substring(0, 120)}" → Caller said: "${userText}"`);
       }
     }
 
-    if (qaPairs.length < 2) return null; // Need at least 2 Q&A pairs to be useful
+    if (qaPairs.length === 0) return null;
 
-    return `CRITICAL REMINDER — These questions have ALREADY been asked and answered. NEVER re-ask them. Continue to the NEXT unanswered question:\n${qaPairs.join('\n')}`;
+    return `ALREADY SAID — You have already asked these questions and received answers. Do NOT repeat any of them. Say something NEW:\n${qaPairs.join('\n')}`;
   }
 
   /**
@@ -649,7 +647,7 @@ The system will automatically route to the correct exit based on the conversatio
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 200, temperature: 0.4 }
+        { maxTokens: 200, temperature: 0.3 }
       );
 
       return aiResponse.text || null;
