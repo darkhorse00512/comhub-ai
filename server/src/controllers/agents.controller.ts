@@ -738,7 +738,7 @@ IMPORTANT: You are IMPROVING an existing workflow. Analyze the current workflow 
 - Keep what works well (good node structure, transitions, stage messages)
 - Fix issues (missing connections, poor prompts, missing error handling)
 - Add missing pieces (field_setter nodes, fallback nodes, better dialogue instructions)
-- Improve dialogue stageMessage instructions to be more detailed and effective
+- Improve dialogue stageMessage instructions to be concise bullet-point lists (not long paragraphs)
 - Preserve existing node IDs where possible so connections are maintained
 - Output the COMPLETE improved workflow (not just the changes)
 ` : ''}
@@ -756,8 +756,8 @@ IMPORTANT: You are IMPROVING an existing workflow. Analyze the current workflow 
 3. scripted - Exact word-for-word message (use "script" field)
    {"id": "greeting", "type": "scripted", "position": {"x": 650, "y": 150}, "data": {"label": "Welcome", "script": "Thank you for calling..."}}
 
-4. dialogue - AI conversation stage with instructions
-   {"id": "main-chat", "type": "dialogue", "position": {"x": 1000, "y": 150}, "data": {"label": "Main Conversation", "stageMessage": "Your goal is to understand the customer's needs. Ask clarifying questions. Be empathetic and professional. Collect their name and reason for calling.", "maxTurns": 15}}
+4. dialogue - AI conversation stage with instructions (stageMessage = short bullet-point guidance, NOT a script to read aloud. Each AI response on the call must be MAX 1 short sentence.)
+   {"id": "main-chat", "type": "dialogue", "position": {"x": 1000, "y": 150}, "data": {"label": "Main Conversation", "stageMessage": "- Ask what the customer needs help with\n- Collect their name\n- Collect their reason for calling", "maxTurns": 15}}
 
 5. field_setter - Store a data value
    {"id": "set-name", "type": "field_setter", "position": {"x": 650, "y": 100}, "data": {"label": "Store Name", "fieldName": "customer_name", "valueType": "text", "value": ""}}
@@ -809,12 +809,13 @@ AgentSetup → CallDirection(outbound) → Scripted(introduction + permission) �
 
 ### Key principles:
 - Always start with a warm, professional scripted greeting that mentions the business name
-- Dialogue nodes need DETAILED stageMessage instructions (3-5 sentences minimum) telling the AI exactly what to accomplish
+- Dialogue stageMessage instructions should list WHAT to ask/accomplish as bullet points, but each individual AI response during the call must be MAX 1 short sentence. The stageMessage is internal guidance — the AI must NOT read it out loud as a script. Keep stageMessages concise (2-3 short bullet points max)
 - Include specific field_setter nodes for each piece of information to collect
 - Always include a fallback node for error recovery
 - Junction conditions should check meaningful business logic
-- Closing scripts should thank the caller and summarize next steps
-- SystemMessage in agentSetup should be 3-5 sentences defining the agent's role, tone, and boundaries
+- Closing scripts must be ultra-short (1 sentence max, under 15 words). Example: "Thank you, our team will contact you soon. Goodbye!"
+- NEVER put long explanations in closing scripts — no listing of steps, options, or details
+- SystemMessage in agentSetup should be 2-3 sentences defining the agent's role, tone, and boundaries
 
 ## FIELDS (workflow variables)
 Include a "fields" array in your output. Fields are variables used across the workflow via {{fieldName}} syntax in scripted messages and dialogue stageMessages.
@@ -872,7 +873,7 @@ ${fieldSetterInstructions}
 QUALITY REQUIREMENTS:
 1. The systemMessage in agentSetup MUST mention "${businessInfo.businessName}" by name and describe the agent's role for ${businessInfo.industry}
 2. All scripted messages must be warm, professional, and specific to ${businessInfo.industry} (not generic)
-3. Dialogue stageMessage instructions must be DETAILED (what to ask, how to respond, what information to gather)
+3. Dialogue stageMessage instructions must be concise bullet points (what to ask, what info to gather). Each bullet = 1 short question. NEVER write long paragraphs — the AI speaks each response as 1 short sentence on a live call
 4. Generate 8-15 nodes total for a complete, realistic workflow
 5. Every node must be connected - no orphan nodes
 6. Include a fallback node for error handling

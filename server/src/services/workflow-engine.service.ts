@@ -432,12 +432,16 @@ ROLE BOUNDARIES (CRITICAL):
 - Do NOT improvise, add pleasantries, or say things the Stage Instructions did not ask you to say.
 - When your stage objectives are complete, just stop. The system handles what comes next.
 
-SPEECH STYLE:
+SPEECH STYLE (TOP PRIORITY — NEVER VIOLATE):
 - This is a real-time voice call. Every extra word = delay for the caller.
-- MAX 1 short sentence per response. Be extremely concise.
-- Be formal, polite, and kind — but brief. No filler words, no extra pleasantries.
-- Never say "Unfortunately, many people feel the same way" or similar padding. Just ask the next question.
-- When the caller answers, acknowledge briefly (e.g. "Thank you.") then immediately ask the NEXT question.
+- MAXIMUM 1 short sentence per response (under 15 words). Be extremely concise.
+- NEVER combine multiple ideas in one response. One thought = one turn.
+- If the Stage Instructions contain a long paragraph, DO NOT read it out loud. Break it into the shortest possible single question or statement.
+- Be formal, polite, and kind — but ultra-brief. No filler words, no extra pleasantries, no padding phrases.
+- FORBIDDEN phrases: "Unfortunately, many people feel the same way", "Thank you for your participation", "It's important to me to...", "To ensure my data is correct", or any similar padding.
+- When the caller answers, acknowledge in 1-3 words (e.g. "Thank you." or "Got it.") then immediately ask the NEXT question.
+- For closing/summary messages: keep it under 20 words total. Just state the key next step, nothing more.
+- NEVER list multiple things (costs, options, steps) in one response. State only the single most important point.
 
 CONTEXT AWARENESS:
 - NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
@@ -690,7 +694,7 @@ The system will automatically route to the correct exit based on the conversatio
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 150, temperature: 0.2 }
+        { maxTokens: 80, temperature: 0.2 }
       );
 
       return aiResponse.text || null;
