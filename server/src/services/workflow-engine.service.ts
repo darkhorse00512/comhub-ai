@@ -800,6 +800,89 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     }
   }
 
+  /**
+   * Proactive stage completion check — runs IN PARALLEL with AI response generation.
+   * Determines if the user's latest message completes the current stage objective,
+   * even when the Response AI forgets to signal [NEXT].
+   * Uses gpt-4o-mini (~200-300ms) so it finishes before the main AI call (~2-4s).
+   */
+  private async checkStageCompletion(
+    node: WorkflowNode,
+    userMessage: string,
+  ): Promise<string | null> {
+    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+    if (transitions.length === 0) return null;
+
+    const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
+    const transitionNames = transitions.map(t => t.name);
+
+    // Only include messages from THIS stage to avoid cross-stage confusion
+    const stageContext = this.state.conversationContext
+      .filter(e => e.nodeLabel === node.data?.label)
+      .slice(-12);
+
+    const prompt = `Analyze if this call stage has completed its objective.
+
+STAGE: "${node.data?.label}"
+STAGE INSTRUCTIONS:
+${stageMessage}
+
+TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
+
+CONVERSATION SO FAR:
+${stageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
+
+Has the stage objective been met? Consider:
+- Have ALL required questions been asked AND answered?
+- Has a specific exit condition been triggered (e.g., caller confirmed identity, caller refused)?
+- Are there still unanswered steps in the instructions?
+- If the stage has multiple sequential steps, ALL must be completed before advancing.
+
+If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
+
+    try {
+      const result = await gptService.generateWithCustomPrompt(
+        prompt,
+        'Output only NONE or a transition name. Nothing else.',
+        { maxTokens: 20, temperature: 0.1, model: 'gpt-4o-mini' }
+      );
+
+      const answer = (result.text || '').trim().replace(/['"]/g, '');
+
+      if (!answer || answer.toUpperCase() === 'NONE') return null;
+
+      const matched = transitions.find(
+        t => t.name.toLowerCase() === answer.toLowerCase()
+      );
+
+      if (matched) {
+        logger.info('WorkflowEngine: Proactive completion check detected stage is done', {
+          nodeLabel: node.data?.label,
+          transition: matched.name,
+          userMessage: userMessage.substring(0, 50),
+        });
+      }
+
+      return matched ? matched.name : null;
+    } catch (error) {
+      logger.error('WorkflowEngine: Stage completion check failed', { error });
+      return null;
+    }
+  }
+
+  /** Brief acknowledgment for when the stage completes via proactive check */
+  private getBriefAcknowledgment(): string {
+    const lang = this.detectLanguage();
+    const acks: Record<string, string> = {
+      en: 'Thank you.',
+      de: 'Danke.',
+      es: 'Gracias.',
+      fr: 'Merci.',
+      it: 'Grazie.',
+    };
+    return acks[lang] || acks.en;
+  }
+
   // --- Main execution ---
 
   /**
@@ -1064,58 +1147,114 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     // - Without this, a restart loads stale state from the previous turn
     this.persistState();
 
-    // Generate AI response using full conversation history
-    const aiResponse = await this.generateAIResponse();
+    // Generate AI response AND proactive stage completion check IN PARALLEL.
+    // The completion check uses gpt-4o-mini (~200-300ms) — finishes well before
+    // the main AI call (~2-4s), so this adds ZERO extra latency.
+    const [aiResponse, proactiveTransition] = await Promise.all([
+      this.generateAIResponse(),
+      validTransitionNames.length > 0
+        ? this.checkStageCompletion(dialogueNode, userMessage)
+        : Promise.resolve(null),
+    ]);
 
     if (!aiResponse) {
-      // AI failed — keep dialogue open, ask user to repeat
-      const fallback = this.getLanguageAwareFallback('error');
-      messages.push({ type: 'ai', text: fallback, nodeLabel: dialogueNode.data?.label });
-      this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
-      this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: dialogueNode.data?.label });
-
-      // Stay in dialogue — don't exit just because of a temporary AI error
-      return {
-        messages,
-        waitingForInput: true,
-        isComplete: false,
-        currentStage: dialogueNode.data?.label || 'AI Dialogue',
-      };
-    }
-
-    // Clean the AI response — strip any transition/control tags the AI may have included
-    const parsed = parseAIResponse(aiResponse, validTransitionNames);
-    const sentences = splitIntoSentences(parsed.text);
-    const text = parsed.text; // full text for transition analysis
-    const wantsFallback = parsed.wantsFallback;
-
-    logger.info('WorkflowEngine: Dialogue AI response', {
-      rawResponse: aiResponse.substring(0, 150),
-      cleanedText: text.substring(0, 100),
-      wantsFallback,
-      sentenceCount: sentences.length,
-      turnCount: this.state.dialogueTurnCount,
-      nodeLabel: dialogueNode.data?.label,
-    });
-
-    // Deliver each sentence as a separate message for natural pacing
-    for (const sentence of sentences) {
-      if (sentence) {
-        messages.push({
-          type: 'ai',
-          text: sentence,
-          nodeLabel: dialogueNode.data?.label,
-        });
-        this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: dialogueNode.data?.label });
+      // AI failed — if proactive check found a transition, use a brief ack and advance
+      if (proactiveTransition) {
+        const ack = this.getBriefAcknowledgment();
+        messages.push({ type: 'ai', text: ack, nodeLabel: dialogueNode.data?.label });
+        this.state.conversationContext.push({ role: 'agent', text: ack, nodeLabel: dialogueNode.data?.label });
+        this.state.dialogueHistory.push({ role: 'assistant', content: ack });
+        // Fall through to transition logic below with proactiveTransition set
+      } else {
+        // AI failed and no proactive transition — keep dialogue open
+        const fallback = this.getLanguageAwareFallback('error');
+        messages.push({ type: 'ai', text: fallback, nodeLabel: dialogueNode.data?.label });
+        this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
+        this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: dialogueNode.data?.label });
+        return {
+          messages,
+          waitingForInput: true,
+          isComplete: false,
+          currentStage: dialogueNode.data?.label || 'AI Dialogue',
+        };
       }
     }
-    // Store the full response in dialogue history (AI needs full context)
-    if (text) {
-      this.state.dialogueHistory.push({ role: 'assistant', content: text });
+
+    // --- Parse AI response and determine what to output ---
+    let text = '';
+    let wantsFallback = false;
+    let wantsToComplete = false;
+    let effectiveComplete = false;
+
+    if (aiResponse) {
+      const parsed = parseAIResponse(aiResponse, validTransitionNames);
+      const allSentences = splitIntoSentences(parsed.text);
+      text = parsed.text;
+      wantsFallback = parsed.wantsFallback;
+
+      // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
+      wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
+      const cleanedTextTrimmed = text.trim();
+      const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
+      effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
+
+      if (aiEndsWithQuestion && wantsToComplete) {
+        logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — suppressing', {
+          nodeLabel: dialogueNode.data?.label,
+          turnCount: this.state.dialogueTurnCount,
+        });
+      }
+
+      // Determine which sentences to output:
+      // If proactive check says stage is complete but AI didn't signal [NEXT],
+      // the AI may have generated off-topic content (e.g. asking questions from
+      // a later stage). Truncate to only the acknowledgment part.
+      let outputSentences: string[];
+      if (proactiveTransition && !effectiveComplete) {
+        // Only keep non-question sentences (acknowledgments like "Thank you.")
+        const ackOnly = allSentences.filter(s => !s.trim().endsWith('?'));
+        if (ackOnly.length > 0) {
+          outputSentences = ackOnly.slice(0, 1); // max 1 acknowledgment
+        } else {
+          // AI only generated questions — use a brief ack instead
+          outputSentences = [this.getBriefAcknowledgment()];
+        }
+        logger.info('WorkflowEngine: Truncated AI response (proactive completion)', {
+          nodeLabel: dialogueNode.data?.label,
+          originalSentences: allSentences.length,
+          outputSentences: outputSentences.length,
+          droppedQuestions: allSentences.filter(s => s.trim().endsWith('?')).map(s => s.substring(0, 60)),
+        });
+      } else {
+        outputSentences = allSentences;
+      }
+
+      logger.info('WorkflowEngine: Dialogue AI response', {
+        rawResponse: aiResponse.substring(0, 150),
+        cleanedText: text.substring(0, 100),
+        wantsFallback,
+        effectiveComplete,
+        proactiveTransition,
+        sentenceCount: outputSentences.length,
+        turnCount: this.state.dialogueTurnCount,
+        nodeLabel: dialogueNode.data?.label,
+      });
+
+      // Deliver sentences as messages
+      for (const sentence of outputSentences) {
+        if (sentence) {
+          messages.push({ type: 'ai', text: sentence, nodeLabel: dialogueNode.data?.label });
+          this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: dialogueNode.data?.label });
+        }
+      }
+      // Store in dialogue history (use what was actually output, not the full AI text)
+      const outputText = outputSentences.filter(Boolean).join(' ');
+      if (outputText) {
+        this.state.dialogueHistory.push({ role: 'assistant', content: outputText });
+      }
     }
 
     // Persist AFTER AI response — captures the response before transition logic.
-    // If server restarts during transition analysis, the AI response is not lost.
     this.persistState();
 
     // --- Handle AI-triggered fallback ---
@@ -1128,8 +1267,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         this.state.currentNodeId = fallbackNodeId;
         return this.executeFromCurrent(messages);
       }
-      // No fallback connected — STAY in the dialogue, do NOT fall through to transition logic.
-      // Use a language-aware retry message instead of letting the engine navigate away.
+      // No fallback connected — STAY in the dialogue
       logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected — staying in dialogue');
       const retryMsg = this.getLanguageAwareFallback('retry');
       messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
@@ -1146,66 +1284,56 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
     // --- Transition decision logic ---
     //
-    // Architecture:
-    //   - The RESPONSE AI decides WHEN the stage is complete (via [NEXT] signal).
-    //     It has full conversation context and stage instructions, so it knows best.
-    //   - The TRANSITION ANALYZER decides WHERE to go (which named transition).
-    //     It's a focused routing call that maps the outcome to the right exit.
-    //   - EARLY EXIT transitions (e.g. "Not Owner", "No Need", "End") should fire
-    //     immediately when the analyzer detects them — they don't need [NEXT].
-    //     Convention: the FIRST transition is the "happy path" completion (e.g. "Confirmed",
-    //     "Continue"). All other transitions are early exits.
+    // Two authorities can trigger advancement:
+    //   1. RESPONSE AI signals [NEXT] — it explicitly says the stage is done.
+    //   2. PROACTIVE CHECK — a parallel gpt-4o-mini call determined the stage
+    //      objective was met, even though the Response AI forgot [NEXT].
+    //      This prevents the AI from staying stuck or going off-topic.
+    //   The TRANSITION ANALYZER decides WHERE to go (which named transition).
     //
     let transition: string | null = null;
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
-
-    // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
-    const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
-    const cleanedTextTrimmed = text.trim();
-    const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
-
-    // Determine effective completion signal:
-    // [NEXT] is only trusted when the AI is NOT asking a question (no trailing "?").
-    const effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
-
-    if (aiEndsWithQuestion && wantsToComplete) {
-      logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — suppressing', {
-        nodeLabel: dialogueNode.data?.label,
-        turnCount: this.state.dialogueTurnCount,
-      });
-    }
-
-    // --- Transition decision ---
-    //
-    // The RESPONSE AI is the SOLE authority on WHEN to advance (via [NEXT]).
-    // The TRANSITION ANALYZER only decides WHERE to go (which transition).
-    // This prevents the analyzer from independently misfiring transitions.
-    //
     let shouldAdvance = false;
 
     if (effectiveComplete) {
       // Response AI signaled [NEXT] and is NOT asking a question → stage is done.
-      // Run the analyzer to determine WHICH transition to take.
       shouldAdvance = true;
       if (validTransitionNames.length > 0) {
-        transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+        // Use proactiveTransition if available (already computed), else run analyzer
+        if (proactiveTransition) {
+          transition = proactiveTransition;
+        } else {
+          transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+        }
         if (!transition) {
           transition = validTransitionNames[0]; // default to first
         }
       }
-      // Log transition with visible message so user can see routing
       const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
       const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
       logger.info('WorkflowEngine: AI signaled completion, advancing', {
         transition,
         nodeLabel: dialogueNode.data?.label,
         turnCount: this.state.dialogueTurnCount,
-        targetNodeId: advanceTargetId,
         targetLabel: advanceTarget?.data?.label,
-        targetType: advanceTarget?.data?.type || advanceTarget?.type,
       });
-      // Show visible routing message to help debug
+      messages.push({
+        type: 'system',
+        text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
+      });
+    } else if (proactiveTransition) {
+      // Proactive check detected stage completion — AI forgot [NEXT].
+      shouldAdvance = true;
+      transition = proactiveTransition;
+      const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition);
+      const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
+      logger.info('WorkflowEngine: Proactive check triggered advancement (AI missed [NEXT])', {
+        transition,
+        nodeLabel: dialogueNode.data?.label,
+        turnCount: this.state.dialogueTurnCount,
+        targetLabel: advanceTarget?.data?.label,
+      });
       messages.push({
         type: 'system',
         text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
@@ -1221,7 +1349,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       }
       messages.push({ type: 'system', text: `Max turns reached (${maxTurns}), advancing via "${transition}"` });
     }
-    // else: stay in dialogue — response AI hasn't signaled completion yet.
+    // else: stay in dialogue — neither AI nor proactive check signaled completion.
 
     if (shouldAdvance) {
 
