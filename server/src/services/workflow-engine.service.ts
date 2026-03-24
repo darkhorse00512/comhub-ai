@@ -85,6 +85,36 @@ function evaluateCondition(
   }
 }
 
+// --- Enforce brevity: truncate AI responses to max 2 sentences ---
+
+/**
+ * Hard safety net: if the AI generates more than 2 sentences, truncate.
+ * This ensures dialogue responses stay short even if the AI ignores prompt rules.
+ * Sentences are split on ". ", "? ", "! " boundaries, preserving the punctuation.
+ */
+function enforceMaxSentences(text: string, maxSentences = 2): string {
+  if (!text) return text;
+  // Split on sentence boundaries (period/question/exclamation followed by space or end)
+  const sentencePattern = /([^.!?]*[.!?])(?:\s+|$)/g;
+  const sentences: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = sentencePattern.exec(text)) !== null) {
+    sentences.push(match[1].trim());
+    if (sentences.length >= maxSentences) break;
+  }
+  // If no sentence boundaries found, return original (single short phrase)
+  if (sentences.length === 0) return text;
+  const result = sentences.join(' ');
+  if (result.length < text.length) {
+    logger.info('WorkflowEngine: Truncated AI response for brevity', {
+      original: text.substring(0, 200),
+      truncated: result,
+      sentenceCount: sentences.length,
+    });
+  }
+  return result;
+}
+
 // --- Parse AI response for transition signals ---
 
 interface ParsedAIResponse {
@@ -1055,7 +1085,9 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     }
 
     // Clean the AI response — strip any transition/control tags the AI may have included
-    const { text, wantsFallback } = parseAIResponse(aiResponse, validTransitionNames);
+    const parsed = parseAIResponse(aiResponse, validTransitionNames);
+    const text = enforceMaxSentences(parsed.text);
+    const wantsFallback = parsed.wantsFallback;
 
     logger.info('WorkflowEngine: Dialogue AI response', {
       rawResponse: aiResponse.substring(0, 150),
@@ -1090,7 +1122,20 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         this.state.currentNodeId = fallbackNodeId;
         return this.executeFromCurrent(messages);
       }
-      logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected');
+      // No fallback connected — STAY in the dialogue, do NOT fall through to transition logic.
+      // Use a language-aware retry message instead of letting the engine navigate away.
+      logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected — staying in dialogue');
+      const retryMsg = this.getLanguageAwareFallback('retry');
+      messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
+      messages.push({ type: 'system', text: `⚠️ No fallback connected to "${dialogueNode.data?.label}" — staying in current stage` });
+      this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
+      this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
+      return {
+        messages,
+        waitingForInput: true,
+        isComplete: false,
+        currentStage: dialogueNode.data?.label || 'AI Dialogue',
+      };
     }
 
     // --- Transition decision logic ---
@@ -1409,7 +1454,9 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
             const aiResponse = await this.generateAIResponse();
 
             if (aiResponse) {
-              const { text, wantsFallback } = parseAIResponse(aiResponse);
+              const entryParsed = parseAIResponse(aiResponse);
+              const text = enforceMaxSentences(entryParsed.text);
+              const wantsFallback = entryParsed.wantsFallback;
 
               messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
               this.state.dialogueHistory.push({ role: 'assistant', content: text });
@@ -1464,7 +1511,9 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           const openingResponse = await this.generateAIResponse();
 
           if (openingResponse) {
-            const { text, wantsFallback: openingFallback } = parseAIResponse(openingResponse);
+            const openingParsed = parseAIResponse(openingResponse);
+            const text = enforceMaxSentences(openingParsed.text);
+            const openingFallback = openingParsed.wantsFallback;
             messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
             this.state.dialogueHistory.push({ role: 'assistant', content: text });
             this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });

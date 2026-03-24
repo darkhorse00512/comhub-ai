@@ -24,6 +24,7 @@ import {
   MessageSquare,
   AudioLines,
   Info,
+  AlertTriangle,
   History,
   ArrowLeft,
   RefreshCw,
@@ -1852,10 +1853,17 @@ const CallInterface = ({
                 <div key={message.id}>
                   {message.role === "system" ? (
                     <div className="flex justify-center">
-                      <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground bg-muted/50 px-3 py-1 rounded-full">
-                        <Info className="w-3 h-3" />
-                        {message.content}
-                      </span>
+                      {message.content.startsWith("⚠️") || message.content.toLowerCase().includes("no fallback") ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full">
+                          <AlertTriangle className="w-3 h-3" />
+                          {message.content}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground bg-muted/50 px-3 py-1 rounded-full">
+                          <Info className="w-3 h-3" />
+                          {message.content}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <div
