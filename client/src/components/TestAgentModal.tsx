@@ -482,6 +482,64 @@ const TestAgentModal = ({
     });
   }, []);
 
+  // Pre-fetch TTS audio as a blob without playing it.
+  // Used to generate audio for upcoming sentences while current one is playing.
+  const prefetchTTS = useCallback(async (text: string): Promise<Blob | null> => {
+    const provider = voiceConfig?.ttsProvider;
+    if (!provider || provider === "browser") return null;
+
+    try {
+      const token = localStorage.getItem("backend_token");
+      const response = await fetch(
+        `${apiBaseUrl}/agents/${agentId}/generate-tts`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({ text }),
+        }
+      );
+      if (response.ok) {
+        const blob = await response.blob();
+        return blob.size > 0 ? blob : null;
+      }
+    } catch {
+      // Silent — caller will fall back to live TTS
+    }
+    return null;
+  }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl]);
+
+  // Play a pre-fetched TTS blob (skips the TTS API call)
+  const speakPrefetchedBlob = useCallback(async (blob: Blob, onAudioStart?: () => void): Promise<void> => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch {}
+      recognitionRef.current = null;
+      setIsRecording(false);
+    }
+    setIsSpeaking(true);
+    isSpeakingRef.current = true;
+
+    let startFired = false;
+    const fireStart = () => {
+      if (!startFired) {
+        startFired = true;
+        onAudioStart?.();
+      }
+    };
+
+    try {
+      await playBlobAudio(blob, fireStart);
+      fireStart();
+    } catch {
+      fireStart();
+    }
+
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+  }, [playBlobAudio]);
+
   const speakText = useCallback(async (text: string, onAudioStart?: () => void): Promise<void> => {
     // Stop any early-started recording before playing next audio
     if (recognitionRef.current) {
@@ -571,8 +629,9 @@ const TestAgentModal = ({
 
   // Output a message and optionally speak it (audio mode)
   // In audio mode: text appears only when audio starts playing
+  // If a pre-fetched TTS blob is provided, plays it directly (no TTS API call).
   const outputAndSpeak = useCallback(
-    async (text: string, nodeLabel?: string) => {
+    async (text: string, nodeLabel?: string, prefetchedBlob?: Blob | null) => {
       const msgId = crypto.randomUUID();
       const msg: Message = {
         id: msgId,
@@ -590,16 +649,21 @@ const TestAgentModal = ({
       };
 
       if (callModeRef.current === "audio") {
-        // Defer showing text until audio actually starts playing
         setSpeakingMessageId(msgId);
-        await speakText(text, showMessage);
+        if (prefetchedBlob) {
+          // Play pre-fetched audio — no TTS generation delay
+          await speakPrefetchedBlob(prefetchedBlob, showMessage);
+        } else {
+          // Live TTS generation + playback
+          await speakText(text, showMessage);
+        }
         setSpeakingMessageId(null);
       } else {
         // Text mode: show immediately
         showMessage();
       }
     },
-    [speakText]
+    [speakText, speakPrefetchedBlob]
   );
 
   // --- Auto recording for audio mode ---
@@ -855,13 +919,31 @@ const TestAgentModal = ({
       setWaitingForInput(result.waitingForInput);
       waitingForInputRef.current = result.waitingForInput;
 
+      // Collect all speakable messages and pre-fetch their TTS audio in parallel.
+      // This way sentence 2's audio is ready before sentence 1 finishes playing.
+      const speakableMessages = result.messages.filter(
+        (m) => m.type === "scripted" || m.type === "ai"
+      );
+      let prefetchedBlobs: (Blob | null)[] = [];
+      if (callModeRef.current === "audio" && speakableMessages.length > 0) {
+        prefetchedBlobs = await Promise.all(
+          speakableMessages.map((m) => prefetchTTS(m.text).catch(() => null))
+        );
+      }
+
+      // Play messages sequentially — using pre-fetched blobs for zero-gap transitions
+      let speakableIdx = 0;
       for (const msg of result.messages) {
         if (!isCallActiveRef.current) break;
 
         if (msg.type === "scripted" || msg.type === "ai") {
-          await outputAndSpeak(msg.text, msg.nodeLabel);
-          // Small pause between messages for natural feel
-          await new Promise((r) => setTimeout(r, 300));
+          const blob = prefetchedBlobs[speakableIdx] ?? null;
+          speakableIdx++;
+          await outputAndSpeak(msg.text, msg.nodeLabel, blob);
+          // Tiny pause between sentences for natural breath rhythm
+          if (speakableIdx < speakableMessages.length) {
+            await new Promise((r) => setTimeout(r, 80));
+          }
         } else if (msg.type === "system") {
           addMessage("system", msg.text);
         }
@@ -890,7 +972,7 @@ const TestAgentModal = ({
 
       return result;
     },
-    [outputAndSpeak, addMessage]
+    [outputAndSpeak, addMessage, prefetchTTS]
   );
 
   // --- Handle user message (sent to server-side workflow engine) ---
