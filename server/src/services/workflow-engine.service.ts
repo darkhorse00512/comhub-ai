@@ -944,14 +944,16 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
     }
 
     // GUARD: Detect stale state from server restarts.
-    // Check THREE signals:
-    // 1. completedDialogueNodeIds includes this dialogue
-    // 2. conversationContext has agent messages from LATER stages
-    // 3. dialogueHistory's system prompt doesn't match current dialogue (wrong history loaded)
+    // Check TWO signals:
+    // 1. conversationContext has agent messages from LATER stages
+    // 2. dialogueHistory's system prompt doesn't match current dialogue (wrong history loaded)
+    // NOTE: We do NOT check completedDialogueNodeIds here because dialogue nodes are
+    // now marked as completed upon entry (to prevent re-entry loops). That flag is only
+    // used by the executeFromCurrent guard, not for stale state detection.
     const currentLabel = dialogueNode.data?.label;
-    let stateIsStale = this.state.completedDialogueNodeIds?.includes(dialogueNode.id) || false;
+    let stateIsStale = false;
 
-    if (!stateIsStale && currentLabel) {
+    if (currentLabel) {
       // Check if conversationContext has agent messages from stages that come AFTER this one.
       const visitedLabels: string[] = [];
       for (const entry of this.state.conversationContext) {
