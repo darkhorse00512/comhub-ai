@@ -67,6 +67,8 @@ interface WorkflowMessage {
   type: "scripted" | "ai" | "system";
   text: string;
   nodeLabel?: string;
+  /** Base64-encoded MP3 audio generated server-side (eliminates client TTS round-trip) */
+  audioBase64?: string | null;
 }
 
 interface WorkflowCallResult {
@@ -81,7 +83,7 @@ interface WorkflowCallResult {
   error?: string;
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
-  timing?: { aiProcessingMs: number };
+  timing?: { aiProcessingMs: number; ttsMs?: number };
 }
 
 interface CallSettings {
@@ -922,25 +924,46 @@ const TestAgentModal = ({
       setWaitingForInput(result.waitingForInput);
       waitingForInputRef.current = result.waitingForInput;
 
-      // Collect all speakable messages and pre-fetch their TTS audio in parallel.
-      // This way sentence 2's audio is ready before sentence 1 finishes playing.
+      // Convert server-provided base64 audio to Blobs.
+      // Server generates TTS for all sentences in parallel — audio arrives
+      // with the response, eliminating the client→server TTS round-trip.
       const speakableMessages = result.messages.filter(
         (m) => m.type === "scripted" || m.type === "ai"
       );
-      let prefetchedBlobs: (Blob | null)[] = [];
+
+      let audioBlobs: (Blob | null)[] = [];
       if (callModeRef.current === "audio" && speakableMessages.length > 0) {
-        prefetchedBlobs = await Promise.all(
-          speakableMessages.map((m) => prefetchTTS(m.text).catch(() => null))
-        );
+        // Use server-provided audio (base64) if available
+        const hasServerAudio = speakableMessages.some((m) => m.audioBase64);
+        if (hasServerAudio) {
+          audioBlobs = speakableMessages.map((m) => {
+            if (m.audioBase64) {
+              try {
+                const binary = atob(m.audioBase64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                return new Blob([bytes], { type: "audio/mpeg" });
+              } catch {
+                return null;
+              }
+            }
+            return null;
+          });
+        } else {
+          // Fallback: client-side TTS pre-fetch (if server didn't provide audio)
+          audioBlobs = await Promise.all(
+            speakableMessages.map((m) => prefetchTTS(m.text).catch(() => null))
+          );
+        }
       }
 
-      // Play messages sequentially — using pre-fetched blobs for zero-gap transitions
+      // Play messages sequentially — audio is already generated, zero TTS wait
       let speakableIdx = 0;
       for (const msg of result.messages) {
         if (!isCallActiveRef.current) break;
 
         if (msg.type === "scripted" || msg.type === "ai") {
-          const blob = prefetchedBlobs[speakableIdx] ?? null;
+          const blob = audioBlobs[speakableIdx] ?? null;
           speakableIdx++;
           await outputAndSpeak(msg.text, msg.nodeLabel, blob);
           // Tiny pause between sentences for natural breath rhythm
@@ -1037,11 +1060,14 @@ const TestAgentModal = ({
         // Show timing breakdown as a system message
         if (!isSpeechNotRecognized) {
           const aiMs = result.timing?.aiProcessingMs ?? 0;
+          const serverTtsMs = result.timing?.ttsMs ?? 0;
+          const netOverhead = Math.max(0, networkMs - aiMs - serverTtsMs);
           const parts: string[] = [];
           if (sttMs > 0) parts.push(`STT: ${(sttMs / 1000).toFixed(1)}s`);
           parts.push(`AI: ${(aiMs / 1000).toFixed(1)}s`);
-          parts.push(`Network: ${((networkMs - aiMs) / 1000).toFixed(1)}s`);
-          parts.push(`TTS: ${(ttsMs / 1000).toFixed(1)}s`);
+          if (serverTtsMs > 0) parts.push(`TTS: ${(serverTtsMs / 1000).toFixed(1)}s`);
+          parts.push(`Net: ${(netOverhead / 1000).toFixed(1)}s`);
+          parts.push(`Play: ${(ttsMs / 1000).toFixed(1)}s`);
           parts.push(`Total: ${((ttsDoneMs - sttDoneAt) / 1000).toFixed(1)}s`);
           addMessage("system", parts.join(" | "));
         }

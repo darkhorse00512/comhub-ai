@@ -1395,6 +1395,9 @@ interface WorkflowSession {
   userId: string;
   direction: 'inbound' | 'outbound';
   createdAt: Date;
+  /** Cached voice settings — resolved once on first message, reused for all TTS */
+  voiceSettings?: Awaited<ReturnType<typeof agentVoiceService.resolveVoiceSettings>> | null;
+  voiceSettingsResolved?: boolean;
 }
 
 // In-memory cache for active workflow test calls
@@ -1704,6 +1707,57 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       persistSession(sessionId, session);
     }
 
+    // --- Server-side TTS generation (parallel for all sentences) ---
+    // Generate TTS audio on the server and return it with the response.
+    // This eliminates the client→server TTS round-trip entirely.
+    const ttsStartMs = Date.now();
+    const speakableMessages = result.messages.filter(
+      (m) => m.type === 'ai' || m.type === 'scripted'
+    );
+    let audioDataArray: (string | null)[] = [];
+
+    if (speakableMessages.length > 0) {
+      try {
+        // Resolve voice settings once per session (cached)
+        if (!session.voiceSettingsResolved) {
+          session.voiceSettings = await agentVoiceService.resolveVoiceSettings(session.agentId);
+          session.voiceSettingsResolved = true;
+        }
+
+        // Generate TTS for ALL sentences in parallel
+        audioDataArray = await Promise.all(
+          speakableMessages.map(async (msg) => {
+            try {
+              const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+              return buffer.toString('base64');
+            } catch (err) {
+              logger.warn('Server-side TTS failed for sentence, client will fallback', {
+                text: msg.text.substring(0, 50),
+                error: err instanceof Error ? err.message : err,
+              });
+              return null;
+            }
+          })
+        );
+      } catch (err) {
+        logger.warn('Server-side TTS batch failed, client will fallback', {
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+    }
+    const ttsMs = Date.now() - ttsStartMs;
+
+    // Attach audio to each speakable message
+    let audioIdx = 0;
+    const messagesWithAudio = result.messages.map((msg) => {
+      if (msg.type === 'ai' || msg.type === 'scripted') {
+        const audio = audioDataArray[audioIdx] || null;
+        audioIdx++;
+        return { ...msg, audioBase64: audio };
+      }
+      return msg;
+    });
+
     logger.info('Workflow message processed', {
       sessionId,
       messageCount: result.messages.length,
@@ -1711,13 +1765,16 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       isComplete: result.isComplete,
       currentStage: result.currentStage,
       aiProcessingMs,
+      ttsMs,
+      audioGenerated: audioDataArray.filter(Boolean).length,
     });
 
     res.status(200).json({
       success: true,
       ...result,
+      messages: messagesWithAudio,
       collectedFields: session.engine.getFields(),
-      timing: { aiProcessingMs },
+      timing: { aiProcessingMs, ttsMs },
     });
   } catch (error) {
     logger.error('Failed to process workflow message', { error });
