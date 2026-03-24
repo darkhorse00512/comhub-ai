@@ -85,34 +85,31 @@ function evaluateCondition(
   }
 }
 
-// --- Enforce brevity: truncate AI responses to max 2 sentences ---
+// --- Enforce brevity: split AI responses into individual sentences ---
 
 /**
- * Hard safety net: if the AI generates more than 2 sentences, truncate.
- * This ensures dialogue responses stay short even if the AI ignores prompt rules.
- * Sentences are split on ". ", "? ", "! " boundaries, preserving the punctuation.
+ * Split an AI response into individual sentences.
+ * Each sentence is delivered as a separate message so TTS plays them one at a time.
+ * This ensures natural pacing — one thought per turn, like a real human caller.
  */
-function enforceMaxSentences(text: string, maxSentences = 1): string {
-  if (!text) return text;
-  // Split on sentence boundaries (period/question/exclamation followed by space or end)
+function splitIntoSentences(text: string): string[] {
+  if (!text) return [text];
   const sentencePattern = /([^.!?]*[.!?])(?:\s+|$)/g;
   const sentences: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = sentencePattern.exec(text)) !== null) {
-    sentences.push(match[1].trim());
-    if (sentences.length >= maxSentences) break;
+    const s = match[1].trim();
+    if (s) sentences.push(s);
   }
-  // If no sentence boundaries found, return original (single short phrase)
-  if (sentences.length === 0) return text;
-  const result = sentences.join(' ');
-  if (result.length < text.length) {
-    logger.info('WorkflowEngine: Truncated AI response for brevity', {
+  // If no sentence boundaries found, return original as single item
+  if (sentences.length === 0) return [text];
+  if (sentences.length > 1) {
+    logger.info('WorkflowEngine: Split AI response into sentences', {
       original: text.substring(0, 200),
-      truncated: result,
       sentenceCount: sentences.length,
     });
   }
-  return result;
+  return sentences;
 }
 
 // --- Parse AI response for transition signals ---
@@ -1086,26 +1083,33 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
     // Clean the AI response — strip any transition/control tags the AI may have included
     const parsed = parseAIResponse(aiResponse, validTransitionNames);
-    const text = enforceMaxSentences(parsed.text);
+    const sentences = splitIntoSentences(parsed.text);
+    const text = parsed.text; // full text for transition analysis
     const wantsFallback = parsed.wantsFallback;
 
     logger.info('WorkflowEngine: Dialogue AI response', {
       rawResponse: aiResponse.substring(0, 150),
       cleanedText: text.substring(0, 100),
       wantsFallback,
+      sentenceCount: sentences.length,
       turnCount: this.state.dialogueTurnCount,
       nodeLabel: dialogueNode.data?.label,
     });
 
-    // Only add non-empty text to messages/history (AI might output only control tags)
+    // Deliver each sentence as a separate message for natural pacing
+    for (const sentence of sentences) {
+      if (sentence) {
+        messages.push({
+          type: 'ai',
+          text: sentence,
+          nodeLabel: dialogueNode.data?.label,
+        });
+        this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: dialogueNode.data?.label });
+      }
+    }
+    // Store the full response in dialogue history (AI needs full context)
     if (text) {
-      messages.push({
-        type: 'ai',
-        text,
-        nodeLabel: dialogueNode.data?.label,
-      });
       this.state.dialogueHistory.push({ role: 'assistant', content: text });
-      this.state.conversationContext.push({ role: 'agent', text, nodeLabel: dialogueNode.data?.label });
     }
 
     // Persist AFTER AI response — captures the response before transition logic.
@@ -1463,12 +1467,18 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
             if (aiResponse) {
               const entryParsed = parseAIResponse(aiResponse);
-              const text = enforceMaxSentences(entryParsed.text);
+              const entrySentences = splitIntoSentences(entryParsed.text);
               const wantsFallback = entryParsed.wantsFallback;
 
-              messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
-              this.state.dialogueHistory.push({ role: 'assistant', content: text });
-              this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
+              for (const sentence of entrySentences) {
+                if (sentence) {
+                  messages.push({ type: 'ai', text: sentence, nodeLabel: node.data?.label });
+                  this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: node.data?.label });
+                }
+              }
+              if (entryParsed.text) {
+                this.state.dialogueHistory.push({ role: 'assistant', content: entryParsed.text });
+              }
 
               // IMPORTANT: Do NOT run transition analysis on the first turn of entering
               // a dialogue node. The user's carried-over message was a response to the
@@ -1520,11 +1530,17 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
 
           if (openingResponse) {
             const openingParsed = parseAIResponse(openingResponse);
-            const text = enforceMaxSentences(openingParsed.text);
+            const openingSentences = splitIntoSentences(openingParsed.text);
             const openingFallback = openingParsed.wantsFallback;
-            messages.push({ type: 'ai', text, nodeLabel: node.data?.label });
-            this.state.dialogueHistory.push({ role: 'assistant', content: text });
-            this.state.conversationContext.push({ role: 'agent', text, nodeLabel: node.data?.label });
+            for (const sentence of openingSentences) {
+              if (sentence) {
+                messages.push({ type: 'ai', text: sentence, nodeLabel: node.data?.label });
+                this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: node.data?.label });
+              }
+            }
+            if (openingParsed.text) {
+              this.state.dialogueHistory.push({ role: 'assistant', content: openingParsed.text });
+            }
 
             if (openingFallback) {
               const fallbackNodeId = this.getDialogueFallbackNodeId(node);
