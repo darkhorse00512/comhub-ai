@@ -721,7 +721,7 @@ The system will automatically route to the correct exit based on the conversatio
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 80, temperature: 0.2, model: 'gpt-4o-mini' }
+        { maxTokens: 150, temperature: 0.2 }
       );
 
       return aiResponse.text || null;
