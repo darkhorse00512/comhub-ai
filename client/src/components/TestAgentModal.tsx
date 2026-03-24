@@ -25,6 +25,7 @@ import {
   AudioLines,
   Info,
   AlertTriangle,
+  Clock,
   History,
   ArrowLeft,
   RefreshCw,
@@ -80,6 +81,7 @@ interface WorkflowCallResult {
   error?: string;
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
+  timing?: { aiProcessingMs: number };
 }
 
 interface CallSettings {
@@ -733,6 +735,7 @@ const TestAgentModal = ({
           setIsRecording(false);
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           recognitionRef.current = null;
+          sttEndTimeRef.current = Date.now(); // Track when STT finished for timing
 
           if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
 
@@ -977,6 +980,9 @@ const TestAgentModal = ({
 
   // --- Handle user message (sent to server-side workflow engine) ---
   const isLoadingRef = useRef(false);
+  /** Timestamp (ms) when STT finished recognizing speech — set in recognition.onend */
+  const sttEndTimeRef = useRef<number>(0);
+
   const handleUserMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || !isCallActiveRef.current) return;
@@ -1003,7 +1009,15 @@ const TestAgentModal = ({
       setIsLoading(true);
       isLoadingRef.current = true;
 
+      // --- Timing: track each phase ---
+      const sttDoneAt = sttEndTimeRef.current || Date.now();
+      const apiStartMs = Date.now();
+      const sttMs = apiStartMs - sttDoneAt; // Time from STT end to API call start
+
       const { result, error } = await sendWorkflowMessageAPI(text);
+
+      const apiEndMs = Date.now();
+      const networkMs = apiEndMs - apiStartMs; // Full API roundtrip
 
       if (!isCallActiveRef.current) {
         setIsLoading(false);
@@ -1012,9 +1026,25 @@ const TestAgentModal = ({
       }
 
       if (result) {
+        const ttsStartMs = Date.now();
         await processWorkflowResult(result);
+        const ttsDoneMs = Date.now();
+        const ttsMs = ttsDoneMs - ttsStartMs; // TTS prefetch + playback time
+
         setIsLoading(false);
         isLoadingRef.current = false;
+
+        // Show timing breakdown as a system message
+        if (!isSpeechNotRecognized) {
+          const aiMs = result.timing?.aiProcessingMs ?? 0;
+          const parts: string[] = [];
+          if (sttMs > 0) parts.push(`STT: ${(sttMs / 1000).toFixed(1)}s`);
+          parts.push(`AI: ${(aiMs / 1000).toFixed(1)}s`);
+          parts.push(`Network: ${((networkMs - aiMs) / 1000).toFixed(1)}s`);
+          parts.push(`TTS: ${(ttsMs / 1000).toFixed(1)}s`);
+          parts.push(`Total: ${((ttsDoneMs - sttDoneAt) / 1000).toFixed(1)}s`);
+          addMessage("system", parts.join(" | "));
+        }
 
         if (!result.isComplete && result.waitingForInput && callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
@@ -1935,7 +1965,12 @@ const CallInterface = ({
                 <div key={message.id}>
                   {message.role === "system" ? (
                     <div className="flex justify-center">
-                      {message.content.startsWith("⚠️") || message.content.toLowerCase().includes("no fallback") ? (
+                      {message.content.includes("AI:") && message.content.includes("TTS:") ? (
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 px-3 py-0.5 rounded-full">
+                          <Clock className="w-3 h-3" />
+                          {message.content}
+                        </span>
+                      ) : message.content.startsWith("⚠️") || message.content.toLowerCase().includes("no fallback") ? (
                         <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full">
                           <AlertTriangle className="w-3 h-3" />
                           {message.content}

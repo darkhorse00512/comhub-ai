@@ -1676,6 +1676,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     // Process the message through the workflow engine.
     // Use session lock to prevent concurrent requests from corrupting state
     // (e.g., two speech recognitions arriving back-to-back).
+    const aiStartMs = Date.now();
     const result = await withSessionLock(sessionId, async () => {
       const preState = session.engine.getState();
       logger.info('Processing workflow message', {
@@ -1693,6 +1694,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
 
       return await session.engine.processMessage(message);
     });
+    const aiProcessingMs = Date.now() - aiStartMs;
 
     // Clean up if workflow is complete, otherwise persist updated state
     if (result.isComplete) {
@@ -1708,12 +1710,14 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       waitingForInput: result.waitingForInput,
       isComplete: result.isComplete,
       currentStage: result.currentStage,
+      aiProcessingMs,
     });
 
     res.status(200).json({
       success: true,
       ...result,
       collectedFields: session.engine.getFields(),
+      timing: { aiProcessingMs },
     });
   } catch (error) {
     logger.error('Failed to process workflow message', { error });
