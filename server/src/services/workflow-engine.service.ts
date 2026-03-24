@@ -92,7 +92,7 @@ function evaluateCondition(
  * This ensures dialogue responses stay short even if the AI ignores prompt rules.
  * Sentences are split on ". ", "? ", "! " boundaries, preserving the punctuation.
  */
-function enforceMaxSentences(text: string, maxSentences = 2): string {
+function enforceMaxSentences(text: string, maxSentences = 1): string {
   if (!text) return text;
   // Split on sentence boundaries (period/question/exclamation followed by space or end)
   const sentencePattern = /([^.!?]*[.!?])(?:\s+|$)/g;
@@ -724,7 +724,7 @@ The system will automatically route to the correct exit based on the conversatio
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 80, temperature: 0.2 }
+        { maxTokens: 80, temperature: 0.2, model: 'gpt-4o-mini' }
       );
 
       return aiResponse.text || null;
@@ -778,7 +778,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       const result = await gptService.generateWithCustomPrompt(
         analysisPrompt,
         'You are a routing decision engine. Output only the transition name or NONE.',
-        { maxTokens: 20, temperature: 0.1 }
+        { maxTokens: 20, temperature: 0.1, model: 'gpt-4o-mini' }
       );
 
       const answer = (result.text || '').trim();
@@ -1414,6 +1414,14 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
           this.state.isInDialogue = true;
           this.state.currentDialogueNodeId = node.id;
           this.state.dialogueTurnCount = 0;
+
+          // CRITICAL: Mark as completed IMMEDIATELY upon entry — not on exit.
+          // This prevents re-entry bugs caused by unexpected routing, race conditions,
+          // or transitions that loop back to this node.
+          if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+          if (!this.state.completedDialogueNodeIds.includes(node.id)) {
+            this.state.completedDialogueNodeIds.push(node.id);
+          }
 
           // Collect valid transition names for this dialogue node
           const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];

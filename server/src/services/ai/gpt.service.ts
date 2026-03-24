@@ -152,16 +152,19 @@ Remember you are in a real-time voice conversation, so keep responses conversati
     options?: {
       maxTokens?: number;
       temperature?: number;
+      model?: string;
     }
   ): Promise<AIResponse> {
     try {
+      const useModel = options?.model || config.openai.model;
       logger.info('Generating AI response with history', {
         messageCount: conversationHistory.length,
         maxTokens: options?.maxTokens || 500,
+        model: useModel,
       });
 
       const completion = await this.openai.chat.completions.create({
-        model: config.openai.model,
+        model: useModel,
         messages: conversationHistory,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens || 500,
@@ -200,12 +203,15 @@ Remember you are in a real-time voice conversation, so keep responses conversati
     options?: {
       maxTokens?: number;
       temperature?: number;
+      model?: string;
     }
   ): Promise<AIResponse> {
     try {
+      const useModel = options?.model || config.openai.model;
       logger.info('Generating AI response with custom prompt', {
         userMessage: userMessage.substring(0, 100),
-        maxTokens: options?.maxTokens || 4000
+        maxTokens: options?.maxTokens || 4000,
+        model: useModel,
       });
 
       const messages: ChatMessage[] = [
@@ -214,7 +220,7 @@ Remember you are in a real-time voice conversation, so keep responses conversati
       ];
 
       const completion = await this.openai.chat.completions.create({
-        model: config.openai.model,
+        model: useModel,
         messages,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens || 4000,

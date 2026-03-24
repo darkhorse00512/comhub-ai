@@ -1400,6 +1400,26 @@ interface WorkflowSession {
 // In-memory cache for active workflow test calls
 const workflowSessions = new Map<string, WorkflowSession>();
 
+// Per-session lock to prevent concurrent processMessage calls from corrupting state.
+// If two requests arrive for the same session while one is processing, the second is queued.
+const sessionLocks = new Map<string, Promise<void>>();
+async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionLocks.get(sessionId) || Promise.resolve();
+  let resolve: () => void;
+  const current = new Promise<void>((r) => { resolve = r; });
+  sessionLocks.set(sessionId, current);
+  try {
+    await prev; // Wait for any previous request to finish
+    return await fn();
+  } finally {
+    resolve!();
+    // Clean up if this is still the latest lock
+    if (sessionLocks.get(sessionId) === current) {
+      sessionLocks.delete(sessionId);
+    }
+  }
+}
+
 // File-based persistence so sessions survive server restarts (ts-node-dev --respawn)
 const SESSION_DIR = path.join(__dirname, '../../tmp/workflow-sessions');
 try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch {}
@@ -1653,22 +1673,26 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       }
     }
 
-    // Process the message through the workflow engine
-    const preState = session.engine.getState();
-    logger.info('Processing workflow message', {
-      sessionId,
-      message: message.substring(0, 100),
-      engineState: {
-        isInDialogue: preState.isInDialogue,
-        isWaitingAfterSpoken: preState.isWaitingAfterSpoken,
-        currentNodeId: preState.currentNodeId,
-        currentDialogueNodeId: preState.currentDialogueNodeId,
-        completedDialogueNodeIds: preState.completedDialogueNodeIds,
-        dialogueTurnCount: preState.dialogueTurnCount,
-      },
-    });
+    // Process the message through the workflow engine.
+    // Use session lock to prevent concurrent requests from corrupting state
+    // (e.g., two speech recognitions arriving back-to-back).
+    const result = await withSessionLock(sessionId, async () => {
+      const preState = session.engine.getState();
+      logger.info('Processing workflow message', {
+        sessionId,
+        message: message.substring(0, 100),
+        engineState: {
+          isInDialogue: preState.isInDialogue,
+          isWaitingAfterSpoken: preState.isWaitingAfterSpoken,
+          currentNodeId: preState.currentNodeId,
+          currentDialogueNodeId: preState.currentDialogueNodeId,
+          completedDialogueNodeIds: preState.completedDialogueNodeIds,
+          dialogueTurnCount: preState.dialogueTurnCount,
+        },
+      });
 
-    const result = await session.engine.processMessage(message);
+      return await session.engine.processMessage(message);
+    });
 
     // Clean up if workflow is complete, otherwise persist updated state
     if (result.isComplete) {
