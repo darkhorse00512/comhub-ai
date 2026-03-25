@@ -847,26 +847,33 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       .filter(e => e.nodeLabel === node.data?.label)
       .slice(-12);
 
-    const prompt = `Analyze if this call stage has FULLY completed its objective. Be CONSERVATIVE — only advance when ALL steps are clearly done.
+    // Count how many agent questions have been asked in this stage
+    const agentQuestions = stageContext.filter(e => e.role === 'agent' && e.text.trim().endsWith('?'));
+    const userAnswers = stageContext.filter(e => e.role === 'user');
+
+    const prompt = `Determine if this call stage is FULLY complete. Be VERY CONSERVATIVE.
 
 STAGE: "${node.data?.label}"
-STAGE INSTRUCTIONS:
+
+STAGE INSTRUCTIONS (the agent must complete ALL of these):
 ${stageMessage}
 
-TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
+AVAILABLE TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
+- "${transitionNames[0]}" = happy-path completion (ALL steps done)
+- Other transitions = early exit (caller refused, disqualified, etc.)
 
-CONVERSATION SO FAR:
+CONVERSATION IN THIS STAGE (${agentQuestions.length} questions asked, ${userAnswers.length} caller responses):
 ${stageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
 
-RULES (follow strictly):
-1. Read the Stage Instructions carefully. Count ALL the steps/questions listed.
-2. Check the conversation: has the Agent asked EVERY step/question? Has the Caller answered EVERY one?
-3. If even ONE step/question from the instructions has NOT been asked yet, output NONE.
-4. If the Agent asked a question but the Caller has NOT answered it yet, output NONE.
-5. Only output a transition name if ALL steps are done OR a specific early-exit condition was clearly triggered (e.g., caller explicitly refused).
-6. When in doubt, output NONE. It is MUCH better to stay than to advance too early.
+DECISION RULES:
+1. List EVERY step/question in the Stage Instructions. Count them.
+2. Compare against the conversation. Has EACH step been completed?
+3. "${transitionNames[0]}" (happy path): ONLY if ALL steps are done. If even 1 step remains, output NONE.
+4. Other transitions (early exit): ONLY if the caller EXPLICITLY triggered the exit condition (e.g., said "I'm not the owner").
+5. If the last message in the conversation is from the Agent (asking a question), the Caller hasn't answered yet → output NONE.
+6. When in doubt, ALWAYS output NONE.
 
-Output ONLY the transition name or NONE.`;
+Output ONLY: a transition name, or NONE.`;
 
     try {
       const checkStartMs = Date.now();
@@ -886,11 +893,19 @@ Output ONLY the transition name or NONE.`;
       );
 
       if (matched) {
-        logger.info('WorkflowEngine: Proactive completion check detected stage is done', {
+        logger.info('WorkflowEngine: Proactive check result — stage complete', {
           nodeLabel: node.data?.label,
           transition: matched.name,
+          questionsAsked: agentQuestions.length,
+          userAnswers: userAnswers.length,
           userMessage: userMessage.substring(0, 50),
           checkMs: this.lastTiming.proactiveCheckMs,
+        });
+      } else {
+        logger.info('WorkflowEngine: Proactive check result — invalid transition ignored', {
+          nodeLabel: node.data?.label,
+          rawAnswer: answer,
+          validTransitions: transitionNames,
         });
       }
 
