@@ -1123,6 +1123,15 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
         this.state.currentDialogueNodeId = correctNode.id;
         dialogueNode = correctNode;
 
+        // Clean up completedDialogueNodeIds: only keep the corrected node
+        // (and any nodes before it). Remove nodes that come AFTER so they
+        // can be entered normally when the workflow advances.
+        const correctNodeIdx = this.state.completedDialogueNodeIds.indexOf(correctNode.id);
+        if (correctNodeIdx >= 0) {
+          // Keep only up to and including the correct node
+          this.state.completedDialogueNodeIds = this.state.completedDialogueNodeIds.slice(0, correctNodeIdx + 1);
+        }
+
         // Rebuild dialogue history for the correct node so AI has proper context
         this.state.dialogueHistory = await this.buildInitialDialogueHistory(correctNode);
         this.persistState();
@@ -1564,7 +1573,7 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
 
         case 'dialogue': {
           // GUARD: If this dialogue was already visited (completed or has messages in context),
-          // do NOT re-enter it. End the execution chain.
+          // do NOT re-enter it. Skip past it via the first transition instead of killing the workflow.
           const dialogueLabel = node.data?.label;
           const alreadyCompleted = this.state.completedDialogueNodeIds?.includes(node.id);
           const alreadyVisited = dialogueLabel && this.state.conversationContext.some(
@@ -1572,17 +1581,48 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
           );
 
           if (alreadyCompleted || alreadyVisited) {
-            logger.error('WorkflowEngine: Reached already-visited dialogue — stopping execution', {
+            logger.warn('WorkflowEngine: Reached already-visited dialogue — skipping past it', {
               nodeId: node.id,
               nodeLabel: dialogueLabel,
               alreadyCompleted,
               alreadyVisited,
             });
+
+            // Try to skip past by following the first transition edge
+            const skipTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+            if (skipTransitions.length > 0) {
+              const skipTargetId = this.getDialogueNextNodeId(node, skipTransitions[0].name);
+              if (skipTargetId) {
+                messages.push({
+                  type: 'system',
+                  text: `Skipping already-visited "${dialogueLabel}" → advancing`,
+                });
+                this.state.currentNodeId = skipTargetId;
+                break; // continue the while loop to process the next node
+              }
+            }
+
+            // Also try the default edge (no specific transition)
+            const defaultNextId = this.getNextNodeId(node.id);
+            if (defaultNextId) {
+              messages.push({
+                type: 'system',
+                text: `Skipping already-visited "${dialogueLabel}" → advancing`,
+              });
+              this.state.currentNodeId = defaultNextId;
+              break; // continue the while loop
+            }
+
+            // No edges to skip to — truly stuck, end the workflow
+            logger.error('WorkflowEngine: Already-visited dialogue has no edges to skip — stopping', {
+              nodeId: node.id,
+              nodeLabel: dialogueLabel,
+            });
             this.state.currentNodeId = null;
             this.state.isComplete = true;
             messages.push({
               type: 'system',
-              text: `Workflow ended (reached already-visited stage "${dialogueLabel}")`,
+              text: `Workflow ended (no route past already-visited "${dialogueLabel}")`,
             });
             return { messages, waitingForInput: false, isComplete: true, currentStage: dialogueLabel || 'Error' };
           }
