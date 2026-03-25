@@ -876,8 +876,12 @@ const TestAgentModal = ({
 
       // Play messages sequentially — audio is already generated, zero TTS wait
       let speakableIdx = 0;
+      console.log('[processWorkflowResult] Playing', result.messages.length, 'messages, isCallActive:', isCallActiveRef.current);
       for (const msg of result.messages) {
-        if (!isCallActiveRef.current) break;
+        if (!isCallActiveRef.current) {
+          console.warn('[processWorkflowResult] Call became inactive during playback — breaking');
+          break;
+        }
 
         if (msg.type === "scripted" || msg.type === "ai") {
           const blob = audioBlobs[speakableIdx] ?? null;
@@ -971,6 +975,17 @@ const TestAgentModal = ({
       }
 
       if (result) {
+        console.log('[handleUserMessage] Server result:', {
+          isComplete: result.isComplete,
+          waitingForInput: result.waitingForInput,
+          messageCount: result.messages?.length,
+          messageTypes: result.messages?.map((m: any) => `${m.type}:${m.nodeLabel}`),
+          currentStage: result.currentStage,
+        });
+        // Show server response status so user can see WHY the call ends
+        if (result.isComplete) {
+          addMessage("system", `⚠️ Server returned isComplete=true (stage: ${result.currentStage})`);
+        }
         const ttsStartMs = Date.now();
         await processWorkflowResult(result);
         const ttsDoneMs = Date.now();
@@ -1188,6 +1203,13 @@ const TestAgentModal = ({
       }
 
       // Process initial workflow messages (greetings, scripted messages, etc.)
+      console.log('[startCall] Initial result:', {
+        isComplete: result.isComplete,
+        waitingForInput: result.waitingForInput,
+        messageCount: result.messages?.length,
+        messageTypes: result.messages?.map((m: any) => `${m.type}:${m.nodeLabel}`),
+        hasAudio: result.messages?.some((m: any) => m.audioBase64),
+      });
       await processWorkflowResult(result);
 
       // Start recording for user input after initial messages play
