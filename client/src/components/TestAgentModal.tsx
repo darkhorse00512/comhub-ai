@@ -94,6 +94,8 @@ interface WorkflowCallResult {
     proactiveCheckMs?: number;
     ttsFirstAudioMs?: number;
     ttsDoneMs?: number;
+    ttsProvider?: string;
+    ttsError?: string | null;
   };
   voiceInfo?: Record<string, string>;
 }
@@ -370,6 +372,16 @@ const TestAgentModal = ({
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       serverAudioRef.current = audio;
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        URL.revokeObjectURL(url);
+        serverAudioRef.current = null;
+        resolve();
+      };
+      // Safety timeout: never hang more than 30s per audio clip
+      const safetyTimer = setTimeout(done, 30000);
       let earlyRecordingTriggered = false;
       audio.onplay = () => onStart?.();
       // Start recording ~2s before audio ends to eliminate dead time
@@ -382,17 +394,9 @@ const TestAgentModal = ({
           }
         }
       };
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        serverAudioRef.current = null;
-        resolve();
-      };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        serverAudioRef.current = null;
-        resolve();
-      };
-      audio.play().catch(() => resolve());
+      audio.onended = () => { clearTimeout(safetyTimer); done(); };
+      audio.onerror = () => { clearTimeout(safetyTimer); done(); };
+      audio.play().catch(() => { clearTimeout(safetyTimer); done(); });
     });
   }, []);
 
@@ -686,7 +690,6 @@ const TestAgentModal = ({
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
-    if (!waitingForInputRef.current) return;
     // Prevent duplicate: if already recording, skip
     if (recognitionRef.current) return;
 
@@ -697,7 +700,6 @@ const TestAgentModal = ({
 
     setTimeout(() => {
       if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-      if (!waitingForInputRef.current) return;
 
       try {
         const recognition = new SpeechRecognitionAPI();
@@ -1122,9 +1124,16 @@ const TestAgentModal = ({
           if (details.length > 0) {
             addMessage("system", details.join(" | "));
           }
+          // Show TTS provider warning if fallback was used
+          if (t?.ttsError) {
+            addMessage("system", `⚠️ TTS Error: ${t.ttsError} (used ${t.ttsProvider || 'openai'} fallback)`);
+          }
         }
 
-        if (!result.isComplete && result.waitingForInput && callModeRef.current === "audio" && isCallActiveRef.current) {
+        // Start recording for next user input.
+        // Always record if call is active and not explicitly complete —
+        // even if server didn't set waitingForInput (defensive safety net).
+        if (!result.isComplete && callModeRef.current === "audio" && isCallActiveRef.current) {
           startAutoRecording();
         }
       } else {
@@ -1270,9 +1279,9 @@ const TestAgentModal = ({
       // Process initial workflow messages (greetings, scripted messages, etc.)
       await processWorkflowResult(result);
 
-      // If waiting for input in audio mode, start recording
+      // Start recording for user input after initial messages play
       if (
-        result.waitingForInput &&
+        !result.isComplete &&
         callModeRef.current === "audio" &&
         isCallActiveRef.current
       ) {

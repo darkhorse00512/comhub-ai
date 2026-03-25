@@ -1072,14 +1072,28 @@ Output ONLY the transition name or NONE.`;
 
     let dialogueNode = this.nodes.find((n) => n.id === this.state.currentDialogueNodeId);
     if (!dialogueNode) {
-      this.state.isInDialogue = false;
-      this.state.isComplete = true;
-      return {
-        messages: [{ type: 'system', text: 'Dialogue node not found' }],
-        waitingForInput: false,
-        isComplete: true,
-        currentStage: null,
-      };
+      // Node not found — try to find ANY dialogue node to recover
+      const anyDialogue = this.nodes.find(n =>
+        (n.type === 'dialogue' || n.data?.type === 'dialogue') &&
+        !this.state.completedDialogueNodeIds?.includes(n.id)
+      );
+      if (anyDialogue) {
+        logger.warn('WorkflowEngine: currentDialogueNodeId not found — recovering to first available dialogue', {
+          missingId: this.state.currentDialogueNodeId,
+          recoveredTo: anyDialogue.data?.label,
+        });
+        this.state.currentDialogueNodeId = anyDialogue.id;
+        dialogueNode = anyDialogue;
+      } else {
+        this.state.isInDialogue = false;
+        this.state.isComplete = true;
+        return {
+          messages: [{ type: 'system', text: 'Dialogue node not found' }],
+          waitingForInput: false,
+          isComplete: true,
+          currentStage: null,
+        };
+      }
     }
 
     // GUARD: Self-healing auto-correction for stale currentDialogueNodeId.
@@ -1515,13 +1529,12 @@ Output ONLY the transition name or NONE.`;
         error,
         currentNodeId: this.state.currentNodeId,
       });
-      // Return a graceful error
-      this.state.isComplete = true;
-      messages.push({ type: 'system', text: 'An error occurred, workflow stopped' });
+      // Keep the call alive — don't set isComplete. The user can still respond.
+      messages.push({ type: 'system', text: 'An error occurred, retrying on next message' });
       return {
         messages,
-        waitingForInput: false,
-        isComplete: true,
+        waitingForInput: true,
+        isComplete: false,
         currentStage: 'Error',
       };
     }
@@ -1540,16 +1553,15 @@ Output ONLY the transition name or NONE.`;
       // Prevent infinite loops — track ALL visited nodes in this execution chain
       stepCount++;
       if (stepCount > MAX_STEPS || visitedNodeIds.has(node.id)) {
-        logger.error('WorkflowEngine: Cycle detected or max steps exceeded in execution chain', {
+        logger.warn('WorkflowEngine: Cycle detected or max steps — stopping chain but keeping call alive', {
           currentNodeId: this.state.currentNodeId,
           currentLabel: node.data?.label,
           stepCount,
-          revisitedNode: visitedNodeIds.has(node.id),
-          visitedNodes: Array.from(visitedNodeIds),
         });
-        this.state.isComplete = true;
-        messages.push({ type: 'system', text: 'Workflow stopped: loop detected' });
-        return { messages, waitingForInput: false, isComplete: true, currentStage: 'Error' };
+        // Don't kill the call — just stop this execution chain.
+        // The user can still speak and trigger the next processMessage.
+        messages.push({ type: 'system', text: '⚠️ Loop detected — waiting for input' });
+        return { messages, waitingForInput: true, isComplete: false, currentStage: node.data?.label || 'Recovery' };
       }
       visitedNodeIds.add(node.id);
 

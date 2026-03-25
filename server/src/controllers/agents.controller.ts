@@ -1867,6 +1867,8 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         proactiveCheckMs: engineTiming.proactiveCheckMs,
         ttsFirstAudioMs,
         ttsDoneMs,
+        ttsProvider: agentVoiceService.lastTTSProvider,
+        ttsError: agentVoiceService.lastTTSError,
       },
     });
   } catch (error) {

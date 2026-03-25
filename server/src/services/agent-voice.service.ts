@@ -115,7 +115,13 @@ class AgentVoiceService {
    * Generate TTS audio buffer for the given text using the agent's configured voice.
    * Returns an audio Buffer (MP3 format). Used by production calls that need to upload.
    */
+  /** Track which provider was actually used for the last TTS call */
+  public lastTTSProvider: string = 'openai';
+  public lastTTSError: string | null = null;
+
   async generateTTS(text: string, voiceSettings: ResolvedVoiceSettings | null): Promise<Buffer> {
+    this.lastTTSError = null;
+
     if (voiceSettings &&
         (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs') &&
         voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
@@ -126,22 +132,27 @@ class AgentVoiceService {
           model: voiceSettings.elevenlabsModel,
           textLength: text.length,
         });
-        return await ttsService.elevenlabsTextToSpeech(text, {
+        const buffer = await ttsService.elevenlabsTextToSpeech(text, {
           apiKey: voiceSettings.elevenlabsApiKey,
           voiceId: voiceSettings.elevenlabsVoiceId,
           model: voiceSettings.elevenlabsModel,
         });
+        this.lastTTSProvider = voiceSettings.ttsProvider;
+        return buffer;
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         logger.error('ElevenLabs TTS failed, falling back to OpenAI', {
-          error: err instanceof Error ? err.message : err,
+          error: errMsg,
           voiceId: voiceSettings.elevenlabsVoiceId,
           model: voiceSettings.elevenlabsModel,
         });
+        this.lastTTSError = `ElevenLabs failed: ${errMsg}`;
         // Fall through to OpenAI TTS
       }
     }
 
     // Default / Fallback: OpenAI TTS
+    this.lastTTSProvider = 'openai-fallback';
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
     return ttsService.textToSpeech(text, voice);
   }
