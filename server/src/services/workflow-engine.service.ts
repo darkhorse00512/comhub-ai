@@ -868,7 +868,7 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       .filter(e => e.nodeLabel === node.data?.label)
       .slice(-12);
 
-    const prompt = `Analyze if this call stage has completed its objective.
+    const prompt = `Analyze if this call stage has FULLY completed its objective. Be CONSERVATIVE — only advance when ALL steps are clearly done.
 
 STAGE: "${node.data?.label}"
 STAGE INSTRUCTIONS:
@@ -879,13 +879,15 @@ TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
 CONVERSATION SO FAR:
 ${stageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
 
-Has the stage objective been met? Consider:
-- Have ALL required questions been asked AND answered?
-- Has a specific exit condition been triggered (e.g., caller confirmed identity, caller refused)?
-- Are there still unanswered steps in the instructions?
-- If the stage has multiple sequential steps, ALL must be completed before advancing.
+RULES (follow strictly):
+1. Read the Stage Instructions carefully. Count ALL the steps/questions listed.
+2. Check the conversation: has the Agent asked EVERY step/question? Has the Caller answered EVERY one?
+3. If even ONE step/question from the instructions has NOT been asked yet, output NONE.
+4. If the Agent asked a question but the Caller has NOT answered it yet, output NONE.
+5. Only output a transition name if ALL steps are done OR a specific early-exit condition was clearly triggered (e.g., caller explicitly refused).
+6. When in doubt, output NONE. It is MUCH better to stay than to advance too early.
 
-If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
+Output ONLY the transition name or NONE.`;
 
     try {
       const checkStartMs = Date.now();
@@ -1237,6 +1239,7 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
     let wantsFallback = false;
     let wantsToComplete = false;
     let effectiveComplete = false;
+    let aiEndsWithQuestion = false;
 
     if (aiResponse) {
       const parsed = parseAIResponse(aiResponse, validTransitionNames);
@@ -1247,7 +1250,7 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
       // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
       wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
       const cleanedTextTrimmed = text.trim();
-      const aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
+      aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
       effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
 
       if (aiEndsWithQuestion && wantsToComplete) {
@@ -1258,27 +1261,35 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
       }
 
       // Determine which sentences to output:
-      // If proactive check says stage is complete but AI didn't signal [NEXT],
-      // the AI may have generated off-topic content (e.g. asking questions from
-      // a later stage). Truncate to only the acknowledgment part.
+      // If AI is asking a question (ends with ?), ALWAYS trust the AI — it's still
+      // mid-conversation. The proactive check may have misfired.
+      // Only use proactive truncation when AI gave a short non-question acknowledgment
+      // (e.g. "Thank you.") but forgot [NEXT].
       let outputSentences: string[];
-      if (proactiveTransition && !effectiveComplete) {
-        // Only keep non-question sentences (acknowledgments like "Thank you.")
+      if (proactiveTransition && !effectiveComplete && !aiEndsWithQuestion) {
+        // AI gave a non-question response (likely an acknowledgment) and proactive
+        // check says stage is done. Truncate any off-topic content.
         const ackOnly = allSentences.filter(s => !s.trim().endsWith('?'));
         if (ackOnly.length > 0) {
-          outputSentences = ackOnly.slice(0, 1); // max 1 acknowledgment
+          outputSentences = ackOnly.slice(0, 1);
         } else {
-          // AI only generated questions — use a brief ack instead
           outputSentences = [this.getBriefAcknowledgment()];
         }
         logger.info('WorkflowEngine: Truncated AI response (proactive completion)', {
           nodeLabel: dialogueNode.data?.label,
           originalSentences: allSentences.length,
           outputSentences: outputSentences.length,
-          droppedQuestions: allSentences.filter(s => s.trim().endsWith('?')).map(s => s.substring(0, 60)),
         });
       } else {
+        // AI is asking a question or no proactive transition — output everything
         outputSentences = allSentences;
+        // If AI is asking a question, DISCARD the proactive check result
+        if (aiEndsWithQuestion && proactiveTransition) {
+          logger.info('WorkflowEngine: Proactive check overridden — AI is still asking questions', {
+            nodeLabel: dialogueNode.data?.label,
+            proactiveTransition,
+          });
+        }
       }
 
       logger.info('WorkflowEngine: Dialogue AI response', {
@@ -1374,8 +1385,9 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
         type: 'system',
         text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
       });
-    } else if (proactiveTransition) {
-      // Proactive check detected stage completion — AI forgot [NEXT].
+    } else if (proactiveTransition && !aiEndsWithQuestion) {
+      // Proactive check detected stage completion AND AI is NOT asking a question.
+      // If AI asked a question, trust the AI — it's still mid-conversation.
       shouldAdvance = true;
       transition = proactiveTransition;
       const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition);
