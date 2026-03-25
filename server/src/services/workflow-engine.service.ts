@@ -1260,14 +1260,12 @@ Output ONLY the transition name or NONE.`;
       }
 
       // Determine which sentences to output:
-      // If AI is asking a question (ends with ?), ALWAYS trust the AI — it's still
-      // mid-conversation. The proactive check may have misfired.
-      // Only use proactive truncation when AI gave a short non-question acknowledgment
-      // (e.g. "Thank you.") but forgot [NEXT].
+      // The PROACTIVE CHECK is the authority on transitions. If it says the stage
+      // is done, truncate the AI response to only acknowledgment sentences and advance.
+      // The AI often goes off-topic (asks questions from other stages) — don't trust it.
       let outputSentences: string[];
-      if (proactiveTransition && !effectiveComplete && !aiEndsWithQuestion) {
-        // AI gave a non-question response (likely an acknowledgment) and proactive
-        // check says stage is done. Truncate any off-topic content.
+      if (proactiveTransition && !effectiveComplete) {
+        // Proactive check says stage is done. Keep only non-question acknowledgments.
         const ackOnly = allSentences.filter(s => !s.trim().endsWith('?'));
         if (ackOnly.length > 0) {
           outputSentences = ackOnly.slice(0, 1);
@@ -1277,18 +1275,10 @@ Output ONLY the transition name or NONE.`;
         logger.info('WorkflowEngine: Truncated AI response (proactive completion)', {
           nodeLabel: dialogueNode.data?.label,
           originalSentences: allSentences.length,
-          outputSentences: outputSentences.length,
+          droppedQuestions: allSentences.filter(s => s.trim().endsWith('?')).length,
         });
       } else {
-        // AI is asking a question or no proactive transition — output everything
         outputSentences = allSentences;
-        // If AI is asking a question, DISCARD the proactive check result
-        if (aiEndsWithQuestion && proactiveTransition) {
-          logger.info('WorkflowEngine: Proactive check overridden — AI is still asking questions', {
-            nodeLabel: dialogueNode.data?.label,
-            proactiveTransition,
-          });
-        }
       }
 
       logger.info('WorkflowEngine: Dialogue AI response', {
@@ -1384,9 +1374,9 @@ Output ONLY the transition name or NONE.`;
         type: 'system',
         text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
       });
-    } else if (proactiveTransition && !aiEndsWithQuestion) {
-      // Proactive check detected stage completion AND AI is NOT asking a question.
-      // If AI asked a question, trust the AI — it's still mid-conversation.
+    } else if (proactiveTransition) {
+      // Proactive check detected stage completion — advance regardless of AI's response.
+      // The proactive check is the authority on transitions, not the AI.
       shouldAdvance = true;
       transition = proactiveTransition;
       const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition);
