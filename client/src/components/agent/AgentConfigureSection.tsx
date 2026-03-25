@@ -9,9 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -336,52 +334,12 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__default__">Server default</SelectItem>
-                        <SelectGroup>
-                          <SelectLabel>GPT-5.4</SelectLabel>
-                          <SelectItem value="gpt-5.4-pro">GPT-5.4 Pro</SelectItem>
-                          <SelectItem value="gpt-5.4">GPT-5.4</SelectItem>
-                          <SelectItem value="gpt-5.4-mini">GPT-5.4 mini</SelectItem>
-                          <SelectItem value="gpt-5.4-nano">GPT-5.4 nano</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-5.2</SelectLabel>
-                          <SelectItem value="gpt-5.2-pro">GPT-5.2 Pro</SelectItem>
-                          <SelectItem value="gpt-5.2">GPT-5.2</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-5.1</SelectLabel>
-                          <SelectItem value="gpt-5.1">GPT-5.1</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-5</SelectLabel>
-                          <SelectItem value="gpt-5-pro">GPT-5 Pro</SelectItem>
-                          <SelectItem value="gpt-5">GPT-5</SelectItem>
-                          <SelectItem value="gpt-5-mini">GPT-5 mini</SelectItem>
-                          <SelectItem value="gpt-5-nano">GPT-5 nano</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-4.1</SelectLabel>
-                          <SelectItem value="gpt-4.1">GPT-4.1</SelectItem>
-                          <SelectItem value="gpt-4.1-mini">GPT-4.1 mini</SelectItem>
-                          <SelectItem value="gpt-4.1-nano">GPT-4.1 nano</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-4o</SelectLabel>
-                          <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                          <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>GPT-4</SelectLabel>
-                          <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel>Reasoning</SelectLabel>
-                          <SelectItem value="o4-mini">o4-mini</SelectItem>
-                          <SelectItem value="o3">o3</SelectItem>
-                          <SelectItem value="o3-mini">o3-mini</SelectItem>
-                          <SelectItem value="o1">o1</SelectItem>
-                          <SelectItem value="o1-pro">o1 Pro</SelectItem>
-                        </SelectGroup>
+                        <SelectItem value="gpt-4o">GPT4o</SelectItem>
+                        <SelectItem value="gpt-4.1">GPT4.1</SelectItem>
+                        <SelectItem value="gpt-4.1-mini">GPT4.1 mini</SelectItem>
+                        <SelectItem value="gpt-5-mini">GPT5 mini</SelectItem>
+                        <SelectItem value="gpt-5.2">GPT5.2</SelectItem>
+                        <SelectItem value="GPT-OSS-120B">GPT-OSS 120B</SelectItem>
                       </SelectContent>
                     </Select>
                   </CardContent>
