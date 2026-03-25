@@ -1068,7 +1068,7 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
       };
     }
 
-    const dialogueNode = this.nodes.find((n) => n.id === this.state.currentDialogueNodeId);
+    let dialogueNode = this.nodes.find((n) => n.id === this.state.currentDialogueNodeId);
     if (!dialogueNode) {
       this.state.isInDialogue = false;
       this.state.isComplete = true;
@@ -1080,64 +1080,53 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
       };
     }
 
-    // GUARD: Detect stale state from server restarts.
-    // Check TWO signals:
-    // 1. conversationContext has agent messages from LATER stages
-    // 2. dialogueHistory's system prompt doesn't match current dialogue (wrong history loaded)
-    // NOTE: We do NOT check completedDialogueNodeIds here because dialogue nodes are
-    // now marked as completed upon entry (to prevent re-entry loops). That flag is only
-    // used by the executeFromCurrent guard, not for stale state detection.
+    // GUARD: Self-healing auto-correction for stale currentDialogueNodeId.
+    // After a server restart, the persisted state may point to an old dialogue node
+    // (e.g. "Introduction") while the conversation has already moved on (e.g. "Survey").
+    // Instead of crashing/ending the workflow, detect and auto-correct.
     const currentLabel = dialogueNode.data?.label;
-    let stateIsStale = false;
 
-    if (currentLabel) {
-      // Check if conversationContext has agent messages from stages that come AFTER this one.
-      const visitedLabels: string[] = [];
-      for (const entry of this.state.conversationContext) {
-        if (entry.role === 'agent' && entry.nodeLabel && !visitedLabels.includes(entry.nodeLabel)) {
-          visitedLabels.push(entry.nodeLabel);
-        }
-      }
-      const currentIdx = visitedLabels.indexOf(currentLabel);
-      if (currentIdx >= 0 && currentIdx < visitedLabels.length - 1) {
-        stateIsStale = true;
-        logger.warn('WorkflowEngine: Stale state detected — stages after current exist', {
-          currentLabel, visitedLabels,
+    // Check: does the recent conversation context show we should be in a DIFFERENT stage?
+    const lastAgentEntry = [...this.state.conversationContext]
+      .reverse()
+      .find(e => e.role === 'agent' && e.nodeLabel);
+    const mostRecentStageLabel = lastAgentEntry?.nodeLabel;
+
+    // Only auto-correct if:
+    // 1. The current stage HAS spoken before (not a fresh entry)
+    // 2. The most recent agent message is from a DIFFERENT stage
+    const currentStageHasSpoken = currentLabel && this.state.conversationContext.some(
+      e => e.role === 'agent' && e.nodeLabel === currentLabel
+    );
+
+    if (currentStageHasSpoken && mostRecentStageLabel && mostRecentStageLabel !== currentLabel) {
+      // Recent conversation is from a different stage — currentDialogueNodeId is stale.
+      // Find the correct dialogue node and switch to it.
+      const correctNode = this.nodes.find(
+        n => (n.type === 'dialogue' || n.data?.type === 'dialogue') &&
+             n.data?.label === mostRecentStageLabel
+      );
+
+      if (correctNode && correctNode.id !== dialogueNode.id) {
+        logger.error('WorkflowEngine: STALE currentDialogueNodeId — auto-correcting', {
+          staleLabel: currentLabel,
+          staleNodeId: dialogueNode.id,
+          correctLabel: mostRecentStageLabel,
+          correctNodeId: correctNode.id,
         });
-      }
-    }
-
-    // Check 3: dialogueHistory's system prompt should mention the current stage.
-    // If it mentions a DIFFERENT stage, the history is from a previous dialogue (stale).
-    if (!stateIsStale && currentLabel && this.state.dialogueHistory.length > 0) {
-      const sysPrompt = this.state.dialogueHistory[0]?.content || '';
-      if (sysPrompt && !sysPrompt.includes(currentLabel)) {
-        stateIsStale = true;
-        logger.warn('WorkflowEngine: Stale state detected — dialogueHistory system prompt does not match current stage', {
-          currentLabel,
-          promptSnippet: sysPrompt.substring(0, 100),
+        messages.push({
+          type: 'system',
+          text: `Auto-corrected: ${currentLabel} → ${mostRecentStageLabel} (state recovered)`,
         });
-      }
-    }
 
-    if (stateIsStale) {
-      logger.error('WorkflowEngine: processMessage in stale dialogue — ending workflow', {
-        nodeId: dialogueNode.id,
-        nodeLabel: currentLabel,
-      });
-      this.state.isInDialogue = false;
-      this.state.currentDialogueNodeId = null;
-      this.state.isComplete = true;
-      messages.push({
-        type: 'system',
-        text: `Session state was lost (server restarted). Please start a new test call.`,
-      });
-      return {
-        messages,
-        waitingForInput: false,
-        isComplete: true,
-        currentStage: 'Error',
-      };
+        // Fix the state: switch to the correct dialogue node
+        this.state.currentDialogueNodeId = correctNode.id;
+        dialogueNode = correctNode;
+
+        // Rebuild dialogue history for the correct node so AI has proper context
+        this.state.dialogueHistory = await this.buildInitialDialogueHistory(correctNode);
+        this.persistState();
+      }
     }
 
     // Collect the valid transition names for this dialogue node
