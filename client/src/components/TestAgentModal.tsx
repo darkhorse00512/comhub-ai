@@ -982,10 +982,8 @@ const TestAgentModal = ({
           messageTypes: result.messages?.map((m: any) => `${m.type}:${m.nodeLabel}`),
           currentStage: result.currentStage,
         });
-        // Show server response status so user can see WHY the call ends
-        if (result.isComplete) {
-          addMessage("system", `⚠️ Server returned isComplete=true (stage: ${result.currentStage})`);
-        }
+        // DEBUG: Show every server response status
+        addMessage("system", `[DEBUG] msg: isComplete=${result.isComplete}, waitingForInput=${result.waitingForInput}, stage=${result.currentStage}, msgs=${result.messages?.length}`);
         const ttsStartMs = Date.now();
         await processWorkflowResult(result);
         const ttsDoneMs = Date.now();
@@ -1042,18 +1040,12 @@ const TestAgentModal = ({
         }
 
         // Start recording for next user input
+        addMessage("system", `[DEBUG] after msg play: isCallActive=${isCallActiveRef.current}, isSpeaking=${isSpeakingRef.current}, isComplete=${result.isComplete}`);
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           if (result.isComplete) {
             addMessage("system", "Workflow complete — ending call");
             setTimeout(() => { if (isCallActiveRef.current) endCallRef.current(); }, 2000);
           } else {
-            console.log('[DEBUG] Starting recording after processWorkflowResult', {
-              isComplete: result.isComplete,
-              waitingForInput: result.waitingForInput,
-              isCallActive: isCallActiveRef.current,
-              isSpeaking: isSpeakingRef.current,
-              hasRecognition: !!recognitionRef.current,
-            });
             startAutoRecording();
           }
         }
@@ -1202,22 +1194,16 @@ const TestAgentModal = ({
         }
       }
 
+      // DEBUG: Show server response status in chat
+      addMessage("system", `[DEBUG] start: isComplete=${result.isComplete}, waitingForInput=${result.waitingForInput}, msgs=${result.messages?.length}, audio=${result.messages?.some((m: any) => m.audioBase64)}`);
+
       // Process initial workflow messages (greetings, scripted messages, etc.)
-      console.log('[startCall] Initial result:', {
-        isComplete: result.isComplete,
-        waitingForInput: result.waitingForInput,
-        messageCount: result.messages?.length,
-        messageTypes: result.messages?.map((m: any) => `${m.type}:${m.nodeLabel}`),
-        hasAudio: result.messages?.some((m: any) => m.audioBase64),
-      });
       await processWorkflowResult(result);
 
       // Start recording for user input after initial messages play
-      if (
-        !result.isComplete &&
-        callModeRef.current === "audio" &&
-        isCallActiveRef.current
-      ) {
+      const shouldRecord = !result.isComplete && callModeRef.current === "audio" && isCallActiveRef.current;
+      addMessage("system", `[DEBUG] after play: shouldRecord=${shouldRecord}, isCallActive=${isCallActiveRef.current}, isSpeaking=${isSpeakingRef.current}`);
+      if (shouldRecord) {
         startAutoRecording();
       }
     } catch (error) {
