@@ -719,9 +719,11 @@ const TestAgentModal = ({
           }
         };
 
-        // Use configured silence timeout; fall back to 2s default
+        // Use configured silence timeout for mid-speech pauses
         const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 2) * 1000;
-        const initialWaitMs = Math.max(silenceTimeoutMs, 5000); // at least 5s for user to start speaking
+        // Use onIdleTimeout for initial wait (how long to wait for user to start speaking)
+        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+        const initialWaitMs = Math.max(onIdleTimeoutMs, 5000); // use idle timeout, at least 5s
 
         const startSilenceTimer = (ms: number) => {
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -805,14 +807,14 @@ const TestAgentModal = ({
               if (callModeRef.current === "audio") {
                 await speakText(cs.onIdleMessage);
               }
-              if (waitingForInputRef.current && isCallActiveRef.current) {
+              if (isCallActiveRef.current) {
                 startAutoRecording();
               }
             } else if (idleCountRef.current >= 2) {
               // No idle message configured — fall back to workflow after 2 cycles
               noSpeechCountRef.current = 0;
               await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
-            } else if (waitingForInputRef.current) {
+            } else if (isCallActiveRef.current) {
               startAutoRecording();
             }
           }
@@ -826,7 +828,7 @@ const TestAgentModal = ({
             console.error("Speech recognition error:", event.error);
             setIsRecording(false);
             // Restart on transient errors
-            if (isCallActiveRef.current && callModeRef.current === "audio" && waitingForInputRef.current) {
+            if (isCallActiveRef.current && callModeRef.current === "audio") {
               startAutoRecording();
             }
           }
@@ -1017,6 +1019,13 @@ const TestAgentModal = ({
             `Transferring to ${result.transferTo}`
           );
         }
+        // Workflow is complete — end the call after a brief pause
+        addMessage("system", "Call completed");
+        setTimeout(() => {
+          if (isCallActiveRef.current) {
+            endCallRef.current();
+          }
+        }, 1500);
       }
 
       return result;
