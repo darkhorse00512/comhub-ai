@@ -197,11 +197,26 @@ function parseAIResponse(response: string, validTransitionNames?: string[]): Par
  * - Interactive nodes (dialogue) pause and wait for user input.
  * - conversationContext persists across ALL nodes so the AI always knows what happened before.
  */
+export interface EngineTiming {
+  /** Offset (ms) from processMessage start when the prompt/history was assembled */
+  promptReadyAt: number;
+  /** Offset (ms) from processMessage start when the LLM API call was sent */
+  llmRequestSentAt: number;
+  /** Offset (ms) from processMessage start when the LLM API call returned */
+  llmDoneAt: number;
+  /** Duration (ms) of the proactive stage completion check (runs in parallel) */
+  proactiveCheckMs: number;
+}
+
 export class WorkflowEngine {
   private nodes: WorkflowNode[];
   private edges: WorkflowEdge[];
   private state: WorkflowEngineState;
   private _processing = false;
+  /** Reference timestamp for per-turn timing measurements */
+  private _processStartMs = 0;
+  /** Timing data from the last processMessage call */
+  public lastTiming: EngineTiming = { promptReadyAt: 0, llmRequestSentAt: 0, llmDoneAt: 0, proactiveCheckMs: 0 };
   /**
    * Optional callback to fetch full call message history from the database.
    * Set by VoiceConversationService to ensure end_call analysis gets ALL messages.
@@ -707,11 +722,8 @@ The system will automatically route to the correct exit based on the conversatio
       const messages: ChatMessage[] = [...this.state.dialogueHistory];
 
       // Update the system prompt (first message) with fresh answered Q&A.
-      // This is more reliable than injecting a separate system message —
-      // the AI pays most attention to the system prompt at position [0].
       const answeredSummary = this.buildAnsweredSummary();
       if (answeredSummary && messages.length > 0 && messages[0].role === 'system') {
-        // Strip any previous ALREADY ANSWERED section and append fresh one
         let sysContent = messages[0].content;
         const markerIdx = sysContent.indexOf('\n\n### ALREADY ANSWERED');
         if (markerIdx >= 0) sysContent = sysContent.substring(0, markerIdx);
@@ -719,10 +731,17 @@ The system will automatically route to the correct exit based on the conversatio
         messages[0] = { role: 'system', content: sysContent };
       }
 
+      // Track timing: prompt is ready, LLM call about to start
+      this.lastTiming.promptReadyAt = Date.now() - this._processStartMs;
+      this.lastTiming.llmRequestSentAt = Date.now() - this._processStartMs;
+
       const aiResponse = await gptService.generateWithHistory(
         messages,
         { maxTokens: 150, temperature: 0.2 }
       );
+
+      // Track timing: LLM call done (non-streaming, so first_token = done)
+      this.lastTiming.llmDoneAt = Date.now() - this._processStartMs;
 
       return aiResponse.text || null;
     } catch (error) {
@@ -841,12 +860,14 @@ Has the stage objective been met? Consider:
 If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
 
     try {
+      const checkStartMs = Date.now();
       const result = await gptService.generateWithCustomPrompt(
         prompt,
         'Output only NONE or a transition name. Nothing else.',
         { maxTokens: 20, temperature: 0.1, model: 'gpt-4o-mini' }
       );
 
+      this.lastTiming.proactiveCheckMs = Date.now() - checkStartMs;
       const answer = (result.text || '').trim().replace(/['"]/g, '');
 
       if (!answer || answer.toUpperCase() === 'NONE') return null;
@@ -860,11 +881,13 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
           nodeLabel: node.data?.label,
           transition: matched.name,
           userMessage: userMessage.substring(0, 50),
+          checkMs: this.lastTiming.proactiveCheckMs,
         });
       }
 
       return matched ? matched.name : null;
     } catch (error) {
+      this.lastTiming.proactiveCheckMs = Date.now() - (this._processStartMs || Date.now());
       logger.error('WorkflowEngine: Stage completion check failed', { error });
       return null;
     }
@@ -977,6 +1000,9 @@ If COMPLETE, output ONLY the transition name. If NOT complete, output NONE.`;
 
   private async _processMessageInternal(userMessage: string): Promise<WorkflowStepResult> {
     const messages: WorkflowMessage[] = [];
+    // Reset timing for this turn
+    this._processStartMs = Date.now();
+    this.lastTiming = { promptReadyAt: 0, llmRequestSentAt: 0, llmDoneAt: 0, proactiveCheckMs: 0 };
 
     if (this.state.isComplete) {
       return {

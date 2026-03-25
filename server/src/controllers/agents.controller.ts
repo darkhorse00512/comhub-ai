@@ -1711,6 +1711,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     // Generate TTS audio on the server and return it with the response.
     // This eliminates the client→server TTS round-trip entirely.
     const ttsStartMs = Date.now();
+    let ttsFirstAudioMs = 0; // Time to first TTS result
     const speakableMessages = result.messages.filter(
       (m) => m.type === 'ai' || m.type === 'scripted'
     );
@@ -1724,11 +1725,16 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
           session.voiceSettingsResolved = true;
         }
 
-        // Generate TTS for ALL sentences in parallel
+        // Generate TTS for ALL sentences in parallel, track first completion
+        let firstAudioTracked = false;
         audioDataArray = await Promise.all(
           speakableMessages.map(async (msg) => {
             try {
               const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+              if (!firstAudioTracked) {
+                ttsFirstAudioMs = Date.now() - ttsStartMs;
+                firstAudioTracked = true;
+              }
               return buffer.toString('base64');
             } catch (err) {
               logger.warn('Server-side TTS failed for sentence, client will fallback', {
@@ -1745,7 +1751,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         });
       }
     }
-    const ttsMs = Date.now() - ttsStartMs;
+    const ttsDoneMs = Date.now() - ttsStartMs;
 
     // Attach audio to each speakable message
     let audioIdx = 0;
@@ -1758,6 +1764,9 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return msg;
     });
 
+    // Collect engine-level timing (LLM breakdown)
+    const engineTiming = session.engine.lastTiming;
+
     logger.info('Workflow message processed', {
       sessionId,
       messageCount: result.messages.length,
@@ -1765,8 +1774,10 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       isComplete: result.isComplete,
       currentStage: result.currentStage,
       aiProcessingMs,
-      ttsMs,
+      ttsDoneMs,
+      ttsFirstAudioMs,
       audioGenerated: audioDataArray.filter(Boolean).length,
+      engineTiming,
     });
 
     res.status(200).json({
@@ -1774,7 +1785,20 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       ...result,
       messages: messagesWithAudio,
       collectedFields: session.engine.getFields(),
-      timing: { aiProcessingMs, ttsMs },
+      timing: {
+        aiProcessingMs,
+        ttsStartMs: ttsDoneMs,  // backwards compat (old field name)
+        ttsMs: ttsDoneMs,       // backwards compat
+        // Detailed breakdown
+        promptReadyAt: engineTiming.promptReadyAt,
+        llmRequestSentAt: engineTiming.llmRequestSentAt,
+        llmDoneAt: engineTiming.llmDoneAt,
+        llmLatencyMs: engineTiming.llmDoneAt - engineTiming.llmRequestSentAt,
+        llmFirstTokenMs: engineTiming.llmDoneAt - engineTiming.llmRequestSentAt, // non-streaming: same as total
+        proactiveCheckMs: engineTiming.proactiveCheckMs,
+        ttsFirstAudioMs,
+        ttsDoneMs,
+      },
     });
   } catch (error) {
     logger.error('Failed to process workflow message', { error });

@@ -83,7 +83,19 @@ interface WorkflowCallResult {
   error?: string;
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
-  timing?: { aiProcessingMs: number; ttsMs?: number };
+  timing?: {
+    aiProcessingMs: number;
+    ttsMs?: number;
+    // Detailed breakdown (server-side offsets from request start)
+    promptReadyAt?: number;
+    llmRequestSentAt?: number;
+    llmDoneAt?: number;
+    llmLatencyMs?: number;
+    llmFirstTokenMs?: number;
+    proactiveCheckMs?: number;
+    ttsFirstAudioMs?: number;
+    ttsDoneMs?: number;
+  };
 }
 
 interface CallSettings {
@@ -716,7 +728,16 @@ const TestAgentModal = ({
 
         recognition.onstart = () => {
           setIsRecording(true);
+          sttStartTimeRef.current = Date.now();
           startSilenceTimer(initialWaitMs);
+        };
+
+        // Track when user actually starts/stops speaking (for latency breakdown)
+        (recognition as any).onspeechstart = () => {
+          sttStartTimeRef.current = Date.now(); // More accurate: when speech actually detected
+        };
+        (recognition as any).onspeechend = () => {
+          userEndSpeechRef.current = Date.now();
         };
 
         recognition.onresult = (event: any) => {
@@ -1003,6 +1024,10 @@ const TestAgentModal = ({
 
   // --- Handle user message (sent to server-side workflow engine) ---
   const isLoadingRef = useRef(false);
+  /** Timestamp (ms) when speech recognition started hearing speech */
+  const sttStartTimeRef = useRef<number>(0);
+  /** Timestamp (ms) when user stopped speaking (browser speechend event) */
+  const userEndSpeechRef = useRef<number>(0);
   /** Timestamp (ms) when STT finished recognizing speech — set in recognition.onend */
   const sttEndTimeRef = useRef<number>(0);
 
@@ -1035,7 +1060,6 @@ const TestAgentModal = ({
       // --- Timing: track each phase ---
       const sttDoneAt = sttEndTimeRef.current || Date.now();
       const apiStartMs = Date.now();
-      const sttMs = apiStartMs - sttDoneAt; // Time from STT end to API call start
 
       const { result, error } = await sendWorkflowMessageAPI(text);
 
@@ -1057,19 +1081,47 @@ const TestAgentModal = ({
         setIsLoading(false);
         isLoadingRef.current = false;
 
-        // Show timing breakdown as a system message
+        // Show detailed timing breakdown as system messages
         if (!isSpeechNotRecognized) {
-          const aiMs = result.timing?.aiProcessingMs ?? 0;
-          const serverTtsMs = result.timing?.ttsMs ?? 0;
-          const netOverhead = Math.max(0, networkMs - aiMs - serverTtsMs);
-          const parts: string[] = [];
-          if (sttMs > 0) parts.push(`STT: ${(sttMs / 1000).toFixed(1)}s`);
-          parts.push(`AI: ${(aiMs / 1000).toFixed(1)}s`);
-          if (serverTtsMs > 0) parts.push(`TTS: ${(serverTtsMs / 1000).toFixed(1)}s`);
-          parts.push(`Net: ${(netOverhead / 1000).toFixed(1)}s`);
-          parts.push(`Play: ${(ttsMs / 1000).toFixed(1)}s`);
-          parts.push(`Total: ${((ttsDoneMs - sttDoneAt) / 1000).toFixed(1)}s`);
-          addMessage("system", parts.join(" | "));
+          const t = result.timing;
+          const userEndSpeech = userEndSpeechRef.current || sttDoneAt;
+          const sttStart = sttStartTimeRef.current || 0;
+
+          // --- Calculated latencies ---
+          const sttLatency = sttStart > 0 ? sttDoneAt - sttStart : 0;
+          const orchestrationLatency = t?.promptReadyAt ?? 0; // server-side: time from request to prompt ready
+          const llmTTFT = t?.llmFirstTokenMs ?? 0; // non-streaming: same as total
+          const llmTotal = t?.llmLatencyMs ?? (t?.aiProcessingMs ?? 0);
+          const ttsFirstAudio = t?.ttsFirstAudioMs ?? 0;
+          const ttsDone = t?.ttsDoneMs ?? (t?.ttsMs ?? 0);
+          const serverTotalMs = (t?.aiProcessingMs ?? 0) + ttsDone;
+          const netOverhead = Math.max(0, networkMs - serverTotalMs);
+          // End-to-end: from user stops speaking to first audio played
+          const e2eMs = userEndSpeech > 0 ? ttsDoneMs - userEndSpeech : 0;
+
+          // Line 1: Summary (compact)
+          const summary: string[] = [];
+          if (sttLatency > 0) summary.push(`STT: ${(sttLatency / 1000).toFixed(1)}s`);
+          summary.push(`LLM: ${(llmTotal / 1000).toFixed(1)}s`);
+          if (ttsDone > 0) summary.push(`TTS: ${(ttsDone / 1000).toFixed(1)}s`);
+          summary.push(`Net: ${(netOverhead / 1000).toFixed(1)}s`);
+          summary.push(`Play: ${(ttsMs / 1000).toFixed(1)}s`);
+          summary.push(`Total: ${((ttsDoneMs - sttDoneAt) / 1000).toFixed(1)}s`);
+          addMessage("system", summary.join(" | "));
+
+          // Line 2: Detailed timestamps
+          const details: string[] = [];
+          if (sttLatency > 0) details.push(`STT latency: ${sttLatency}ms`);
+          if (orchestrationLatency > 0) details.push(`Orchestration: ${orchestrationLatency}ms`);
+          if (llmTTFT > 0) details.push(`LLM TTFT: ${llmTTFT}ms`);
+          if (llmTotal > 0) details.push(`LLM total: ${llmTotal}ms`);
+          if (ttsFirstAudio > 0) details.push(`TTS first-audio: ${ttsFirstAudio}ms`);
+          if (ttsDone > 0) details.push(`TTS done: ${ttsDone}ms`);
+          if (t?.proactiveCheckMs) details.push(`Proactive: ${t.proactiveCheckMs}ms`);
+          if (e2eMs > 0) details.push(`E2E: ${e2eMs}ms`);
+          if (details.length > 0) {
+            addMessage("system", details.join(" | "));
+          }
         }
 
         if (!result.isComplete && result.waitingForInput && callModeRef.current === "audio" && isCallActiveRef.current) {
