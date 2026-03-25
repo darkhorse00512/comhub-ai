@@ -1086,6 +1086,7 @@ Output ONLY the transition name or NONE.`;
     // After a server restart, the persisted state may point to an old dialogue node
     // (e.g. "Introduction") while the conversation has already moved on (e.g. "Survey").
     // Instead of crashing/ending the workflow, detect and auto-correct.
+    let wasAutoCorrected = false;
     const currentLabel = dialogueNode.data?.label;
 
     // Check: does the recent conversation context show we should be in a DIFFERENT stage?
@@ -1134,8 +1135,11 @@ Output ONLY the transition name or NONE.`;
           this.state.completedDialogueNodeIds = this.state.completedDialogueNodeIds.slice(0, correctNodeIdx + 1);
         }
 
-        // Rebuild dialogue history for the correct node so AI has proper context
-        this.state.dialogueHistory = await this.buildInitialDialogueHistory(correctNode);
+        // Rebuild dialogue history for the correct node WITH the user's message
+        // (the old history was for the wrong node — useless)
+        this.state.dialogueHistory = await this.buildInitialDialogueHistory(correctNode, userMessage);
+        this.state.dialogueTurnCount = 1; // reset turn count for corrected node
+        wasAutoCorrected = true; // user message already included in rebuilt history
         this.persistState();
       }
     }
@@ -1189,10 +1193,12 @@ Output ONLY the transition name or NONE.`;
     });
 
     // Add user message to dialogue history and conversation context
-    // IMPORTANT: Include nodeLabel so transition analysis can filter by stage correctly.
-    this.state.dialogueHistory.push({ role: 'user', content: userMessage });
-    this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
-    this.state.dialogueTurnCount++;
+    // Skip if auto-corrected — the rebuilt history already includes the user message.
+    if (!wasAutoCorrected) {
+      this.state.dialogueHistory.push({ role: 'user', content: userMessage });
+      this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
+      this.state.dialogueTurnCount++;
+    }
 
     // Persist state BEFORE the AI call. This is critical because:
     // - The AI call takes seconds (GPT API)

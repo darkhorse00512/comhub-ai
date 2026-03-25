@@ -681,8 +681,8 @@ const AgentStudioPage = () => {
         edges={edges}
         initialMode={testMode}
         voiceConfig={{
-          ttsProvider: agent.config?.settings?.ttsProvider,
-          language: agent.config?.settings?.language,
+          ttsProvider: agent.config?.settings?.ttsProvider || "openai",
+          language: agent.config?.settings?.language || "en-US",
         }}
       />
 
