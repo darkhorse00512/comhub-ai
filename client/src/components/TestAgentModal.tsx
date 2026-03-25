@@ -86,7 +86,6 @@ interface WorkflowCallResult {
   timing?: {
     aiProcessingMs: number;
     ttsMs?: number;
-    // Detailed breakdown (server-side offsets from request start)
     promptReadyAt?: number;
     llmRequestSentAt?: number;
     llmDoneAt?: number;
@@ -96,6 +95,7 @@ interface WorkflowCallResult {
     ttsFirstAudioMs?: number;
     ttsDoneMs?: number;
   };
+  voiceInfo?: Record<string, string>;
 }
 
 interface CallSettings {
@@ -1254,6 +1254,18 @@ const TestAgentModal = ({
             ? "Audio mode active. The workflow will execute step by step."
             : "Text mode active. The workflow will execute step by step.",
       });
+
+      // Show voice configuration info
+      if (result.voiceInfo) {
+        const vi = result.voiceInfo;
+        const parts: string[] = [`Voice: ${vi.provider}`];
+        if (vi.voice) parts.push(`voice=${vi.voice}`);
+        if (vi.voiceId) parts.push(`voiceId=${vi.voiceId}`);
+        if (vi.model) parts.push(`model=${vi.model}`);
+        if (vi.apiKey) parts.push(`key=${vi.apiKey}`);
+        if (vi.language) parts.push(`lang=${vi.language}`);
+        addMessage("system", parts.join(" | "));
+      }
 
       // Process initial workflow messages (greetings, scripted messages, etc.)
       await processWorkflowResult(result);

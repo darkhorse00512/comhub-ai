@@ -1665,6 +1665,28 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       onIdleTerminationMessage: s.onIdleTerminationMessage || '',
     };
 
+    // Build voice info for display (mask sensitive keys)
+    const vs = session.voiceSettings;
+    const voiceInfo: Record<string, string> = {
+      provider: vs?.ttsProvider || s.ttsProvider || 'openai',
+    };
+    if (vs?.ttsProvider === 'openai' || (!vs?.ttsProvider && !vs?.elevenlabsApiKey)) {
+      voiceInfo.voice = vs?.openaiVoice || s.openaiVoice || 'alloy';
+    }
+    if ((vs?.ttsProvider === 'elevenlabs' || vs?.ttsProvider === 'comhubai') && vs?.elevenlabsVoiceId) {
+      voiceInfo.voiceId = vs.elevenlabsVoiceId;
+      if (vs.elevenlabsModel) voiceInfo.model = vs.elevenlabsModel;
+      if (vs.elevenlabsApiKey) {
+        const key = vs.elevenlabsApiKey;
+        voiceInfo.apiKey = key.length > 10
+          ? `${key.substring(0, 5)}...${key.substring(key.length - 4)}`
+          : '***';
+      }
+    }
+    if (vs?.language || s.language) {
+      voiceInfo.language = vs?.language || s.language;
+    }
+
     res.status(200).json({
       success: true,
       sessionId,
@@ -1672,6 +1694,7 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       messages: messagesWithAudio,
       collectedFields: engine.getFields(),
       callSettings,
+      voiceInfo,
     });
   } catch (error) {
     logger.error('Failed to start workflow call', { error });
