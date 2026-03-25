@@ -1274,6 +1274,11 @@ const TestAgentModal = ({
         if (vi.apiKey) parts.push(`key=${vi.apiKey}`);
         if (vi.language) parts.push(`lang=${vi.language}`);
         addMessage("system", parts.join(" | "));
+        // Show TTS error prominently if voice failed
+        if (vi.error) {
+          addMessage("system", `⚠️ Voice Error: ${vi.error}`);
+          addMessage("system", `Using fallback: ${vi.actualProvider || 'openai'}`);
+        }
       }
 
       // Process initial workflow messages (greetings, scripted messages, etc.)

@@ -1687,6 +1687,13 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       voiceInfo.language = vs?.language || s.language;
     }
 
+    // Include TTS error if the configured voice failed
+    const ttsError = agentVoiceService.lastTTSError;
+    if (ttsError) {
+      voiceInfo.error = ttsError;
+      voiceInfo.actualProvider = agentVoiceService.lastTTSProvider;
+    }
+
     res.status(200).json({
       success: true,
       sessionId,
