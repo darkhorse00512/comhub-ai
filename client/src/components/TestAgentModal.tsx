@@ -400,107 +400,8 @@ const TestAgentModal = ({
     });
   }, []);
 
-  // Streaming audio playback via MediaSource API (plays audio as chunks arrive)
-  const playStreamingAudio = useCallback((stream: ReadableStream<Uint8Array>, onStart?: () => void): Promise<void> => {
-    return new Promise((resolve) => {
-      const mediaSource = new MediaSource();
-      const audio = new Audio();
-      serverAudioRef.current = audio;
-      const objectUrl = URL.createObjectURL(mediaSource);
-      audio.src = objectUrl;
-      let earlyRecordingTriggered = false;
-
-      const cleanup = () => {
-        URL.revokeObjectURL(objectUrl);
-        serverAudioRef.current = null;
-        resolve();
-      };
-
-      audio.onplay = () => onStart?.();
-      // Start recording ~2s before audio ends to eliminate dead time
-      audio.ontimeupdate = () => {
-        if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
-          const remaining = audio.duration - audio.currentTime;
-          if (remaining <= 2 && remaining > 0) {
-            earlyRecordingTriggered = true;
-            startAutoRecordingRef.current({ skipSpeakingCheck: true });
-          }
-        }
-      };
-      audio.onended = cleanup;
-      audio.onerror = cleanup;
-
-      mediaSource.addEventListener("sourceopen", async () => {
-        let sourceBuffer: SourceBuffer;
-        try {
-          sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
-        } catch {
-          // Codec not supported - abort streaming, caller will use blob fallback
-          cleanup();
-          return;
-        }
-
-        const reader = stream.getReader();
-        let started = false;
-
-        const pump = async (): Promise<void> => {
-          try {
-            // Abort if call ended
-            if (!isCallActiveRef.current) {
-              reader.cancel();
-              if (mediaSource.readyState === "open") {
-                try { mediaSource.endOfStream(); } catch {}
-              }
-              cleanup();
-              return;
-            }
-
-            const { done, value } = await reader.read();
-            if (done) {
-              // Wait for any pending appends to finish before ending stream
-              if (sourceBuffer.updating) {
-                await new Promise<void>((r) =>
-                  sourceBuffer.addEventListener("updateend", () => r(), { once: true })
-                );
-              }
-              if (mediaSource.readyState === "open") {
-                mediaSource.endOfStream();
-              }
-              return;
-            }
-
-            // Wait for previous append to complete
-            if (sourceBuffer.updating) {
-              await new Promise<void>((r) =>
-                sourceBuffer.addEventListener("updateend", () => r(), { once: true })
-              );
-            }
-
-            sourceBuffer.appendBuffer(value as unknown as ArrayBuffer);
-
-            // Start playback as soon as we have the first chunk
-            if (!started) {
-              started = true;
-              audio.play().catch(() => {});
-            }
-
-            await new Promise<void>((r) =>
-              sourceBuffer.addEventListener("updateend", () => r(), { once: true })
-            );
-
-            return pump();
-          } catch {
-            if (mediaSource.readyState === "open") {
-              try { mediaSource.endOfStream(); } catch {}
-            }
-            cleanup();
-          }
-        };
-
-        await pump();
-      });
-    });
-  }, []);
+  // Note: playStreamingAudio removed — playBlobAudio is more reliable
+  // and has a safety timeout. Server-side TTS returns full audio anyway.
 
   // Pre-fetch TTS audio as a blob without playing it.
   // Used to generate audio for upcoming sentences while current one is playing.
@@ -604,19 +505,10 @@ const TestAgentModal = ({
           ttsAbortRef.current = null;
 
           if (response.ok) {
-            // Try streaming playback (MediaSource) for instant audio start
-            const canStream = response.body
-              && typeof MediaSource !== "undefined"
-              && MediaSource.isTypeSupported("audio/mpeg");
-
-            if (canStream) {
-              await playStreamingAudio(response.body!, fireStart);
-            } else {
-              // Fallback: buffer full response then play
-              const blob = await response.blob();
-              if (blob.size > 0) {
-                await playBlobAudio(blob, fireStart);
-              }
+            // Buffer full response then play (simpler and more reliable than streaming)
+            const blob = await response.blob();
+            if (blob.size > 0) {
+              await playBlobAudio(blob, fireStart);
             }
 
             // If audio never started (e.g. empty response), still show the message
@@ -645,7 +537,7 @@ const TestAgentModal = ({
 
     setIsSpeaking(false);
     isSpeakingRef.current = false;
-  }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl, speakWithBrowser, playStreamingAudio, playBlobAudio]);
+  }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl, speakWithBrowser, playBlobAudio]);
 
   // Output a message and optionally speak it (audio mode)
   // In audio mode: text appears only when audio starts playing
@@ -1019,13 +911,8 @@ const TestAgentModal = ({
             `Transferring to ${result.transferTo}`
           );
         }
-        // Workflow is complete — end the call after a brief pause
-        addMessage("system", "Call completed");
-        setTimeout(() => {
-          if (isCallActiveRef.current) {
-            endCallRef.current();
-          }
-        }, 1500);
+        // Note: call ending is handled by the caller (handleUserMessage/startCall)
+        // after processWorkflowResult returns, NOT here — to avoid premature endCall.
       }
 
       return result;
@@ -1139,11 +1026,21 @@ const TestAgentModal = ({
           }
         }
 
-        // Start recording for next user input.
-        // Always record if call is active and not explicitly complete —
-        // even if server didn't set waitingForInput (defensive safety net).
-        if (!result.isComplete && callModeRef.current === "audio" && isCallActiveRef.current) {
-          startAutoRecording();
+        // Start recording for next user input
+        if (callModeRef.current === "audio" && isCallActiveRef.current) {
+          if (result.isComplete) {
+            addMessage("system", "Workflow complete — ending call");
+            setTimeout(() => { if (isCallActiveRef.current) endCallRef.current(); }, 2000);
+          } else {
+            console.log('[DEBUG] Starting recording after processWorkflowResult', {
+              isComplete: result.isComplete,
+              waitingForInput: result.waitingForInput,
+              isCallActive: isCallActiveRef.current,
+              isSpeaking: isSpeakingRef.current,
+              hasRecognition: !!recognitionRef.current,
+            });
+            startAutoRecording();
+          }
         }
       } else {
         setIsLoading(false);
