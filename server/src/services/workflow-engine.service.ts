@@ -725,14 +725,16 @@ export class WorkflowEngine {
     try {
       const messages: ChatMessage[] = [...this.state.dialogueHistory];
 
-      // Update the system prompt (first message) with fresh answered Q&A.
+      // Inject ALREADY ANSWERED as a separate system message RIGHT BEFORE the user's message.
+      // This ensures the AI sees it LAST (highest priority in chat context) and doesn't re-ask.
       const answeredSummary = this.buildAnsweredSummary();
-      if (answeredSummary && messages.length > 0 && messages[0].role === 'system') {
-        let sysContent = messages[0].content;
-        const markerIdx = sysContent.indexOf('\n\n### ALREADY ANSWERED');
-        if (markerIdx >= 0) sysContent = sysContent.substring(0, markerIdx);
-        sysContent += `\n\n### ALREADY ANSWERED — DO NOT re-ask these:\n${answeredSummary}\n\nYou MUST ask the NEXT unanswered question from the Stage Instructions. If you repeat a question listed above, the call will fail.`;
-        messages[0] = { role: 'system', content: sysContent };
+      if (answeredSummary && messages.length > 1) {
+        // Insert before the last user message so the AI pays attention to it
+        const insertIdx = messages.length - 1; // before last message
+        messages.splice(insertIdx, 0, {
+          role: 'system',
+          content: `CRITICAL — These questions were ALREADY asked and answered. Do NOT re-ask ANY of them:\n${answeredSummary}\n\nYour next response must continue with the NEXT UNANSWERED step. If ALL steps are answered, say a brief acknowledgment and append [NEXT].`,
+        });
       }
 
       // Resolve model: per-node override > agent-level > server default
@@ -847,33 +849,22 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       .filter(e => e.nodeLabel === node.data?.label)
       .slice(-12);
 
-    // Count how many agent questions have been asked in this stage
-    const agentQuestions = stageContext.filter(e => e.role === 'agent' && e.text.trim().endsWith('?'));
-    const userAnswers = stageContext.filter(e => e.role === 'user');
-
-    const prompt = `Determine if this call stage is FULLY complete. Be VERY CONSERVATIVE.
+    const prompt = `Which transition should fire for this stage? Read the instructions and conversation carefully.
 
 STAGE: "${node.data?.label}"
-
-STAGE INSTRUCTIONS (the agent must complete ALL of these):
+INSTRUCTIONS:
 ${stageMessage}
 
-AVAILABLE TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
-- "${transitionNames[0]}" = happy-path completion (ALL steps done)
-- Other transitions = early exit (caller refused, disqualified, etc.)
+TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
 
-CONVERSATION IN THIS STAGE (${agentQuestions.length} questions asked, ${userAnswers.length} caller responses):
+CONVERSATION:
 ${stageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
 
-DECISION RULES:
-1. List EVERY step/question in the Stage Instructions. Count them.
-2. Compare against the conversation. Has EACH step been completed?
-3. "${transitionNames[0]}" (happy path): ONLY if ALL steps are done. If even 1 step remains, output NONE.
-4. Other transitions (early exit): ONLY if the caller EXPLICITLY triggered the exit condition (e.g., said "I'm not the owner").
-5. If the last message in the conversation is from the Agent (asking a question), the Caller hasn't answered yet → output NONE.
-6. When in doubt, ALWAYS output NONE.
-
-Output ONLY: a transition name, or NONE.`;
+Rules:
+- Check which transition condition in the INSTRUCTIONS has been met based on the conversation.
+- If a transition condition is clearly met (e.g., caller confirmed identity, caller confirmed no solar system, caller refused), output that transition name.
+- If the conversation has NOT yet reached any transition condition, output NONE.
+- Output ONLY the transition name or NONE.`;
 
     try {
       const checkStartMs = Date.now();
@@ -896,8 +887,7 @@ Output ONLY: a transition name, or NONE.`;
         logger.info('WorkflowEngine: Proactive check result — stage complete', {
           nodeLabel: node.data?.label,
           transition: matched.name,
-          questionsAsked: agentQuestions.length,
-          userAnswers: userAnswers.length,
+          contextEntries: stageContext.length,
           userMessage: userMessage.substring(0, 50),
           checkMs: this.lastTiming.proactiveCheckMs,
         });
