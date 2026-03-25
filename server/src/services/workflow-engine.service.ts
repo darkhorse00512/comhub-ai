@@ -527,15 +527,10 @@ CONTEXT AWARENESS:
       prompt += `\nYou have access to: ${enabledKBs.map((kb: any) => kb.name).join(', ')}`;
     }
 
-    // Current field values available to the AI
-    const fieldEntries = Object.entries(this.state.fields);
-    if (fieldEntries.length > 0) {
-      prompt += `\n\n### Known Information (already collected — do NOT re-ask for these):`;
-      fieldEntries.forEach(([key, value]) => {
-        prompt += `\n- ${key}: ${JSON.stringify(value)}`;
-      });
-      prompt += `\n\nIMPORTANT: The above information has already been collected. Do NOT ask the caller for information that is already known. Use it directly in the conversation.`;
-    }
+    // NOTE: Field values are NOT shown to the AI. They are only used for
+    // {{variable}} substitution in stage instructions. Showing raw field data
+    // causes the AI to act on it (e.g., verifying addresses) even when the
+    // stage instructions don't mention it.
 
     // --- CONVERSATION CONTEXT: only THIS stage's conversation ---
     // CRITICAL: Only include messages from the CURRENT dialogue node.
