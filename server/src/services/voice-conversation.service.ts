@@ -172,7 +172,8 @@ class VoiceConversationService {
 
       const nodes = agent.config.flow.nodes;
       const edges = agent.config.flow.edges || [];
-      const engine = new WorkflowEngine(nodes, edges);
+      const agentAiModel = agent.config?.settings?.aiModel || '';
+      const engine = new WorkflowEngine(nodes, edges, undefined, agentAiModel);
       const initialResult = await engine.start(direction);
 
       const voiceSettings = await agentVoiceService.resolveVoiceSettings(agentId) || undefined;

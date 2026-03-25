@@ -753,16 +753,13 @@ const DialogueNode = ({
                   <SelectValue placeholder="Agent's default" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="GPT4o">GPT4o</SelectItem>
-                  <SelectItem value="GPT4.1">GPT4.1</SelectItem>
-                  <SelectItem value="GPT4.1 mini">GPT4.1 mini</SelectItem>
-                  <SelectItem value="GPT5 mini">GPT5 mini</SelectItem>
-                  <SelectItem value="GPT5.2">GPT5.2</SelectItem>
-                  <SelectItem value="GPT-OSS 120B">GPT-OSS 120B</SelectItem>
-                  <SelectItem value="Gemini 2.5 Flash">
-                    Gemini 2.5 Flash
-                  </SelectItem>
                   <SelectItem value="__default__">Agent's default</SelectItem>
+                  <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                  <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
+                  <SelectItem value="gpt-4.1">GPT-4.1</SelectItem>
+                  <SelectItem value="gpt-4.1-mini">GPT-4.1 mini</SelectItem>
+                  <SelectItem value="gpt-4.1-nano">GPT-4.1 nano</SelectItem>
+                  <SelectItem value="o4-mini">o4-mini</SelectItem>
                 </SelectContent>
               </Select>
             </div>

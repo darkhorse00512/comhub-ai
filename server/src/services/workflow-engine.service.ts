@@ -54,6 +54,8 @@ export interface WorkflowEngineState {
   isWaitingAfterSpoken: boolean;
   /** IDs of dialogue nodes that have been completed (transitioned out of). Prevents re-entry loops. */
   completedDialogueNodeIds: string[];
+  /** Agent-level AI model override (e.g. "gpt-4o"). Empty = server default. */
+  agentAiModel?: string;
 }
 
 // --- Condition evaluator ---
@@ -237,7 +239,7 @@ export class WorkflowEngine {
     }
   }
 
-  constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string) {
+  constructor(nodes: WorkflowNode[], edges: WorkflowEdge[], agentSystemMessage?: string, agentAiModel?: string) {
     this.nodes = nodes;
     this.edges = edges;
     this.state = {
@@ -252,6 +254,7 @@ export class WorkflowEngine {
       conversationContext: [],
       isWaitingAfterSpoken: false,
       completedDialogueNodeIds: [],
+      agentAiModel: agentAiModel || '',
     };
   }
 
@@ -714,6 +717,28 @@ The system will automatically route to the correct exit based on the conversatio
   }
 
   /**
+   * Resolve which AI model to use for the current dialogue node.
+   * Priority: per-node model > agent-level model > server default (from env/config).
+   * Returns undefined to let gptService use its default.
+   */
+  private resolveDialogueModel(): string | undefined {
+    // 1. Check per-node model override
+    if (this.state.currentDialogueNodeId) {
+      const node = this.nodes.find(n => n.id === this.state.currentDialogueNodeId);
+      const nodeModel = node?.data?.model;
+      if (nodeModel && nodeModel.trim()) {
+        return nodeModel;
+      }
+    }
+    // 2. Check agent-level model
+    if (this.state.agentAiModel && this.state.agentAiModel.trim()) {
+      return this.state.agentAiModel;
+    }
+    // 3. Fall through to server default (undefined = gptService uses config.openai.model)
+    return undefined;
+  }
+
+  /**
    * Generate AI response using the full dialogue history.
    * Updates the system prompt with a fresh "already answered" list before each call.
    */
@@ -731,13 +756,16 @@ The system will automatically route to the correct exit based on the conversatio
         messages[0] = { role: 'system', content: sysContent };
       }
 
+      // Resolve model: per-node override > agent-level > server default
+      const model = this.resolveDialogueModel();
+
       // Track timing: prompt is ready, LLM call about to start
       this.lastTiming.promptReadyAt = Date.now() - this._processStartMs;
       this.lastTiming.llmRequestSentAt = Date.now() - this._processStartMs;
 
       const aiResponse = await gptService.generateWithHistory(
         messages,
-        { maxTokens: 150, temperature: 0.2 }
+        { maxTokens: 150, temperature: 0.2, model }
       );
 
       // Track timing: LLM call done (non-streaming, so first_token = done)

@@ -49,6 +49,7 @@ import {
   Key,
   Settings,
   VolumeX,
+  Brain,
   Info,
   Music,
   Play,
@@ -119,6 +120,8 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     interruptionWordCountThreshold: existingSettings.interruptionWordCountThreshold?.toString() || "1",
     // ComhubAI Voice
     comhubaiVoiceModelId: existingSettings.comhubaiVoiceModelId || "",
+    // AI Model
+    aiModel: existingSettings.aiModel || "",
   });
 
   const [showApiKey, setShowApiKey] = useState(false);
@@ -305,6 +308,40 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                         rows={3}
                       />
                     </div>
+                  </CardContent>
+                </Card>
+
+                {/* AI Model */}
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base text-primary">
+                      <Brain className="w-4 h-4" />
+                      AI Model
+                    </CardTitle>
+                    <CardDescription>
+                      Default model for all dialogue nodes. Can be overridden per node.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Select
+                      value={settings.aiModel || "__default__"}
+                      onValueChange={(v) =>
+                        setSettings({ ...settings, aiModel: v === "__default__" ? "" : v })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Server default (gpt-4-turbo-preview)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">Server default</SelectItem>
+                        <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                        <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
+                        <SelectItem value="gpt-4.1">GPT-4.1</SelectItem>
+                        <SelectItem value="gpt-4.1-mini">GPT-4.1 mini</SelectItem>
+                        <SelectItem value="gpt-4.1-nano">GPT-4.1 nano</SelectItem>
+                        <SelectItem value="o4-mini">o4-mini</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </CardContent>
                 </Card>
 

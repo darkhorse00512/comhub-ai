@@ -1565,8 +1565,9 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    // Create workflow engine
-    const engine = new WorkflowEngine(nodes, edges);
+    // Create workflow engine with agent-level AI model setting
+    const agentAiModel = agent.config?.settings?.aiModel || '';
+    const engine = new WorkflowEngine(nodes, edges, undefined, agentAiModel);
 
     // Generate session ID first so we can wire up the state-change callback
     const sessionId = `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
