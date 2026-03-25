@@ -1606,6 +1606,50 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       isComplete: result.isComplete,
     });
 
+    // --- Server-side TTS for initial messages (same voice as all other messages) ---
+    const speakableMessages = result.messages.filter(
+      (m) => m.type === 'ai' || m.type === 'scripted'
+    );
+    let audioDataArray: (string | null)[] = [];
+
+    if (speakableMessages.length > 0) {
+      try {
+        const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
+        session.voiceSettings = voiceSettings;
+        session.voiceSettingsResolved = true;
+
+        audioDataArray = await Promise.all(
+          speakableMessages.map(async (msg) => {
+            try {
+              const buffer = await agentVoiceService.generateTTS(msg.text, voiceSettings);
+              return buffer.toString('base64');
+            } catch (err) {
+              logger.warn('Server-side TTS failed for initial message', {
+                text: msg.text.substring(0, 50),
+                error: err instanceof Error ? err.message : err,
+              });
+              return null;
+            }
+          })
+        );
+      } catch (err) {
+        logger.warn('Server-side TTS batch failed for initial messages', {
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+    }
+
+    // Attach audio to each speakable message
+    let audioIdx = 0;
+    const messagesWithAudio = result.messages.map((msg) => {
+      if (msg.type === 'ai' || msg.type === 'scripted') {
+        const audio = audioDataArray[audioIdx] || null;
+        audioIdx++;
+        return { ...msg, audioBase64: audio };
+      }
+      return msg;
+    });
+
     // Extract call settings from agent config to pass to client
     const s = agent.config?.settings || {};
     const callSettings = {
@@ -1625,6 +1669,7 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       success: true,
       sessionId,
       ...result,
+      messages: messagesWithAudio,
       collectedFields: engine.getFields(),
       callSettings,
     });
