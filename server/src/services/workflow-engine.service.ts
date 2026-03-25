@@ -537,41 +537,40 @@ CONTEXT AWARENESS:
       prompt += `\n\nIMPORTANT: The above information has already been collected. Do NOT ask the caller for information that is already known. Use it directly in the conversation.`;
     }
 
-    // --- CONVERSATION CONTEXT: what happened before this stage ---
-    // When includeTranscript=false, full history is provided as actual chat messages
-    // (better AI comprehension), so we skip the text dump to avoid redundancy.
+    // --- CONVERSATION CONTEXT: only THIS stage's conversation ---
+    // CRITICAL: Only include messages from the CURRENT dialogue node.
+    // Including messages from other stages (Survey, Qualification, etc.) causes the AI
+    // to get confused about its role and ask questions from other stages.
+    const currentStageLabel = node.data?.label;
     if (includeTranscript && this.state.conversationContext.length > 0) {
-      // Only include the LAST few turns as transcript to prevent the AI from getting
-      // confused by earlier stages' conversations (e.g. Survey Q&A bleeding into
-      // Qualification). The collected fields already capture what was learned.
-      // Show up to 8 most recent entries — enough for continuity without stage confusion.
-      const recentContext = this.state.conversationContext.slice(-8);
-      const skippedCount = this.state.conversationContext.length - recentContext.length;
+      // Filter to ONLY messages from this stage
+      const stageContext = this.state.conversationContext.filter(
+        e => e.nodeLabel === currentStageLabel
+      );
 
-      prompt += `\n\n### RECENT CALL TRANSCRIPT (last few turns — read carefully before responding):`;
-      if (skippedCount > 0) {
-        prompt += `\n(${skippedCount} earlier messages omitted — all collected information is shown in Known Information above)`;
-      }
-      for (const entry of recentContext) {
-        if (entry.role === 'agent') {
-          prompt += `\nYou: "${entry.text}"`;
-        } else {
-          prompt += `\nCaller: "${entry.text}"`;
+      if (stageContext.length > 0) {
+        prompt += `\n\n### THIS STAGE'S CONVERSATION SO FAR:`;
+        for (const entry of stageContext) {
+          if (entry.role === 'agent') {
+            prompt += `\nYou: "${entry.text}"`;
+          } else {
+            prompt += `\nCaller: "${entry.text}"`;
+          }
         }
       }
+
       prompt += `\n\n⚠️ STRICT RULES:
-- Do NOT repeat anything from the transcript above. Do NOT rephrase previous questions.
-- The caller's previous answers are final — use them, don't re-verify.
-- If an error/fallback occurred, just continue from the last unanswered question — do NOT restart.
-- Continue the conversation from exactly where it left off.
-- ONLY follow YOUR Stage Instructions. Do NOT respond about topics from earlier stages.`;
+- Do NOT repeat anything from the conversation above.
+- The caller's previous answers are final — do NOT re-ask.
+- Continue from exactly where this stage left off.
+- ONLY follow YOUR Stage Instructions. Do NOT ask questions from other topics.`;
     } else if (!includeTranscript) {
       prompt += `\n\n⚠️ STRICT RULES:
-- The full call history is provided as chat messages above. You remember everything perfectly.
-- Do NOT repeat anything you already said. Do NOT rephrase previous questions.
-- The caller's previous answers are final — use them, don't re-verify.
-- Continue the conversation from exactly where it left off.
-- ONLY follow YOUR Stage Instructions. Do NOT respond about topics from earlier stages.`;
+- The call history is provided as chat messages above.
+- Do NOT repeat anything you already said.
+- The caller's previous answers are final — do NOT re-ask.
+- Continue from exactly where this stage left off.
+- ONLY follow YOUR Stage Instructions. Do NOT ask questions from other topics.`;
     }
 
     const maxTurns = parseInt(node.data?.maxTurns);
@@ -642,18 +641,13 @@ The system will automatically route to the correct exit based on the conversatio
       }
     }
 
-    const hasFullHistory = fullHistoryMessages !== null && fullHistoryMessages.length > 0;
-    const stagePrompt = this.buildDialogueSystemPrompt(node, !hasFullHistory);
+    // NOTE: We intentionally do NOT include full DB history as chat messages.
+    // Full history from ALL stages confuses the AI about its current role.
+    // Instead, buildDialogueSystemPrompt includes only THIS stage's conversation
+    // from conversationContext, which is sufficient and stage-scoped.
+    const stagePrompt = this.buildDialogueSystemPrompt(node, true);
 
     const history: ChatMessage[] = [{ role: 'system', content: stagePrompt }];
-
-    // Include recent call history as structured chat messages.
-    // Limit to last 12 messages to prevent earlier stages' conversations
-    // from confusing the AI about its current role/stage.
-    if (hasFullHistory) {
-      const recentMessages = fullHistoryMessages!.slice(-12);
-      history.push(...recentMessages);
-    }
 
     if (firstUserMessage) {
       history.push({ role: 'user', content: firstUserMessage });
