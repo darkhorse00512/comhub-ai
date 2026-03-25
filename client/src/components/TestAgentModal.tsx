@@ -580,18 +580,39 @@ const TestAgentModal = ({
 
   // --- Auto recording for audio mode ---
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
-    if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-    if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
-    // Prevent duplicate: if already recording, skip
-    if (recognitionRef.current) return;
+    if (!isCallActiveRef.current || callModeRef.current !== "audio") {
+      console.log('[startAutoRecording] BLOCKED: not active or not audio mode');
+      return;
+    }
+    if (!opts?.skipSpeakingCheck && isSpeakingRef.current) {
+      console.log('[startAutoRecording] BLOCKED: agent is speaking');
+      return;
+    }
+    if (recognitionRef.current) {
+      console.log('[startAutoRecording] BLOCKED: recognition already active');
+      return;
+    }
 
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) return;
+    if (!SpeechRecognitionAPI) {
+      console.error('[startAutoRecording] BLOCKED: SpeechRecognition API not available!');
+      return;
+    }
+
+    console.log('[startAutoRecording] OK — scheduling recognition in 500ms');
 
     setTimeout(() => {
-      if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
+      if (!isCallActiveRef.current || callModeRef.current !== "audio") {
+        console.log('[startAutoRecording] BLOCKED inside timeout: not active');
+        return;
+      }
+      if (recognitionRef.current) {
+        console.log('[startAutoRecording] BLOCKED inside timeout: recognition already exists');
+        return;
+      }
+      console.log('[startAutoRecording] Starting recognition NOW');
 
       try {
         const recognition = new SpeechRecognitionAPI();
