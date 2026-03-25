@@ -466,38 +466,49 @@ export class WorkflowEngine {
 
   // --- System prompt builder for dialogue stages ---
 
+  /**
+   * Extract {{variable}} names used in a text string.
+   */
+  private extractUsedVariables(text: string): string[] {
+    const matches = text.match(/\{\{(\w+)\}\}/g) || [];
+    return [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))];
+  }
+
   private buildDialogueSystemPrompt(node: WorkflowNode, includeTranscript = true): string {
     let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
 
-    prompt += `\n\nIMPORTANT — VOICE CALL RULES (apply to EVERY response without exception):
+    const stageMessage = node.data?.stageMessage || 'Engage in natural conversation with the caller.';
+    const substitutedStageMessage = this.substituteFieldVariables(stageMessage);
 
-ROLE BOUNDARIES (CRITICAL):
-- You are ONLY responsible for THIS stage of the conversation. Do ONLY what the Stage Instructions say.
-- Do NOT say anything beyond the scope of your Stage Instructions — no goodbyes, no farewells, no "have a great day", no closing remarks, no summaries of what was discussed.
-- Do NOT improvise, add pleasantries, or say things the Stage Instructions did not ask you to say.
-- When your stage objectives are complete, just stop. The system handles what comes next.
+    // Only include field values that are actually used as {{variables}} in this stage's instructions.
+    // This prevents the AI from acting on data it shouldn't know about (e.g., address in Introduction).
+    const usedVars = this.extractUsedVariables(stageMessage);
+    if (usedVars.length > 0) {
+      const relevantFields: string[] = [];
+      for (const varName of usedVars) {
+        const val = this.state.fields[varName];
+        if (val !== undefined && val !== null && val !== '') {
+          relevantFields.push(`${varName} = ${JSON.stringify(val)}`);
+        }
+      }
+      if (relevantFields.length > 0) {
+        prompt += `\n\nVariable values for this stage: ${relevantFields.join(', ')}`;
+      }
+    }
 
-SPEECH STYLE (TOP PRIORITY — NEVER VIOLATE):
-- This is a real-time voice call. Every extra word = delay for the caller.
-- MAXIMUM 1 short sentence per response (under 15 words). Be extremely concise.
-- NEVER combine multiple ideas in one response. One thought = one turn.
-- If the Stage Instructions contain a long paragraph, DO NOT read it out loud. Break it into the shortest possible single question or statement.
-- Be formal, polite, and kind — but ultra-brief. No filler words, no extra pleasantries, no padding phrases.
-- FORBIDDEN phrases: "Unfortunately, many people feel the same way", "Thank you for your participation", "It's important to me to...", "To ensure my data is correct", or any similar padding.
-- When the caller answers, acknowledge in 1-3 words (e.g. "Thank you." or "Got it.") then immediately ask the NEXT question.
-- For closing/summary messages: keep it under 20 words total. Just state the key next step, nothing more.
-- NEVER list multiple things (costs, options, steps) in one response. State only the single most important point.
+    prompt += `\n\n## ABSOLUTE RULES — FOLLOW WITHOUT EXCEPTION:
+1. You are in a REAL-TIME VOICE CALL. Be extremely concise — max 1 short sentence per response.
+2. You must ONLY do what the Stage Instructions below tell you to do. NOTHING ELSE.
+3. Do NOT ask questions, verify data, or discuss topics that are NOT explicitly mentioned in the Stage Instructions.
+4. Do NOT improvise, add pleasantries, or go beyond the scope of the Stage Instructions.
+5. When the Stage Instructions say to "execute transition" or "move to next" → append [NEXT] to your response.
+6. When ALL tasks in the Stage Instructions are complete → append [NEXT].
+7. [NEXT] is invisible to the caller — never say it aloud.
+8. Do NOT repeat questions already asked. Do NOT re-introduce yourself.
+9. One thought per response. If Stage Instructions have a long paragraph, break it into the shortest single statement.`;
 
-CONTEXT AWARENESS:
-- NEVER repeat a question that was already asked in this call — even if the caller gave an unclear answer.
-- NEVER re-introduce yourself or re-greet if you already did.
-- If the caller already confirmed something (e.g. their name), treat it as confirmed and move forward.
-- If speech was not recognized, ask them to repeat ONLY the last unanswered question — do NOT restart.
-- Always continue from exactly where the conversation left off.`;
-
-    prompt += `\n\n---\n\n## Current Conversation Stage: "${node.data?.label || 'Dialogue'}"`;
-    const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || 'Engage in natural conversation with the caller.');
-    prompt += `\n\n### Stage Instructions:\n${stageMessage}`;
+    prompt += `\n\n---\n\n## Current Stage: "${node.data?.label || 'Dialogue'}"`;
+    prompt += `\n\n### Stage Instructions (follow EXACTLY — do NOTHING beyond this):\n${substitutedStageMessage}`;
 
     const extraInstructions: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
     if (extraInstructions.length > 0) {
@@ -576,34 +587,13 @@ CONTEXT AWARENESS:
     const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
 
     if (transitions.length > 0) {
-      prompt += `\n\n### Available Stage Exits:
-This stage has these possible exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}
-The system will automatically route to the correct exit based on the conversation.
-
-### RESPONSE RULES (HIGH PRIORITY — these override everything else):
-1. Follow the Stage Instructions step by step. Complete ALL steps IN ORDER.
-2. Ask ONE question at a time. Wait for the answer before asking the next.
-3. NEVER re-ask a question the caller has already answered. Check the ALREADY ANSWERED section and the conversation above.
-4. If the caller says "I don't know" to a question, SKIP it and move to the NEXT question. Do NOT keep asking.
-5. If the caller corrects information, acknowledge briefly and continue to the NEXT unanswered question.
-6. [NEXT] SIGNAL — this is how you tell the system to advance to the next workflow stage:
-   - When Stage Instructions say "execute transition", "move to", "go to", or any phrase about transitioning → append [NEXT].
-   - When ALL questions in the Stage Instructions have been asked and answered (or skipped) → append [NEXT].
-   - When the caller refuses or disqualifies (e.g. "I'm not the owner") → append [NEXT] immediately.
-   - [NEXT] is invisible — never say it aloud.
-   - NEVER include [NEXT] if you just asked a NEW question — wait for the answer first.
-   - If Stage Instructions say to "wait" after something, STILL append [NEXT] — the system handles the waiting.
-7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+      prompt += `\n\n### Stage Exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}`;
+      prompt += `\nThe system routes to the correct exit automatically. When the Stage Instructions say to "execute transition" or all tasks are done, append [NEXT].`;
     } else {
-      prompt += `\n\n### CRITICAL RULES:
-1. Follow the stage instructions precisely.
-2. Be natural and helpful. Ask one question at a time.
-3. When you have completed ALL objectives of this stage, append [NEXT] at the end.
-4. NEVER include [NEXT] in your first response. Converse first.
-5. [NEXT] is invisible — never say it aloud.
-6. If more to discuss, do NOT include [NEXT].
-7. If the caller is unintelligible after multiple attempts, append [FALLBACK] as last resort.`;
+      prompt += `\n\nWhen all tasks in the Stage Instructions are complete, append [NEXT].`;
     }
+    prompt += `\n[NEXT] is invisible to the caller. Never include [NEXT] if you just asked a question — wait for the answer first.`;
+    prompt += `\nIf the caller is unintelligible after multiple attempts, append [FALLBACK].`;
 
     return prompt;
   }
