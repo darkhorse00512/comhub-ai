@@ -662,13 +662,15 @@ const TestAgentModal = ({
           const text = (finalTranscript.trim() || interimTranscript.trim());
 
           if (text) {
+            // If agent is still speaking or processing, ignore — the mic picked up agent audio
+            if (isSpeakingRef.current || isLoadingRef.current) {
+              return;
+            }
             const cs = callSettingsRef.current;
             // Interruption sensitivity: only filter when barge-in is active AND threshold > 1.
-            // Default threshold is 1, so single-word responses ("yes", "hello") are always accepted.
             const wordCount = text.split(/\s+/).length;
             if (cs.interruptionSensitivity === "high" && cs.interruptionWordCountThreshold > 1 && wordCount < cs.interruptionWordCountThreshold) {
-              // Too few words during barge-in — likely accidental noise, re-listen
-              if (waitingForInputRef.current && isCallActiveRef.current) {
+              if (isCallActiveRef.current) {
                 startAutoRecording();
               }
               return;
@@ -676,10 +678,15 @@ const TestAgentModal = ({
             noSpeechCountRef.current = 0;
             idleCountRef.current = 0; // reset idle on valid speech
             await handleUserMessageRef.current(text);
-          } else if (hasReceivedSpeech) {
+          } else if (hasReceivedSpeech && !isSpeakingRef.current && !isLoadingRef.current) {
             // User spoke but speech couldn't be transcribed — trigger fallback
             await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
           } else {
+            // No speech detected — but if the agent is speaking (audio playback caused
+            // the abort), do NOT count as idle. Just return silently.
+            if (isSpeakingRef.current || isLoadingRef.current) {
+              return;
+            }
             // No speech detected — handle idle behavior
             const cs = callSettingsRef.current;
             idleCountRef.current++;
