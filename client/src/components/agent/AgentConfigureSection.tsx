@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1047,17 +1048,24 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               })}
             </div>
           )}
-          {/* Mouse-tracking tooltip for voice card descriptions — must be INSIDE DialogContent */}
-          {hoverTooltip && (
-            <div
-              className="fixed z-[9999] pointer-events-none px-3 py-2 rounded-md bg-popover text-popover-foreground border shadow-md max-w-[250px]"
-              style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y + 12 }}
-            >
-              <p className="text-xs">{hoverTooltip.text}</p>
-            </div>
-          )}
         </DialogContent>
       </Dialog>
+
+      {/* Mouse-tracking tooltip — rendered via portal to document.body so it's above everything */}
+      {hoverTooltip && createPortal(
+        <div
+          className="pointer-events-none px-3 py-2 rounded-md bg-popover text-popover-foreground border shadow-md max-w-[250px]"
+          style={{
+            position: 'fixed',
+            left: hoverTooltip.x + 12,
+            top: hoverTooltip.y + 12,
+            zIndex: 99999,
+          }}
+        >
+          <p className="text-xs">{hoverTooltip.text}</p>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
