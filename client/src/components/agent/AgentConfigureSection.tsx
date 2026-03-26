@@ -162,6 +162,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
   const selectVoiceModel = (model: any) => {
     setSelectedVoiceModel(model);
     setSettings({ ...settings, comhubaiVoiceModelId: model.id });
+    setHoverTooltip(null);
     setVoiceLibraryOpen(false);
     stopAudio();
   };
@@ -950,7 +951,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
       {/* ComhubAI Voice Library Modal */}
       <Dialog open={voiceLibraryOpen} onOpenChange={(open) => {
-        if (!open) stopAudio();
+        if (!open) { stopAudio(); setHoverTooltip(null); }
         setVoiceLibraryOpen(open);
       }}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
