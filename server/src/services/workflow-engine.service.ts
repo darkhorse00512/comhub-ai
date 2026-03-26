@@ -475,7 +475,22 @@ export class WorkflowEngine {
   }
 
   private buildDialogueSystemPrompt(node: WorkflowNode, includeTranscript = true): string {
-    let prompt = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
+    // Extract only the [Identity] and [Style] sections from the agent setup.
+    // Do NOT include [Limits] or strategy/goals — they cause the AI to go off-topic.
+    let agentContext = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
+
+    // If the agent setup has ### sections, only keep Identity and Style
+    if (agentContext.includes('###') || agentContext.includes('[Identity]') || agentContext.includes('[Style]')) {
+      const sections = agentContext.split(/###\s*/);
+      const keepSections = sections.filter(s => {
+        const lower = s.toLowerCase();
+        // Keep the preamble (before first ###) and Identity/Style sections
+        return !lower.startsWith('[limit') && !lower.startsWith('[voicemail');
+      });
+      agentContext = keepSections.join('### ').trim();
+    }
+
+    let prompt = agentContext;
 
     const stageMessage = node.data?.stageMessage || 'Engage in natural conversation with the caller.';
     const substitutedStageMessage = this.substituteFieldVariables(stageMessage);
@@ -1138,6 +1153,15 @@ Rules:
       e => e.role === 'agent' && e.nodeLabel === currentLabel
     );
 
+    logger.info('WorkflowEngine: State check', {
+      currentDialogueNodeId: this.state.currentDialogueNodeId,
+      currentLabel,
+      mostRecentStageLabel,
+      currentStageHasSpoken,
+      contextLength: this.state.conversationContext.length,
+      completedIds: this.state.completedDialogueNodeIds,
+    });
+
     if (currentStageHasSpoken && mostRecentStageLabel && mostRecentStageLabel !== currentLabel) {
       // Recent conversation is from a different stage — currentDialogueNodeId is stale.
       // Find the correct dialogue node and switch to it.
@@ -1669,12 +1693,15 @@ Rules:
           this.state.dialogueTurnCount = 0;
 
           // CRITICAL: Mark as completed IMMEDIATELY upon entry — not on exit.
-          // This prevents re-entry bugs caused by unexpected routing, race conditions,
-          // or transitions that loop back to this node.
           if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
           if (!this.state.completedDialogueNodeIds.includes(node.id)) {
             this.state.completedDialogueNodeIds.push(node.id);
           }
+
+          // PERSIST IMMEDIATELY — if the server restarts during the opening message
+          // generation, the disk state will have the correct currentDialogueNodeId.
+          // Without this, a restart loads stale state from before the transition.
+          this.persistState();
 
           // Collect valid transition names for this dialogue node
           const dialogueTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
