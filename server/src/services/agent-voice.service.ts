@@ -132,10 +132,12 @@ class AgentVoiceService {
           model: voiceSettings.elevenlabsModel,
           textLength: text.length,
         });
+        // Always use eleven_turbo_v2_5 for speed (~0.5s vs ~3s for multilingual_v2).
+        // The turbo model supports all languages and has similar quality.
         const buffer = await ttsService.elevenlabsTextToSpeech(text, {
           apiKey: voiceSettings.elevenlabsApiKey,
           voiceId: voiceSettings.elevenlabsVoiceId,
-          model: voiceSettings.elevenlabsModel,
+          model: 'eleven_turbo_v2_5',
         });
         this.lastTTSProvider = voiceSettings.ttsProvider;
         return buffer;
@@ -170,7 +172,7 @@ class AgentVoiceService {
         return await ttsService.elevenlabsTextToSpeechStream(text, {
           apiKey: voiceSettings.elevenlabsApiKey,
           voiceId: voiceSettings.elevenlabsVoiceId,
-          model: voiceSettings.elevenlabsModel,
+          model: 'eleven_turbo_v2_5',
         });
       } catch (err) {
         logger.error('ElevenLabs TTS stream failed, falling back to OpenAI stream', {
