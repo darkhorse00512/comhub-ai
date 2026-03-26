@@ -744,11 +744,20 @@ export class WorkflowEngine {
       // This ensures the AI sees it LAST (highest priority in chat context) and doesn't re-ask.
       const answeredSummary = this.buildAnsweredSummary();
       if (answeredSummary && messages.length > 1) {
-        // Insert before the last user message so the AI pays attention to it
-        const insertIdx = messages.length - 1; // before last message
+        const insertIdx = messages.length - 1;
+        const qaCount = answeredSummary.split('\n').length;
         messages.splice(insertIdx, 0, {
           role: 'system',
-          content: `CRITICAL — These questions were ALREADY asked and answered. Do NOT re-ask ANY of them:\n${answeredSummary}\n\nYour next response must continue with the NEXT UNANSWERED step. If ALL steps are answered, say a brief acknowledgment and append [NEXT].`,
+          content: `STOP — READ THIS BEFORE RESPONDING.
+
+${qaCount} questions have ALREADY been asked and answered:
+${answeredSummary}
+
+RULES:
+- Do NOT re-ask ANY question listed above. The caller already answered them.
+- Check the Stage Instructions: if there are MORE unanswered steps, ask the NEXT one.
+- If ALL steps in the Stage Instructions are now complete, respond with ONLY a brief "Thank you." and append [NEXT].
+- NEVER start over. NEVER repeat step 1. Continue from where you left off.`,
         });
       }
 
@@ -921,6 +930,15 @@ Rules:
 
     try {
       const checkStartMs = Date.now();
+
+      logger.info('WorkflowEngine: Proactive check input', {
+        nodeLabel: node.data?.label,
+        transitions: transitionNames,
+        contextEntries: stageContext.length,
+        lastEntry: stageContext[stageContext.length - 1]?.text?.substring(0, 60),
+        lastEntryRole: stageContext[stageContext.length - 1]?.role,
+      });
+
       const result = await gptService.generateWithCustomPrompt(
         prompt,
         'Output only NONE or a transition name. Nothing else.',
@@ -929,6 +947,12 @@ Rules:
 
       this.lastTiming.proactiveCheckMs = Date.now() - checkStartMs;
       const answer = (result.text || '').trim().replace(/['"]/g, '');
+
+      logger.info('WorkflowEngine: Proactive check result', {
+        nodeLabel: node.data?.label,
+        answer,
+        checkMs: this.lastTiming.proactiveCheckMs,
+      });
 
       if (!answer || answer.toUpperCase() === 'NONE') return null;
 
