@@ -1047,18 +1047,17 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               })}
             </div>
           )}
+          {/* Mouse-tracking tooltip for voice card descriptions — must be INSIDE DialogContent */}
+          {hoverTooltip && (
+            <div
+              className="fixed z-[9999] pointer-events-none px-3 py-2 rounded-md bg-popover text-popover-foreground border shadow-md max-w-[250px]"
+              style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y + 12 }}
+            >
+              <p className="text-xs">{hoverTooltip.text}</p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
-
-      {/* Mouse-tracking tooltip for voice card descriptions */}
-      {hoverTooltip && (
-        <div
-          className="fixed z-[9999] pointer-events-none px-3 py-2 rounded-md bg-popover text-popover-foreground border shadow-md max-w-[250px]"
-          style={{ left: hoverTooltip.x + 12, top: hoverTooltip.y + 12 }}
-        >
-          <p className="text-xs">{hoverTooltip.text}</p>
-        </div>
-      )}
     </div>
   );
 };
