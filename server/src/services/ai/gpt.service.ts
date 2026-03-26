@@ -194,6 +194,72 @@ Remember you are in a real-time voice conversation, so keep responses conversati
   }
 
   /**
+   * Stream a response using full conversation history.
+   * Calls onSentence() each time a complete sentence is detected in the stream.
+   * Returns the full aggregated response text.
+   */
+  async streamWithHistory(
+    conversationHistory: ChatMessage[],
+    onSentence: (sentence: string) => void,
+    options?: {
+      maxTokens?: number;
+      temperature?: number;
+      model?: string;
+    }
+  ): Promise<AIResponse> {
+    try {
+      const useModel = options?.model || config.openai.model;
+      logger.info('Streaming AI response with history', {
+        messageCount: conversationHistory.length,
+        model: useModel,
+      });
+
+      const stream = await this.openai.chat.completions.create({
+        model: useModel,
+        messages: conversationHistory,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens || 500,
+        stream: true,
+      });
+
+      let fullResponse = '';
+      let sentenceBuffer = '';
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (!content) continue;
+
+        fullResponse += content;
+        sentenceBuffer += content;
+
+        // Check for sentence boundaries (.!?) followed by space or end
+        const sentenceMatch = sentenceBuffer.match(/^(.*?[.!?])(?:\s+|$)(.*)/s);
+        if (sentenceMatch) {
+          const completeSentence = sentenceMatch[1].trim();
+          sentenceBuffer = sentenceMatch[2] || '';
+          if (completeSentence) {
+            onSentence(completeSentence);
+          }
+        }
+      }
+
+      // Flush remaining buffer as final sentence
+      if (sentenceBuffer.trim()) {
+        onSentence(sentenceBuffer.trim());
+      }
+
+      logger.info('Streaming AI response completed', {
+        response: fullResponse.substring(0, 200),
+      });
+
+      return { text: fullResponse };
+    } catch (error) {
+      logger.error('Failed to stream AI response with history:', error);
+      throw new Error(`GPT streaming generation failed: ${error}`);
+    }
+  }
+
+  /**
    * Generate a response with a custom system prompt (doesn't use the default one)
    * Useful for specialized tasks like workflow generation
    */

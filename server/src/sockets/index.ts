@@ -5,6 +5,8 @@ import config from '../config';
 import callService from '../services/call.service';
 import ariClientInstance from '../ari/client';
 import bulkCallingService from '../services/bulk-calling.service';
+import getSupabaseClient from '../config/supabase';
+import streamingWorkflow from '../services/workflow-streaming.service';
 
 export interface SocketUser {
   userId: string;
@@ -77,7 +79,59 @@ class SocketService {
         }
       });
 
+      // --- Streaming workflow events ---
+      socket.on('workflow:start', async (data: { agentId: string; direction: 'inbound' | 'outbound' }) => {
+        const userId = socket.data.userId;
+        if (!userId) {
+          socket.emit('workflow:error', { error: 'Not authenticated' });
+          return;
+        }
+        try {
+          const supabase = getSupabaseClient();
+          const { data: agent, error: agentErr } = await supabase
+            .from('agents')
+            .select('*')
+            .eq('id', data.agentId)
+            .single();
+          if (agentErr || !agent?.config?.flow?.nodes?.length) {
+            socket.emit('workflow:error', { error: 'Agent not found or no workflow' });
+            return;
+          }
+          const nodes = agent.config.flow.nodes;
+          const edges = agent.config.flow.edges || [];
+          const aiModel = agent.config?.settings?.aiModel || '';
+          const sessionId = await streamingWorkflow.startStreamingSession(
+            socket, data.agentId, userId, nodes, edges, data.direction, aiModel,
+          );
+          if (sessionId) {
+            socket.data.workflowSessionId = sessionId;
+          }
+        } catch (err) {
+          logger.error('workflow:start error', { error: err });
+          socket.emit('workflow:error', { error: 'Failed to start workflow' });
+        }
+      });
+
+      socket.on('workflow:message', async (data: { sessionId: string; message: string }) => {
+        if (!data.sessionId || !data.message) {
+          socket.emit('workflow:error', { error: 'sessionId and message required' });
+          return;
+        }
+        await streamingWorkflow.handleStreamingMessage(socket, data.sessionId, data.message);
+      });
+
+      socket.on('workflow:end', (data: { sessionId: string }) => {
+        if (data.sessionId) {
+          const fields = streamingWorkflow.endStreamingSession(data.sessionId);
+          socket.emit('workflow:ended', { collectedFields: fields });
+        }
+      });
+
       socket.on('disconnect', () => {
+        // Clean up any streaming session
+        if (socket.data.workflowSessionId) {
+          streamingWorkflow.endStreamingSession(socket.data.workflowSessionId);
+        }
         this.handleDisconnect(socket);
       });
 

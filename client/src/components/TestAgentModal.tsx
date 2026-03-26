@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useWorkflowStream, StreamAudioMessage } from "@/hooks/useWorkflowStream";
 import {
   Dialog,
   DialogContent,
@@ -203,6 +204,105 @@ const TestAgentModal = ({
   const endCallRef = useRef<() => Promise<void>>(async () => {});
   const startAutoRecordingRef = useRef<(opts?: { skipSpeakingCheck?: boolean }) => void>(() => {});
   const noSpeechCountRef = useRef(0);
+
+  // --- Streaming audio queue ---
+  // Audio messages arrive one at a time via WebSocket. Queue them and play sequentially.
+  const audioQueueRef = useRef<StreamAudioMessage[]>([]);
+  const isPlayingQueueRef = useRef(false);
+  const outputAndSpeakRef = useRef<(text: string, nodeLabel?: string, blob?: Blob | null) => Promise<void>>(async () => {});
+
+  const playAudioQueue = useCallback(async () => {
+    if (isPlayingQueueRef.current) return;
+    isPlayingQueueRef.current = true;
+    while (audioQueueRef.current.length > 0) {
+      if (!isCallActiveRef.current) break;
+      const msg = audioQueueRef.current.shift()!;
+      let blob: Blob | null = null;
+      if (msg.audioBase64) {
+        try {
+          const binary = atob(msg.audioBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          blob = new Blob([bytes], { type: "audio/mpeg" });
+        } catch { /* fallback to no blob */ }
+      }
+      await outputAndSpeakRef.current(msg.text, msg.nodeLabel, blob);
+    }
+    isPlayingQueueRef.current = false;
+  }, []);
+
+  // --- WebSocket streaming workflow hook ---
+  const {
+    isConnected: wsConnected,
+    startWorkflow,
+    sendMessage: wsSendMessage,
+    endWorkflow,
+  } = useWorkflowStream({
+    onSystem: (text) => {
+      addMessage("system", text);
+    },
+    onAudio: (msg) => {
+      // Queue audio and play sequentially
+      audioQueueRef.current.push(msg);
+      playAudioQueue();
+    },
+    onDone: (data) => {
+      // Called after ALL messages for a turn are emitted
+      setCurrentWorkflowStep(data.currentStage || (data.isComplete ? "Workflow completed" : null));
+      if (data.collectedFields && Object.keys(data.collectedFields).length > 0) {
+        setCollectedFields((prev) => ({ ...prev, ...data.collectedFields }));
+        collectedFieldsRef.current = { ...collectedFieldsRef.current, ...data.collectedFields };
+      }
+      if (data.processingMs) {
+        addMessage("system", `Server: ${data.processingMs}ms`);
+      }
+      // Wait for audio queue to finish, then start recording
+      const waitForQueue = () => {
+        if (isPlayingQueueRef.current || audioQueueRef.current.length > 0) {
+          setTimeout(waitForQueue, 200);
+          return;
+        }
+        setIsLoading(false);
+        isLoadingRef.current = false;
+        if (data.isComplete && isCallActiveRef.current) {
+          addMessage("system", "Workflow complete — ending call");
+          setTimeout(() => { if (isCallActiveRef.current) endCallRef.current(); }, 2000);
+        } else if (callModeRef.current === "audio" && isCallActiveRef.current) {
+          startAutoRecordingRef.current();
+        }
+      };
+      waitForQueue();
+    },
+    onError: (error) => {
+      addMessage("system", `⚠️ Error: ${error}`);
+      setIsLoading(false);
+      isLoadingRef.current = false;
+      if (callModeRef.current === "audio" && isCallActiveRef.current) {
+        startAutoRecordingRef.current();
+      }
+    },
+    onStarted: (data) => {
+      workflowSessionIdRef.current = data.sessionId;
+      if (data.voiceInfo) {
+        const vi = data.voiceInfo;
+        const parts: string[] = [`Voice: ${vi.provider}`];
+        if (vi.voiceId) parts.push(`voiceId=${vi.voiceId}`);
+        addMessage("system", parts.join(" | "));
+      }
+      // Wait for audio queue to finish, then start recording
+      const waitForQueue = () => {
+        if (isPlayingQueueRef.current || audioQueueRef.current.length > 0) {
+          setTimeout(waitForQueue, 200);
+          return;
+        }
+        setIsLoading(false);
+        if (!data.isComplete && callModeRef.current === "audio" && isCallActiveRef.current) {
+          startAutoRecordingRef.current();
+        }
+      };
+      waitForQueue();
+    },
+  });
 
   // Set mode when modal opens with initialMode
   useEffect(() => {
@@ -577,6 +677,11 @@ const TestAgentModal = ({
     },
     [speakText, speakPrefetchedBlob]
   );
+
+  // Keep outputAndSpeakRef in sync for streaming audio queue
+  useEffect(() => {
+    outputAndSpeakRef.current = outputAndSpeak;
+  }, [outputAndSpeak]);
 
   // --- Auto recording for audio mode ---
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
@@ -967,17 +1072,8 @@ const TestAgentModal = ({
 
       const isSpeechNotRecognized = text === "[SPEECH_NOT_RECOGNIZED]";
 
-      if (!waitingForInputRef.current) {
-        if (!isSpeechNotRecognized) {
-          addMessage("system", "Waiting for next stage...");
-        }
-        return;
-      }
-
-      // Prevent concurrent sends — use a ref for instant check (state is async)
-      if (isLoadingRef.current) {
-        return;
-      }
+      // Prevent concurrent sends
+      if (isLoadingRef.current) return;
 
       // Don't show [SPEECH_NOT_RECOGNIZED] as a user message
       if (!isSpeechNotRecognized) {
@@ -987,7 +1083,16 @@ const TestAgentModal = ({
       setIsLoading(true);
       isLoadingRef.current = true;
 
-      // --- Timing: track each phase ---
+      // --- STREAMING MODE (audio calls via WebSocket) ---
+      // Send via WebSocket — responses arrive as streaming events (onAudio, onDone)
+      // which are handled by the useWorkflowStream callbacks above.
+      if (callModeRef.current === "audio" && wsConnected) {
+        wsSendMessage(text);
+        // Don't await — the onDone callback handles recording restart and loading state
+        return;
+      }
+
+      // --- HTTP MODE (text calls — original batch flow) ---
       const sttDoneAt = sttEndTimeRef.current || Date.now();
       const apiStartMs = Date.now();
 
@@ -1086,7 +1191,7 @@ const TestAgentModal = ({
         }
       }
     },
-    [sendWorkflowMessageAPI, processWorkflowResult, addMessage, startAutoRecording]
+    [sendWorkflowMessageAPI, processWorkflowResult, addMessage, startAutoRecording, wsConnected, wsSendMessage]
   );
 
   // Keep ref always pointing to the latest handleUserMessage
@@ -1150,7 +1255,35 @@ const TestAgentModal = ({
         setCallDuration((prev) => prev + 1);
       }, 1000);
 
-      // Start workflow via server-side engine
+      // Reset idle counter
+      idleCountRef.current = 0;
+
+      // Set up max call duration enforcement
+      const maxDur = DEFAULT_CALL_SETTINGS.maxCallDuration;
+      if (maxDur > 0) {
+        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = setTimeout(() => {
+          if (isCallActiveRef.current) {
+            addMessage("system", `Max duration reached (${maxDur}s), ending call`);
+            endCallRef.current();
+          }
+        }, maxDur * 1000);
+      }
+
+      // --- STREAMING MODE (audio via WebSocket) ---
+      if (callMode === "audio" && wsConnected) {
+        toast({
+          title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
+          description: "Streaming audio mode active.",
+        });
+        // Start workflow via WebSocket — responses arrive as streaming events
+        // The onStarted/onAudio/onDone callbacks handle playback and recording
+        startWorkflow(agentId, activeTab);
+        // Loading state is managed by onStarted/onDone callbacks
+        return;
+      }
+
+      // --- HTTP MODE (text mode — original batch flow) ---
       const result = await startWorkflowCallAPI(activeTab);
 
       if (!result || !result.success) {
@@ -1171,69 +1304,21 @@ const TestAgentModal = ({
         return;
       }
 
-      // Store workflow session ID
       workflowSessionIdRef.current = result.sessionId || null;
 
-      // Apply call settings from server
       if (result.callSettings) {
         setCallSettings(result.callSettings);
         callSettingsRef.current = result.callSettings;
-      }
-
-      // Reset idle counter
-      idleCountRef.current = 0;
-
-      // Set up max call duration enforcement
-      const maxDur = result.callSettings?.maxCallDuration || DEFAULT_CALL_SETTINGS.maxCallDuration;
-      if (maxDur > 0) {
-        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
-        maxDurationTimerRef.current = setTimeout(() => {
-          if (isCallActiveRef.current) {
-            addMessage("system", `Max duration reached (${maxDur}s), ending call`);
-            endCallRef.current();
-          }
-        }, maxDur * 1000);
       }
 
       setIsLoading(false);
 
       toast({
         title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
-        description:
-          callMode === "audio"
-            ? "Audio mode active. The workflow will execute step by step."
-            : "Text mode active. The workflow will execute step by step.",
+        description: "Text mode active. The workflow will execute step by step.",
       });
 
-      // Show voice configuration info
-      if (result.voiceInfo) {
-        const vi = result.voiceInfo;
-        const parts: string[] = [`Voice: ${vi.provider}`];
-        if (vi.voice) parts.push(`voice=${vi.voice}`);
-        if (vi.voiceId) parts.push(`voiceId=${vi.voiceId}`);
-        if (vi.model) parts.push(`model=${vi.model}`);
-        if (vi.apiKey) parts.push(`key=${vi.apiKey}`);
-        if (vi.language) parts.push(`lang=${vi.language}`);
-        addMessage("system", parts.join(" | "));
-        // Show TTS error prominently if voice failed
-        if (vi.error) {
-          addMessage("system", `⚠️ Voice Error: ${vi.error}`);
-          addMessage("system", `Using fallback: ${vi.actualProvider || 'openai'}`);
-        }
-      }
-
-      // DEBUG: Show server response status in chat
-      addMessage("system", `[DEBUG] start: isComplete=${result.isComplete}, waitingForInput=${result.waitingForInput}, msgs=${result.messages?.length}, audio=${result.messages?.some((m: any) => m.audioBase64)}`);
-
-      // Process initial workflow messages (greetings, scripted messages, etc.)
       await processWorkflowResult(result);
-
-      // Start recording for user input after initial messages play
-      const shouldRecord = !result.isComplete && callModeRef.current === "audio" && isCallActiveRef.current;
-      addMessage("system", `[DEBUG] after play: shouldRecord=${shouldRecord}, isCallActive=${isCallActiveRef.current}, isSpeaking=${isSpeakingRef.current}`);
-      if (shouldRecord) {
-        startAutoRecording();
-      }
     } catch (error) {
       console.error("Error starting call:", error);
       toast({
@@ -1251,6 +1336,8 @@ const TestAgentModal = ({
     startWorkflowCallAPI,
     processWorkflowResult,
     startAutoRecording,
+    wsConnected,
+    startWorkflow,
   ]);
 
   // --- End call ---
@@ -1258,7 +1345,10 @@ const TestAgentModal = ({
     isCallActiveRef.current = false;
     waitingForInputRef.current = false;
 
-    // End workflow session on server and get any remaining collected fields
+    // End streaming WebSocket session if active
+    endWorkflow();
+
+    // End HTTP workflow session on server and get any remaining collected fields
     const endFields = await endWorkflowCallAPI();
     const finalFields = { ...collectedFieldsRef.current, ...endFields };
     workflowSessionIdRef.current = null;
@@ -1337,7 +1427,7 @@ const TestAgentModal = ({
       title: "Call Ended",
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast, callSessionId, endWorkflowCallAPI]);
+  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow]);
 
   // Keep endCallRef in sync
   useEffect(() => {
