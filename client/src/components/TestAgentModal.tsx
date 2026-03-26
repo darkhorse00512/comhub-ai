@@ -206,17 +206,26 @@ const TestAgentModal = ({
   const noSpeechCountRef = useRef(0);
 
   // --- Streaming audio queue ---
-  // Audio messages arrive one at a time via WebSocket. Queue them and play sequentially.
-  const audioQueueRef = useRef<StreamAudioMessage[]>([]);
+  // Audio messages arrive via WebSocket with `index` for ordering.
+  // Since TTS runs in parallel, messages may arrive out of order.
+  // We buffer them and play in correct index order.
+  const audioBufferRef = useRef<Map<number, StreamAudioMessage>>(new Map());
+  const nextPlayIndexRef = useRef(0);
   const isPlayingQueueRef = useRef(false);
+  const expectedCountRef = useRef(0);
   const outputAndSpeakRef = useRef<(text: string, nodeLabel?: string, blob?: Blob | null) => Promise<void>>(async () => {});
 
   const playAudioQueue = useCallback(async () => {
     if (isPlayingQueueRef.current) return;
     isPlayingQueueRef.current = true;
-    while (audioQueueRef.current.length > 0) {
+
+    // Play messages in index order
+    while (audioBufferRef.current.has(nextPlayIndexRef.current)) {
       if (!isCallActiveRef.current) break;
-      const msg = audioQueueRef.current.shift()!;
+      const msg = audioBufferRef.current.get(nextPlayIndexRef.current)!;
+      audioBufferRef.current.delete(nextPlayIndexRef.current);
+      nextPlayIndexRef.current++;
+
       let blob: Blob | null = null;
       if (msg.audioBase64) {
         try {
@@ -228,6 +237,7 @@ const TestAgentModal = ({
       }
       await outputAndSpeakRef.current(msg.text, msg.nodeLabel, blob);
     }
+
     isPlayingQueueRef.current = false;
   }, []);
 
@@ -242,8 +252,8 @@ const TestAgentModal = ({
       addMessage("system", text);
     },
     onAudio: (msg) => {
-      // Queue audio and play sequentially
-      audioQueueRef.current.push(msg);
+      // Buffer audio by index and play in order
+      audioBufferRef.current.set(msg.index, msg);
       playAudioQueue();
     },
     onDone: (data) => {
@@ -256,10 +266,10 @@ const TestAgentModal = ({
       if (data.processingMs) {
         addMessage("system", `Server: ${data.processingMs}ms`);
       }
-      // Wait for audio queue to finish, then start recording
-      const waitForQueue = () => {
-        if (isPlayingQueueRef.current || audioQueueRef.current.length > 0) {
-          setTimeout(waitForQueue, 200);
+      // Wait for all audio to finish playing, then start recording
+      const waitForAudioDone = () => {
+        if (isPlayingQueueRef.current || audioBufferRef.current.size > 0) {
+          setTimeout(waitForAudioDone, 200);
           return;
         }
         setIsLoading(false);
@@ -271,7 +281,7 @@ const TestAgentModal = ({
           startAutoRecordingRef.current();
         }
       };
-      waitForQueue();
+      waitForAudioDone();
     },
     onError: (error) => {
       addMessage("system", `⚠️ Error: ${error}`);
@@ -283,16 +293,21 @@ const TestAgentModal = ({
     },
     onStarted: (data) => {
       workflowSessionIdRef.current = data.sessionId;
+      // Reset audio queue index for new session
+      nextPlayIndexRef.current = 0;
+      audioBufferRef.current.clear();
       if (data.voiceInfo) {
         const vi = data.voiceInfo;
         const parts: string[] = [`Voice: ${vi.provider}`];
         if (vi.voiceId) parts.push(`voiceId=${vi.voiceId}`);
+        if (vi.model) parts.push(`model=${vi.model}`);
+        if (vi.language) parts.push(`lang=${vi.language}`);
         addMessage("system", parts.join(" | "));
       }
-      // Wait for audio queue to finish, then start recording
-      const waitForQueue = () => {
-        if (isPlayingQueueRef.current || audioQueueRef.current.length > 0) {
-          setTimeout(waitForQueue, 200);
+      // Wait for initial audio to finish, then start recording
+      const waitForAudioDone = () => {
+        if (isPlayingQueueRef.current || audioBufferRef.current.size > 0) {
+          setTimeout(waitForAudioDone, 200);
           return;
         }
         setIsLoading(false);
@@ -300,7 +315,7 @@ const TestAgentModal = ({
           startAutoRecordingRef.current();
         }
       };
-      waitForQueue();
+      waitForAudioDone();
     },
   });
 
@@ -1087,6 +1102,9 @@ const TestAgentModal = ({
       // Send via WebSocket — responses arrive as streaming events (onAudio, onDone)
       // which are handled by the useWorkflowStream callbacks above.
       if (callModeRef.current === "audio" && wsConnected) {
+        // Reset audio index for new turn
+        nextPlayIndexRef.current = 0;
+        audioBufferRef.current.clear();
         wsSendMessage(text);
         // Don't await — the onDone callback handles recording restart and loading state
         return;

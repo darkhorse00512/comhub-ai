@@ -1,17 +1,18 @@
 /**
  * Streaming workflow service — handles real-time voice call streaming.
  *
- * Pipeline: User speech → LLM streams sentence-by-sentence → each sentence → TTS audio → emit to client
+ * Pipeline: User speech → Engine processes → TTS generated per-sentence → emit audio immediately
  *
- * This replaces the batch HTTP flow with a streaming WebSocket flow,
- * reducing time-to-first-audio from ~5s to ~0.7-1.5s.
+ * Key optimization: TTS for each sentence starts in parallel. As soon as any
+ * sentence's TTS completes, it's emitted to the client. The client queues and
+ * plays them in order, so the first sentence starts playing as soon as its TTS
+ * is ready (~0.5-1s) while later sentences are still generating.
  */
 
 import { Socket } from 'socket.io';
-import { Readable } from 'stream';
 import logger from '../utils/logger';
 import { agentVoiceService, ResolvedVoiceSettings } from './agent-voice.service';
-import { WorkflowEngine } from './workflow-engine.service';
+import { WorkflowEngine, WorkflowMessage } from './workflow-engine.service';
 
 interface StreamingSession {
   engine: WorkflowEngine;
@@ -20,15 +21,80 @@ interface StreamingSession {
   voiceSettings: ResolvedVoiceSettings | null;
   nodes: any[];
   edges: any[];
+  processing: boolean;
 }
 
-// In-memory streaming sessions (separate from HTTP sessions)
 const streamingSessions = new Map<string, StreamingSession>();
 
 /**
+ * Generate TTS for a message and emit the audio via WebSocket.
+ * Returns immediately — the caller doesn't wait for this to complete.
+ */
+async function generateAndEmitAudio(
+  socket: Socket,
+  msg: WorkflowMessage,
+  voiceSettings: ResolvedVoiceSettings | null,
+  index: number,
+): Promise<void> {
+  try {
+    const audioBuffer = await agentVoiceService.generateTTS(msg.text, voiceSettings);
+    socket.emit('workflow:audio', {
+      text: msg.text,
+      nodeLabel: msg.nodeLabel,
+      audioBase64: audioBuffer.toString('base64'),
+      type: msg.type,
+      index,
+    });
+  } catch (ttsErr) {
+    logger.warn('Streaming TTS failed', {
+      text: msg.text.substring(0, 50),
+      error: ttsErr instanceof Error ? ttsErr.message : ttsErr,
+    });
+    socket.emit('workflow:audio', {
+      text: msg.text,
+      nodeLabel: msg.nodeLabel,
+      audioBase64: null,
+      type: msg.type,
+      index,
+    });
+  }
+}
+
+/**
+ * Emit all messages from a workflow result with pipelined TTS.
+ *
+ * System messages are emitted immediately (no TTS needed).
+ * Speakable messages (ai/scripted) get TTS generated in parallel.
+ * Each audio chunk is emitted as soon as its TTS completes.
+ * The client receives an `index` field to play them in the correct order.
+ */
+async function emitResultMessages(
+  socket: Socket,
+  messages: WorkflowMessage[],
+  voiceSettings: ResolvedVoiceSettings | null,
+): Promise<void> {
+  // Emit system messages immediately
+  for (const msg of messages) {
+    if (msg.type === 'system') {
+      socket.emit('workflow:system', { text: msg.text, nodeLabel: msg.nodeLabel });
+    }
+  }
+
+  // Generate TTS for all speakable messages in parallel
+  const speakable = messages.filter(m => m.type === 'ai' || m.type === 'scripted');
+  if (speakable.length === 0) return;
+
+  // Tell client how many audio messages to expect (for ordering)
+  socket.emit('workflow:audio-start', { count: speakable.length });
+
+  // Fire ALL TTS generations in parallel — each emits as soon as ready
+  await Promise.all(
+    speakable.map((msg, idx) => generateAndEmitAudio(socket, msg, voiceSettings, idx))
+  );
+}
+
+/**
  * Process a user message through the workflow engine with streaming output.
- * Instead of waiting for the full response, streams audio chunks to the client
- * as soon as each sentence is ready.
  */
 export async function handleStreamingMessage(
   socket: Socket,
@@ -41,51 +107,21 @@ export async function handleStreamingMessage(
     return;
   }
 
+  // Prevent concurrent processing
+  if (session.processing) {
+    socket.emit('workflow:system', { text: 'Still processing, please wait' });
+    return;
+  }
+  session.processing = true;
+
   const startMs = Date.now();
 
   try {
-    // Process through the workflow engine (non-streaming part: state machine logic)
+    // Process through workflow engine (LLM + transition logic)
     const result = await session.engine.processMessage(message);
 
-    // Emit system messages immediately (no audio needed)
-    for (const msg of result.messages) {
-      if (msg.type === 'system') {
-        socket.emit('workflow:system', { text: msg.text, nodeLabel: msg.nodeLabel });
-      }
-    }
-
-    // Stream audio for speakable messages
-    const speakableMessages = result.messages.filter(
-      m => m.type === 'ai' || m.type === 'scripted'
-    );
-
-    for (const msg of speakableMessages) {
-      try {
-        // Generate TTS and collect into buffer
-        const audioBuffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings);
-        const audioBase64 = audioBuffer.toString('base64');
-
-        // Emit audio chunk to client
-        socket.emit('workflow:audio', {
-          text: msg.text,
-          nodeLabel: msg.nodeLabel,
-          audioBase64,
-          type: msg.type,
-        });
-      } catch (ttsErr) {
-        logger.warn('Streaming TTS failed for sentence', {
-          text: msg.text.substring(0, 50),
-          error: ttsErr instanceof Error ? ttsErr.message : ttsErr,
-        });
-        // Emit text-only (client will use browser TTS as fallback)
-        socket.emit('workflow:audio', {
-          text: msg.text,
-          nodeLabel: msg.nodeLabel,
-          audioBase64: null,
-          type: msg.type,
-        });
-      }
-    }
+    // Pipeline: emit system messages + generate TTS for audio messages in parallel
+    await emitResultMessages(socket, result.messages, session.voiceSettings);
 
     // Emit completion signal
     socket.emit('workflow:done', {
@@ -96,7 +132,6 @@ export async function handleStreamingMessage(
       processingMs: Date.now() - startMs,
     });
 
-    // Clean up if workflow is complete
     if (result.isComplete) {
       streamingSessions.delete(sessionId);
     }
@@ -109,6 +144,10 @@ export async function handleStreamingMessage(
     socket.emit('workflow:error', {
       error: error instanceof Error ? error.message : 'Processing failed',
     });
+  } finally {
+    if (streamingSessions.has(sessionId)) {
+      session.processing = false;
+    }
   }
 }
 
@@ -140,39 +179,12 @@ export async function startStreamingSession(
       voiceSettings,
       nodes,
       edges,
+      processing: false,
     };
     streamingSessions.set(sessionId, session);
 
-    // Emit system messages
-    for (const msg of result.messages) {
-      if (msg.type === 'system') {
-        socket.emit('workflow:system', { text: msg.text, nodeLabel: msg.nodeLabel });
-      }
-    }
-
-    // Stream audio for initial speakable messages
-    const speakableMessages = result.messages.filter(
-      m => m.type === 'ai' || m.type === 'scripted'
-    );
-
-    for (const msg of speakableMessages) {
-      try {
-        const audioBuffer = await agentVoiceService.generateTTS(msg.text, voiceSettings);
-        socket.emit('workflow:audio', {
-          text: msg.text,
-          nodeLabel: msg.nodeLabel,
-          audioBase64: audioBuffer.toString('base64'),
-          type: msg.type,
-        });
-      } catch {
-        socket.emit('workflow:audio', {
-          text: msg.text,
-          nodeLabel: msg.nodeLabel,
-          audioBase64: null,
-          type: msg.type,
-        });
-      }
-    }
+    // Pipeline: emit system messages + generate TTS in parallel
+    await emitResultMessages(socket, result.messages, voiceSettings);
 
     // Emit session ready
     socket.emit('workflow:started', {
@@ -183,6 +195,8 @@ export async function startStreamingSession(
       voiceInfo: {
         provider: voiceSettings?.ttsProvider || 'openai',
         voiceId: voiceSettings?.elevenlabsVoiceId,
+        model: voiceSettings?.elevenlabsModel,
+        language: voiceSettings?.language,
       },
     });
 

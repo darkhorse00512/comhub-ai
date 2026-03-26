@@ -27,6 +27,7 @@ export interface StreamAudioMessage {
   nodeLabel?: string;
   audioBase64: string | null;
   type: "ai" | "scripted";
+  index: number;
 }
 
 interface UseWorkflowStreamOptions {
@@ -86,6 +87,10 @@ export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
 
     socket.on("workflow:system", (data) => {
       optsRef.current.onSystem?.(data.text, data.nodeLabel);
+    });
+
+    socket.on("workflow:audio-start", () => {
+      // Server is about to send audio messages — client can prepare
     });
 
     socket.on("workflow:audio", (data: StreamAudioMessage) => {
