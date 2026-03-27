@@ -1318,15 +1318,34 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     // - Without this, a restart loads stale state from the previous turn
     this.persistState();
 
-    // Generate AI response AND proactive stage completion check IN PARALLEL.
-    // The completion check uses gpt-4o-mini (~200-300ms) — finishes well before
-    // the main AI call (~2-4s), so this adds ZERO extra latency.
+    // Determine if this is a simple stage (few questions) or complex (many questions).
+    // The proactive check ONLY runs for simple stages (≤3 questions).
+    // For complex stages (Survey: 3+ questions, Qualification: 8+ questions),
+    // the proactive check misfires constantly, causing premature transitions and loops.
+    // Complex stages rely SOLELY on the AI's [NEXT] signal.
+    const stageInstructions = dialogueNode.data?.stageMessage || '';
+    const questionCountInInstructions = (stageInstructions.match(/\?/g) || []).length;
+    const isSimpleStage = questionCountInInstructions <= 3;
+
     const [aiResponse, proactiveTransition] = await Promise.all([
       this.generateAIResponse(),
-      validTransitionNames.length > 0
+      (isSimpleStage && validTransitionNames.length > 0)
         ? this.checkStageCompletion(dialogueNode, userMessage)
         : Promise.resolve(null),
     ]);
+
+    if (isSimpleStage) {
+      logger.info('WorkflowEngine: Simple stage — proactive check enabled', {
+        nodeLabel: dialogueNode.data?.label,
+        questionCount: questionCountInInstructions,
+        proactiveResult: proactiveTransition,
+      });
+    } else {
+      logger.info('WorkflowEngine: Complex stage — proactive check disabled, relying on AI [NEXT]', {
+        nodeLabel: dialogueNode.data?.label,
+        questionCount: questionCountInInstructions,
+      });
+    }
 
     if (!aiResponse) {
       // AI failed — if proactive check found a transition, use a brief ack and advance

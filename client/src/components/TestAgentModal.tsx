@@ -799,10 +799,10 @@ const TestAgentModal = ({
           startOnLoad: true,
 
           // Tuned for real-time voice calls: fast speech-end detection
-          positiveSpeechThreshold: 0.5,   // Higher = fewer false starts
-          negativeSpeechThreshold: 0.35,  // Gap from positive threshold
-          redemptionMs: 300,              // 300ms grace after speech stops (default: 1400ms)
-          minSpeechMs: 150,               // Accept short utterances like "Yes" (default: 400ms)
+          positiveSpeechThreshold: 0.6,   // Higher = fewer false starts from noise
+          negativeSpeechThreshold: 0.4,   // Gap from positive threshold
+          redemptionMs: 600,              // 600ms grace after speech stops (default: 1400ms)
+          minSpeechMs: 200,               // Accept short utterances like "Yes" (default: 400ms)
           preSpeechPadMs: 300,            // 300ms audio before speech start (default: 800ms)
 
           onSpeechStart: () => {
@@ -820,7 +820,15 @@ const TestAgentModal = ({
             if (!isCallActiveRef.current) return;
             if (isSpeakingRef.current || isLoadingRef.current) return;
 
-            console.log("[VAD] Speech ended, audio samples:", audioData.length);
+            // Minimum audio duration: 0.2s at 16kHz = 3200 samples.
+            // Anything shorter is noise, not speech.
+            const durationMs = (audioData.length / 16000) * 1000;
+            if (audioData.length < 3200) {
+              console.log(`[VAD] Speech too short (${Math.round(durationMs)}ms) — ignoring`);
+              return;
+            }
+
+            console.log(`[VAD] Speech ended, ${Math.round(durationMs)}ms audio`);
             userEndSpeechRef.current = Date.now();
             setIsRecording(false);
 
