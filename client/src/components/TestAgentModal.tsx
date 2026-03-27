@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-// VAD removed — browser SpeechRecognition handles speech detection (has echo cancellation)
+import { MicVAD, utils as vadUtils } from "@ricky0123/vad-web";
 import { useWorkflowStream, StreamAudioMessage } from "@/hooks/useWorkflowStream";
 import {
   Dialog,
@@ -193,7 +193,7 @@ const TestAgentModal = ({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Note: VAD removed — browser SpeechRecognition + MediaRecorder + server STT
+  const vadRef = useRef<MicVAD | null>(null);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -701,11 +701,10 @@ const TestAgentModal = ({
   }, [outputAndSpeak]);
 
   // --- Server-side STT (ElevenLabs Scribe v2) ---
-  const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
+  const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<{ text: string; provider: string } | null> => {
     try {
       const token = localStorage.getItem("backend_token");
 
-      // Send as multipart form — much faster than base64 JSON
       const formData = new FormData();
       formData.append("audio", audioBlob, "audio.webm");
       if (voiceConfig?.language) {
@@ -718,7 +717,6 @@ const TestAgentModal = ({
           method: "POST",
           headers: {
             ...(token && { Authorization: `Bearer ${token}` }),
-            // No Content-Type — browser sets it with boundary for FormData
           },
           body: formData,
         }
@@ -731,7 +729,7 @@ const TestAgentModal = ({
       const data = await response.json();
       if (data.success && data.text) {
         console.log(`[STT] ${data.provider}: "${data.text}" (${data.durationMs}ms)`);
-        return data.text;
+        return { text: data.text, provider: data.provider || "server" };
       }
       console.warn("[STT] Server:", data.error || "empty transcript");
     } catch (err) {
@@ -740,156 +738,127 @@ const TestAgentModal = ({
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
 
-  // Note: MediaRecorder removed — VAD provides audio directly via onSpeechEnd callback
+  // --- VAD-based recording with echo cancellation + ElevenLabs STT ---
+  // Silero VAD detects speech start/end (~300ms latency).
+  // Mic stream uses echoCancellation + noiseSuppression to handle speaker audio.
+  // VAD's onSpeechEnd provides the audio directly → encode WAV → ElevenLabs STT.
 
-  // --- Hybrid recording: Browser SpeechRecognition (detection) + MediaRecorder (capture) + ElevenLabs STT ---
-  // Browser SpeechRecognition handles echo cancellation and speech-end detection reliably.
-  // MediaRecorder captures the actual audio for accurate server-side transcription.
-  // ElevenLabs Scribe v2 provides the final transcript (much more accurate than browser STT).
+  const destroyVAD = useCallback(async () => {
+    if (vadRef.current) {
+      try { await vadRef.current.destroy(); } catch {}
+      vadRef.current = null;
+    }
+  }, []);
 
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
-    if (recognitionRef.current) return;
+    if (vadRef.current?.listening) return;
 
-    const SpeechRecognitionAPI =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) return;
+    const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-    setTimeout(() => {
-      if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-      if (recognitionRef.current) return;
-
-      try {
-        const recognition = new SpeechRecognitionAPI();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = voiceConfig?.language || "en-US";
-
-        let hasReceivedSpeech = false;
-        let mediaRecorder: MediaRecorder | null = null;
-        let audioChunks: Blob[] = [];
-
-        // Silence timeout: how long to wait after last speech before stopping
-        // Cap at 1s for responsive real-time calls
-        const silenceTimeoutMs = Math.min((callSettingsRef.current.silenceTimeout || 1) * 1000, 1000);
-        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
-        const initialWaitMs = Math.max(onIdleTimeoutMs, 5000);
-
-        const stopRecognition = () => {
-          if (recognitionRef.current) {
-            try { recognitionRef.current.stop(); } catch {}
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(async () => {
+        if (!isCallActiveRef.current || isSpeakingRef.current || isLoadingRef.current) return;
+        const cs = callSettingsRef.current;
+        idleCountRef.current++;
+        if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+          if (cs.onIdleTerminationMessage) {
+            addMessage("ai", cs.onIdleTerminationMessage);
+            await speakText(cs.onIdleTerminationMessage);
           }
-        };
+          endCallRef.current();
+        } else if (cs.onIdleMessage) {
+          addMessage("ai", cs.onIdleMessage);
+          await speakText(cs.onIdleMessage);
+          if (isCallActiveRef.current) startAutoRecording();
+        } else if (isCallActiveRef.current) {
+          startAutoRecording();
+        }
+      }, onIdleTimeoutMs);
+    };
 
-        const startSilenceTimer = (ms: number) => {
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = setTimeout(stopRecognition, ms);
-        };
+    (async () => {
+      try {
+        await destroyVAD();
 
-        // Start MediaRecorder for audio capture
-        const startRecorder = async () => {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream, {
-              mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-                ? "audio/webm;codecs=opus" : "audio/webm",
-              audioBitsPerSecond: 16000, // 16kbps — tiny files, perfect for speech STT
+        const vad = await MicVAD.new({
+          baseAssetPath: "/vad/",
+          onnxWASMBasePath: "/vad/",
+          model: "v5",
+          startOnLoad: true,
+
+          // Echo cancellation: request mic with browser's built-in echo suppression
+          getStream: async () => {
+            return navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
             });
-            audioChunks = [];
-            mediaRecorder.ondataavailable = (e) => {
-              if (e.data.size > 0) audioChunks.push(e.data);
-            };
-            mediaRecorder.start();
-          } catch {}
-        };
+          },
 
-        const stopRecorder = (): Promise<Blob | null> => {
-          return new Promise((resolve) => {
-            if (!mediaRecorder || mediaRecorder.state === "inactive") {
-              resolve(null);
+          // Tuned for real-time voice calls
+          positiveSpeechThreshold: 0.7,
+          negativeSpeechThreshold: 0.2,
+          redemptionMs: 500,
+          minSpeechMs: 150,
+          preSpeechPadMs: 200,
+          submitUserSpeechOnPause: true,
+
+          onSpeechStart: () => {
+            if (!isCallActiveRef.current) return;
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+            setIsRecording(true);
+            sttStartTimeRef.current = Date.now();
+            if (idleTimer) clearTimeout(idleTimer);
+
+            // Safety: max 15s recording
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(() => {
+              if (vadRef.current?.listening) vadRef.current.pause();
+            }, 15000);
+          },
+
+          onSpeechEnd: async (audioData: Float32Array) => {
+            if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+            if (!isCallActiveRef.current) return;
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+
+            const durationMs = Math.round((audioData.length / 16000) * 1000);
+            if (audioData.length < 2400) { // < 150ms = noise
               return;
             }
-            mediaRecorder.onstop = () => {
-              const blob = new Blob(audioChunks, { type: "audio/webm" });
-              audioChunks = [];
-              mediaRecorder?.stream.getTracks().forEach(t => t.stop());
-              mediaRecorder = null;
-              resolve(blob.size > 100 ? blob : null);
-            };
-            mediaRecorder.stop();
-          });
-        };
 
-        recognition.onstart = () => {
-          setIsRecording(true);
-          sttStartTimeRef.current = Date.now();
-          startSilenceTimer(initialWaitMs);
-          startRecorder(); // Start recording audio in parallel
-        };
+            setIsRecording(false);
+            const recordEndMs = Date.now();
+            const recordDuration = recordEndMs - sttStartTimeRef.current;
 
-        (recognition as any).onspeechstart = () => {
-          sttStartTimeRef.current = Date.now();
-        };
-        (recognition as any).onspeechend = () => {
-          userEndSpeechRef.current = Date.now();
-        };
+            // Pause VAD while processing
+            try { await vad.pause(); } catch {}
 
-        let browserTranscript = "";
+            // Encode to WAV and send to ElevenLabs STT
+            const sttStartMs = Date.now();
+            const wavBuffer = vadUtils.encodeWAV(audioData);
+            const audioBlob = new Blob([wavBuffer], { type: "audio/wav" });
 
-        recognition.onresult = (event: any) => {
-          hasReceivedSpeech = true;
-          noSpeechCountRef.current = 0;
-          // Capture browser transcript as fallback
-          browserTranscript = "";
-          for (let i = 0; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              browserTranscript += event.results[i][0].transcript;
-            }
-          }
-          startSilenceTimer(silenceTimeoutMs);
-        };
-
-        recognition.onend = async () => {
-          setIsRecording(false);
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          recognitionRef.current = null;
-          const recordEndMs = Date.now();
-          const recordDuration = recordEndMs - sttStartTimeRef.current;
-
-          // Stop MediaRecorder and get audio blob
-          const audioBlob = await stopRecorder();
-          // recorder stopped
-
-          if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-          if (isSpeakingRef.current || isLoadingRef.current) return;
-
-          if (hasReceivedSpeech) {
             let text: string | null = null;
             let sttProvider = "none";
-            const sttStartMs = Date.now();
 
-            // Try server STT (ElevenLabs Scribe v2)
-            if (audioBlob && audioBlob.size > 100) {
-              text = await transcribeViaServer(audioBlob);
-              if (text) sttProvider = "server";
-            }
-
-            // Fall back to browser transcript
-            if (!text || !text.trim()) {
-              text = browserTranscript.trim() || null;
-              if (text) sttProvider = "browser";
+            const result = await transcribeViaServer(audioBlob);
+            if (result) {
+              text = result.text;
+              sttProvider = result.provider;
             }
 
             const sttDoneMs = Date.now();
-            const sttLatency = sttDoneMs - sttStartMs;
             sttEndTimeRef.current = sttDoneMs;
 
-            // Show STT timing
             addMessage("system",
-              `Record: ${recordDuration}ms | Blob: ${audioBlob ? Math.round(audioBlob.size/1024) + 'KB' : 'null'} | STT (${sttProvider}): ${sttLatency}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
+              `Record: ${recordDuration}ms (${durationMs}ms audio) | STT (${sttProvider}): ${sttDoneMs - sttStartMs}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
             );
 
             if (!isCallActiveRef.current) return;
@@ -899,48 +868,25 @@ const TestAgentModal = ({
               idleCountRef.current = 0;
               await handleUserMessageRef.current(text.trim());
             } else {
-              // Both STTs returned empty — restart
-              if (isCallActiveRef.current) startAutoRecording();
+              if (isCallActiveRef.current && !isSpeakingRef.current) startAutoRecording();
             }
-          } else {
-            // No speech detected — handle idle
-            const cs = callSettingsRef.current;
-            idleCountRef.current++;
+          },
 
-            if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
-              if (cs.onIdleTerminationMessage) {
-                addMessage("ai", cs.onIdleTerminationMessage);
-                await speakText(cs.onIdleTerminationMessage);
-              }
-              endCallRef.current();
-            } else if (cs.onIdleMessage) {
-              addMessage("ai", cs.onIdleMessage);
-              await speakText(cs.onIdleMessage);
-              if (isCallActiveRef.current) startAutoRecording();
-            } else if (isCallActiveRef.current) {
-              startAutoRecording();
-            }
-          }
-        };
+          onVADMisfire: () => {
+            // Speech too short — keep listening
+          },
+        });
 
-        recognition.onerror = (event: any) => {
-          if (event.error === "no-speech") {
-            setIsRecording(false);
-          } else if (event.error !== "aborted") {
-            setIsRecording(false);
-            if (isCallActiveRef.current && callModeRef.current === "audio") {
-              startAutoRecording();
-            }
-          }
-        };
+        vadRef.current = vad;
+        setIsRecording(true);
+        resetIdleTimer();
 
-        recognition.start();
       } catch (error) {
-        console.error("Error starting recording:", error);
+        console.error("[VAD] Init failed:", error);
         setIsRecording(false);
       }
-    }, 300);
-  }, [transcribeViaServer, voiceConfig?.language, addMessage, speakText]);
+    })();
+  }, [destroyVAD, transcribeViaServer, addMessage, speakText]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -1423,6 +1369,9 @@ const TestAgentModal = ({
     isCallActiveRef.current = false;
     waitingForInputRef.current = false;
 
+    // Destroy VAD
+    await destroyVAD();
+
     // End streaming WebSocket session if active
     endWorkflow();
 
@@ -1505,7 +1454,7 @@ const TestAgentModal = ({
       title: "Call Ended",
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow]);
+  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow, destroyVAD]);
 
   // Keep endCallRef in sync
   useEffect(() => {
