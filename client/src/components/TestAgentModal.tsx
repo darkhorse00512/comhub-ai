@@ -723,15 +723,19 @@ const TestAgentModal = ({
           body: formData,
         }
       );
+      if (!response.ok) {
+        const errText = await response.text();
+        console.warn(`[STT] Server ${response.status}:`, errText);
+        return null;
+      }
       const data = await response.json();
       if (data.success && data.text) {
-        console.log(`[STT] Server (${data.provider}): "${data.text}" (${data.durationMs}ms)`);
+        console.log(`[STT] ${data.provider}: "${data.text}" (${data.durationMs}ms)`);
         return data.text;
-      } else {
-        console.warn("[STT] Server error:", data.error || "empty transcript");
       }
+      console.warn("[STT] Server:", data.error || "empty transcript");
     } catch (err) {
-      console.warn("[STT] Server transcription failed:", err);
+      console.warn("[STT] Failed:", err);
     }
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
@@ -769,8 +773,8 @@ const TestAgentModal = ({
         let audioChunks: Blob[] = [];
 
         // Silence timeout: how long to wait after last speech before stopping
-        // Use configured value but cap at 1.5s for responsive calls
-        const silenceTimeoutMs = Math.min((callSettingsRef.current.silenceTimeout || 1) * 1000, 1500);
+        // Cap at 1s for responsive real-time calls
+        const silenceTimeoutMs = Math.min((callSettingsRef.current.silenceTimeout || 1) * 1000, 1000);
         const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
         const initialWaitMs = Math.max(onIdleTimeoutMs, 5000);
 
@@ -862,27 +866,29 @@ const TestAgentModal = ({
           if (isSpeakingRef.current || isLoadingRef.current) return;
 
           if (hasReceivedSpeech) {
-            // Try server STT first (ElevenLabs — more accurate)
             let text: string | null = null;
-            let sttProvider = "browser";
+            let sttProvider = "none";
             const sttStartMs = Date.now();
-            if (audioBlob) {
+
+            // Try server STT (ElevenLabs Scribe v2)
+            if (audioBlob && audioBlob.size > 100) {
               text = await transcribeViaServer(audioBlob);
-              if (text) sttProvider = "elevenlabs";
+              if (text) sttProvider = "server";
             }
+
+            // Fall back to browser transcript
+            if (!text || !text.trim()) {
+              text = browserTranscript.trim() || null;
+              if (text) sttProvider = "browser";
+            }
+
             const sttDoneMs = Date.now();
             const sttLatency = sttDoneMs - sttStartMs;
             sttEndTimeRef.current = sttDoneMs;
 
-            // Fall back to browser transcript if server STT failed
-            if (!text || !text.trim()) {
-              text = browserTranscript.trim() || null;
-              sttProvider = "browser";
-            }
-
             // Show STT timing
             addMessage("system",
-              `Record: ${recordDuration}ms | STT (${sttProvider}): ${sttLatency}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
+              `Record: ${recordDuration}ms | Blob: ${audioBlob ? Math.round(audioBlob.size/1024) + 'KB' : 'null'} | STT (${sttProvider}): ${sttLatency}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
             );
 
             if (!isCallActiveRef.current) return;
