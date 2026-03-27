@@ -8,6 +8,7 @@ import { gptService, ChatMessage } from '../services/ai/gpt.service';
 import { WorkflowEngine, WorkflowEngineState } from '../services/workflow-engine.service';
 import storageService from '../services/storage.service';
 import agentVoiceService from '../services/agent-voice.service';
+import sttService from '../services/ai/stt.service';
 
 const supabase = getSupabaseClient();
 
@@ -2062,6 +2063,61 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
   }
 };
 
+/**
+ * Transcribe audio using the agent's configured voice provider (ElevenLabs Scribe v2).
+ * Accepts base64-encoded audio in the request body.
+ */
+export const transcribeAudio = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { audioBase64, languageCode } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    if (!audioBase64) {
+      res.status(400).json({ success: false, error: 'audioBase64 is required' });
+      return;
+    }
+
+    // Resolve voice settings to get the ElevenLabs API key
+    const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
+    const elevenLabsKey = voiceSettings?.elevenlabsApiKey;
+
+    if (!elevenLabsKey) {
+      res.status(400).json({
+        success: false,
+        error: 'No ElevenLabs API key configured. Set up ElevenLabs or ComhubAI voice in agent settings.',
+      });
+      return;
+    }
+
+    // Decode base64 to buffer
+    const audioBuffer = Buffer.from(audioBase64, 'base64');
+
+    const result = await sttService.elevenlabsTranscribe(audioBuffer, elevenLabsKey, {
+      languageCode: languageCode || voiceSettings?.language?.split('-')[0],
+    });
+
+    res.status(200).json({
+      success: true,
+      text: result.text,
+      language: result.language,
+      durationMs: result.durationMs,
+      provider: result.provider,
+    });
+  } catch (error) {
+    logger.error('Failed to transcribe audio', { error });
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Transcription failed',
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -2080,4 +2136,5 @@ export default {
   uploadAudio,
   getPublicVoiceModels,
   generateTTS,
+  transcribeAudio,
 };

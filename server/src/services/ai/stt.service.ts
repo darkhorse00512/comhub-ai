@@ -1,8 +1,16 @@
 import OpenAI from 'openai';
+import axios from 'axios';
 import config from '../../config';
 import logger from '../../utils/logger';
 import fs from 'fs';
 import FormData from 'form-data';
+
+export interface STTResult {
+  text: string;
+  language?: string;
+  durationMs?: number;
+  provider: 'elevenlabs' | 'openai';
+}
 
 class STTService {
   private openai: OpenAI;
@@ -12,6 +20,76 @@ class STTService {
       apiKey: config.openai.apiKey,
     });
   }
+
+  /**
+   * Transcribe audio using ElevenLabs Scribe v2.
+   * Accepts raw audio buffer (webm/ogg/mp3/wav).
+   * Much more accurate than browser SpeechRecognition.
+   */
+  async elevenlabsTranscribe(
+    audioBuffer: Buffer,
+    apiKey: string,
+    options?: {
+      languageCode?: string;
+      fileName?: string;
+      contentType?: string;
+    }
+  ): Promise<STTResult> {
+    const startMs = Date.now();
+
+    try {
+      const form = new FormData();
+      form.append('file', audioBuffer, {
+        filename: options?.fileName || 'audio.webm',
+        contentType: options?.contentType || 'audio/webm',
+      });
+      form.append('model_id', 'scribe_v2');
+      if (options?.languageCode) {
+        form.append('language_code', options.languageCode);
+      }
+
+      const response = await axios.post(
+        'https://api.elevenlabs.io/v1/speech-to-text',
+        form,
+        {
+          headers: {
+            'xi-api-key': apiKey,
+            ...form.getHeaders(),
+          },
+          timeout: 15000,
+        }
+      );
+
+      const durationMs = Date.now() - startMs;
+      const text = (response.data?.text || '').trim();
+
+      logger.info('ElevenLabs STT completed', {
+        textLength: text.length,
+        text: text.substring(0, 100),
+        language: response.data?.language_code,
+        durationMs,
+      });
+
+      return {
+        text,
+        language: response.data?.language_code,
+        durationMs,
+        provider: 'elevenlabs',
+      };
+    } catch (error) {
+      const durationMs = Date.now() - startMs;
+      logger.error('ElevenLabs STT failed', {
+        error: error instanceof Error ? error.message : error,
+        status: (error as any)?.response?.status,
+        durationMs,
+      });
+      throw new Error(
+        `ElevenLabs STT failed: ${error instanceof Error ? error.message : error}`
+      );
+    }
+  }
+
+  // --- Legacy OpenAI Whisper methods ---
 
   async transcribeAudio(audioFilePath: string): Promise<string> {
     try {

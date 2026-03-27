@@ -63,6 +63,9 @@ router.post('/:id/versions/:versionId/restore', agentsController.restoreAgentVer
 // Generate TTS audio using agent's configured voice
 router.post('/:id/generate-tts', agentsController.generateTTS);
 
+// Speech-to-text using agent's configured voice provider
+router.post('/:id/transcribe', agentsController.transcribeAudio);
+
 // Workflow-based test calls
 router.post('/:id/workflow-call/start', agentsController.startWorkflowCall);
 router.post('/:id/workflow-call/:sessionId/message', agentsController.sendWorkflowMessage);

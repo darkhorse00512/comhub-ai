@@ -192,6 +192,8 @@ const TestAgentModal = ({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -698,6 +700,74 @@ const TestAgentModal = ({
     outputAndSpeakRef.current = outputAndSpeak;
   }, [outputAndSpeak]);
 
+  // --- Server-side STT (ElevenLabs Scribe v2) ---
+  const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const token = localStorage.getItem("backend_token");
+      const response = await fetch(
+        `${apiBaseUrl}/agents/${agentId}/transcribe`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({
+            audioBase64: base64,
+            languageCode: voiceConfig?.language?.split("-")[0],
+          }),
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.text) {
+          console.log(`[STT] ElevenLabs: "${data.text}" (${data.durationMs}ms)`);
+          return data.text;
+        }
+      }
+    } catch (err) {
+      console.warn("[STT] Server transcription failed, using browser STT:", err);
+    }
+    return null;
+  }, [apiBaseUrl, agentId, voiceConfig?.language]);
+
+  // Start/stop MediaRecorder alongside browser STT for server-side transcription
+  const startMediaRecorder = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+    } catch {
+      // Mic already granted from startCall — this shouldn't fail
+    }
+  }, []);
+
+  const stopMediaRecorder = useCallback((): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || recorder.state === "inactive") {
+        resolve(null);
+        return;
+      }
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        audioChunksRef.current = [];
+        // Stop mic stream
+        recorder.stream.getTracks().forEach(t => t.stop());
+        mediaRecorderRef.current = null;
+        resolve(blob.size > 100 ? blob : null); // ignore tiny blobs (no speech)
+      };
+      recorder.stop();
+    });
+  }, []);
+
   // --- Auto recording for audio mode ---
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") {
@@ -767,6 +837,8 @@ const TestAgentModal = ({
           setIsRecording(true);
           sttStartTimeRef.current = Date.now();
           startSilenceTimer(initialWaitMs);
+          // Start recording audio for server-side STT (parallel with browser STT)
+          startMediaRecorder();
         };
 
         // Track when user actually starts/stops speaking (for latency breakdown)
@@ -795,20 +867,33 @@ const TestAgentModal = ({
           setIsRecording(false);
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           recognitionRef.current = null;
-          sttEndTimeRef.current = Date.now(); // Track when STT finished for timing
+          sttEndTimeRef.current = Date.now();
+
+          // Stop MediaRecorder and get the audio blob
+          const audioBlob = await stopMediaRecorder();
 
           if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
 
-          // Use final transcript, or fall back to interim if final is empty
-          const text = (finalTranscript.trim() || interimTranscript.trim());
+          // Browser STT transcript (used as fallback)
+          const browserText = (finalTranscript.trim() || interimTranscript.trim());
+
+          // If speech was detected, try server-side STT for better accuracy
+          let text = browserText;
+          if ((browserText || hasReceivedSpeech) && audioBlob && !isSpeakingRef.current && !isLoadingRef.current) {
+            const serverText = await transcribeViaServer(audioBlob);
+            if (serverText) {
+              text = serverText; // Server STT is more accurate
+            }
+            sttEndTimeRef.current = Date.now(); // Update timing after server STT
+          }
 
           if (text) {
-            // If agent is still speaking or processing, ignore — the mic picked up agent audio
+            // If agent is still speaking or processing, ignore
             if (isSpeakingRef.current || isLoadingRef.current) {
               return;
             }
             const cs = callSettingsRef.current;
-            // Interruption sensitivity: only filter when barge-in is active AND threshold > 1.
+            // Interruption sensitivity
             const wordCount = text.split(/\s+/).length;
             if (cs.interruptionSensitivity === "high" && cs.interruptionWordCountThreshold > 1 && wordCount < cs.interruptionWordCountThreshold) {
               if (isCallActiveRef.current) {
