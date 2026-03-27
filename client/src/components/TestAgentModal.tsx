@@ -798,30 +798,41 @@ const TestAgentModal = ({
           model: "v5",
           startOnLoad: true,
 
-          // Tuned for real-time voice calls: fast speech-end detection
+          // Tuned for real-time voice calls
           positiveSpeechThreshold: 0.6,   // Higher = fewer false starts from noise
-          negativeSpeechThreshold: 0.4,   // Gap from positive threshold
-          redemptionMs: 600,              // 600ms grace after speech stops (default: 1400ms)
-          minSpeechMs: 200,               // Accept short utterances like "Yes" (default: 400ms)
-          preSpeechPadMs: 300,            // 300ms audio before speech start (default: 800ms)
+          negativeSpeechThreshold: 0.25,  // Low = easier to detect speech END (silence)
+          redemptionMs: 500,              // 500ms grace after speech stops
+          minSpeechMs: 200,               // Accept short utterances like "Yes"
+          preSpeechPadMs: 300,            // 300ms audio before speech start
+          submitUserSpeechOnPause: true,  // When paused (by timeout or agent speaking), submit collected audio
 
           onSpeechStart: () => {
             if (!isCallActiveRef.current) return;
-            // If agent is speaking, ignore (mic picked up agent audio)
             if (isSpeakingRef.current || isLoadingRef.current) return;
             console.log("[VAD] Speech started");
             setIsRecording(true);
             sttStartTimeRef.current = Date.now();
-            // Cancel idle timer — user is speaking
             if (idleTimer) clearTimeout(idleTimer);
+
+            // Safety: max recording duration 15s — force speech end if VAD doesn't detect it
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(() => {
+              console.log("[VAD] Max recording duration reached — forcing speech end");
+              if (vadRef.current?.listening) {
+                // Pause triggers onSpeechEnd if submitUserSpeechOnPause is true
+                vadRef.current.pause();
+              }
+            }, 15000);
           },
 
           onSpeechEnd: async (audioData: Float32Array) => {
+            // Clear max recording safety timer
+            if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+
             if (!isCallActiveRef.current) return;
             if (isSpeakingRef.current || isLoadingRef.current) return;
 
             // Minimum audio duration: 0.2s at 16kHz = 3200 samples.
-            // Anything shorter is noise, not speech.
             const durationMs = (audioData.length / 16000) * 1000;
             if (audioData.length < 3200) {
               console.log(`[VAD] Speech too short (${Math.round(durationMs)}ms) — ignoring`);
