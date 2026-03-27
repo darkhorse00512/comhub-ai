@@ -7,6 +7,7 @@ import logger from '../utils/logger';
 import { gptService, ChatMessage } from '../services/ai/gpt.service';
 import { WorkflowEngine, WorkflowEngineState } from '../services/workflow-engine.service';
 import storageService from '../services/storage.service';
+import config from '../config';
 import agentVoiceService from '../services/agent-voice.service';
 import sttService from '../services/ai/stt.service';
 
@@ -2064,28 +2065,40 @@ export const generateTTS = async (req: AuthRequest, res: Response): Promise<void
 };
 
 /**
- * Transcribe audio using the agent's configured voice provider (ElevenLabs Scribe v2).
- * Accepts base64-encoded audio in the request body.
+ * Transcribe audio using ElevenLabs Scribe v2 or OpenAI Whisper.
+ * Accepts multipart form with 'audio' file field, or JSON with audioBase64.
  */
 export const transcribeAudio = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.id;
     const { id } = req.params;
-    const { audioBase64, languageCode } = req.body;
 
     if (!userId) {
       res.status(401).json({ success: false, error: 'Unauthorized' });
       return;
     }
 
-    if (!audioBase64) {
-      res.status(400).json({ success: false, error: 'audioBase64 is required' });
+    // Accept audio from multipart file upload OR base64 JSON body
+    let audioBuffer: Buffer;
+    let languageCode: string | undefined;
+
+    if ((req as any).file) {
+      // Multipart form upload (from client FormData)
+      audioBuffer = (req as any).file.buffer;
+      languageCode = req.body?.languageCode;
+    } else if (req.body?.audioBase64) {
+      // JSON body with base64 (legacy)
+      audioBuffer = Buffer.from(req.body.audioBase64, 'base64');
+      languageCode = req.body?.languageCode;
+    } else {
+      res.status(400).json({ success: false, error: 'Audio file or audioBase64 is required' });
       return;
     }
 
-    const audioBuffer = Buffer.from(audioBase64, 'base64');
+    logger.info('Transcribe request received', { bufferSize: audioBuffer.length });
+    // Use global ElevenLabs key from env first, fall back to per-agent key
     const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
-    const elevenLabsKey = voiceSettings?.elevenlabsApiKey;
+    const elevenLabsKey = config.elevenlabs.apiKey || voiceSettings?.elevenlabsApiKey;
     const lang = languageCode || voiceSettings?.language?.split('-')[0];
 
     // Try ElevenLabs STT first, fall back to OpenAI Whisper

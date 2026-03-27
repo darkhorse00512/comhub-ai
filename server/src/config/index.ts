@@ -27,6 +27,9 @@ interface Config {
     ttsVoice: string;
     whisperModel: string;
   };
+  elevenlabs: {
+    apiKey: string;
+  };
   twilio: {
     accountSid: string;
     authToken: string;
@@ -81,6 +84,9 @@ const config: Config = {
     ttsModel: process.env.OPENAI_TTS_MODEL || 'tts-1',
     ttsVoice: process.env.OPENAI_TTS_VOICE || 'alloy',
     whisperModel: process.env.OPENAI_WHISPER_MODEL || 'whisper-1',
+  },
+  elevenlabs: {
+    apiKey: process.env.ELEVENLABS_API_KEY || '',
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || '',

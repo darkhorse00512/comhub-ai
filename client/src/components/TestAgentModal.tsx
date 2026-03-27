@@ -703,36 +703,32 @@ const TestAgentModal = ({
   // --- Server-side STT (ElevenLabs Scribe v2) ---
   const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
     try {
-      // Convert blob to base64 safely (handles large arrays)
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64 = btoa(binary);
-
       const token = localStorage.getItem("backend_token");
+
+      // Send as multipart form — much faster than base64 JSON
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "audio.webm");
+      if (voiceConfig?.language) {
+        formData.append("languageCode", voiceConfig.language.split("-")[0]);
+      }
+
       const response = await fetch(
         `${apiBaseUrl}/agents/${agentId}/transcribe`,
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             ...(token && { Authorization: `Bearer ${token}` }),
+            // No Content-Type — browser sets it with boundary for FormData
           },
-          body: JSON.stringify({
-            audioBase64: base64,
-            languageCode: voiceConfig?.language?.split("-")[0],
-          }),
+          body: formData,
         }
       );
       const data = await response.json();
       if (data.success && data.text) {
-        console.log(`[STT] ElevenLabs: "${data.text}" (${data.durationMs}ms)`);
+        console.log(`[STT] Server (${data.provider}): "${data.text}" (${data.durationMs}ms)`);
         return data.text;
       } else {
-        console.warn("[STT] Server returned error:", data.error || "no text");
+        console.warn("[STT] Server error:", data.error || "empty transcript");
       }
     } catch (err) {
       console.warn("[STT] Server transcription failed:", err);
