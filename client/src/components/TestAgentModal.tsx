@@ -795,7 +795,8 @@ const TestAgentModal = ({
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream, {
               mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-                ? "audio/webm;codecs=opus" : "audio/webm"
+                ? "audio/webm;codecs=opus" : "audio/webm",
+              audioBitsPerSecond: 16000, // 16kbps — tiny files, perfect for speech STT
             });
             audioChunks = [];
             mediaRecorder.ondataavailable = (e) => {
