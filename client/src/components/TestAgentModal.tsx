@@ -798,6 +798,13 @@ const TestAgentModal = ({
           model: "v5",
           startOnLoad: true,
 
+          // Tuned for real-time voice calls: fast speech-end detection
+          positiveSpeechThreshold: 0.5,   // Higher = fewer false starts
+          negativeSpeechThreshold: 0.35,  // Gap from positive threshold
+          redemptionMs: 300,              // 300ms grace after speech stops (default: 1400ms)
+          minSpeechMs: 150,               // Accept short utterances like "Yes" (default: 400ms)
+          preSpeechPadMs: 300,            // 300ms audio before speech start (default: 800ms)
+
           onSpeechStart: () => {
             if (!isCallActiveRef.current) return;
             // If agent is speaking, ignore (mic picked up agent audio)
