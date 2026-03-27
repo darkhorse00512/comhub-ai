@@ -911,22 +911,30 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
       .filter(e => e.nodeLabel === node.data?.label)
       .slice(-12);
 
-    const prompt = `Which transition should fire for this stage? Read the instructions and conversation carefully.
+    // Build a Q&A summary for clarity
+    const qaSummary: string[] = [];
+    for (let i = 0; i < stageContext.length; i++) {
+      if (stageContext[i].role === 'agent' && stageContext[i].text.trim().endsWith('?')) {
+        const answer = stageContext[i + 1]?.role === 'user' ? stageContext[i + 1].text : '(no answer yet)';
+        qaSummary.push(`Q: "${stageContext[i].text.substring(0, 80)}" → A: "${answer}"`);
+      }
+    }
+
+    const prompt = `Given this call stage, which transition should fire?
 
 STAGE: "${node.data?.label}"
-INSTRUCTIONS:
+
+TRANSITION CONDITIONS (from stage instructions):
 ${stageMessage}
 
-TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
+AVAILABLE TRANSITIONS: ${transitionNames.map(n => `"${n}"`).join(', ')}
 
-CONVERSATION:
-${stageContext.map(e => `${e.role === 'agent' ? 'Agent' : 'Caller'}: "${e.text}"`).join('\n')}
+QUESTIONS ASKED AND ANSWERED IN THIS STAGE:
+${qaSummary.length > 0 ? qaSummary.join('\n') : '(none yet)'}
 
-Rules:
-- Check which transition condition in the INSTRUCTIONS has been met based on the conversation.
-- If a transition condition is clearly met (e.g., caller confirmed identity, caller confirmed no solar system, caller refused), output that transition name.
-- If the conversation has NOT yet reached any transition condition, output NONE.
-- Output ONLY the transition name or NONE.`;
+CALLER'S LATEST MESSAGE: "${userMessage}"
+
+Which transition condition is met? Output ONLY the transition name, or NONE if no condition is met yet.`;
 
     try {
       const checkStartMs = Date.now();
@@ -1276,11 +1284,11 @@ Rules:
       availableTransitions: validTransitionNames,
     });
 
-    // Add user message to dialogue history and conversation context
-    // Skip if auto-corrected — the rebuilt history already includes the user message.
+    // Add user message to conversation context (ALWAYS — needed by proactive check).
+    // For dialogue history: skip if auto-corrected (already included in rebuilt history).
+    this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
     if (!wasAutoCorrected) {
       this.state.dialogueHistory.push({ role: 'user', content: userMessage });
-      this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
       this.state.dialogueTurnCount++;
     }
 
