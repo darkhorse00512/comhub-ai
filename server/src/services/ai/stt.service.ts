@@ -112,24 +112,23 @@ class STTService {
     }
   }
 
-  async transcribeAudioBuffer(audioBuffer: Buffer, filename: string = 'audio.wav'): Promise<string> {
+  async transcribeAudioBuffer(audioBuffer: Buffer, filename: string = 'audio.webm'): Promise<string> {
     try {
-      logger.info('Transcribing audio buffer', { size: audioBuffer.length });
+      logger.info('Transcribing audio buffer via OpenAI Whisper', { size: audioBuffer.length, filename });
 
-      const formData = new FormData();
-      formData.append('file', audioBuffer, {
-        filename,
-        contentType: 'audio/wav',
+      // Create a File-like object from the buffer for the OpenAI SDK
+      const file = new File([audioBuffer], filename, {
+        type: filename.endsWith('.wav') ? 'audio/wav' : 'audio/webm',
       });
-      formData.append('model', config.openai.whisperModel);
-      formData.append('language', 'en');
 
       const transcription = await this.openai.audio.transcriptions.create({
-        file: fs.createReadStream(filename),
+        file,
         model: config.openai.whisperModel,
       });
 
-      logger.info('Audio buffer transcribed successfully');
+      logger.info('Audio buffer transcribed via Whisper', {
+        text: transcription.text.substring(0, 100),
+      });
 
       return transcription.text;
     } catch (error) {

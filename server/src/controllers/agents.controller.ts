@@ -2083,32 +2083,49 @@ export const transcribeAudio = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    // Resolve voice settings to get the ElevenLabs API key
+    const audioBuffer = Buffer.from(audioBase64, 'base64');
     const voiceSettings = await agentVoiceService.resolveVoiceSettings(id);
     const elevenLabsKey = voiceSettings?.elevenlabsApiKey;
+    const lang = languageCode || voiceSettings?.language?.split('-')[0];
 
-    if (!elevenLabsKey) {
-      res.status(400).json({
-        success: false,
-        error: 'No ElevenLabs API key configured. Set up ElevenLabs or ComhubAI voice in agent settings.',
-      });
-      return;
+    // Try ElevenLabs STT first, fall back to OpenAI Whisper
+    if (elevenLabsKey) {
+      try {
+        const result = await sttService.elevenlabsTranscribe(audioBuffer, elevenLabsKey, {
+          languageCode: lang,
+        });
+        res.status(200).json({
+          success: true,
+          text: result.text,
+          language: result.language,
+          durationMs: result.durationMs,
+          provider: 'elevenlabs',
+        });
+        return;
+      } catch (err) {
+        logger.warn('ElevenLabs STT failed, falling back to OpenAI Whisper', {
+          error: err instanceof Error ? err.message : err,
+        });
+      }
     }
 
-    // Decode base64 to buffer
-    const audioBuffer = Buffer.from(audioBase64, 'base64');
-
-    const result = await sttService.elevenlabsTranscribe(audioBuffer, elevenLabsKey, {
-      languageCode: languageCode || voiceSettings?.language?.split('-')[0],
-    });
-
-    res.status(200).json({
-      success: true,
-      text: result.text,
-      language: result.language,
-      durationMs: result.durationMs,
-      provider: result.provider,
-    });
+    // Fallback: OpenAI Whisper
+    try {
+      const startMs = Date.now();
+      const text = await sttService.transcribeAudioBuffer(audioBuffer, 'audio.webm');
+      res.status(200).json({
+        success: true,
+        text,
+        durationMs: Date.now() - startMs,
+        provider: 'openai-whisper',
+      });
+    } catch (err) {
+      logger.error('All STT providers failed', { error: err });
+      res.status(500).json({
+        success: false,
+        error: 'Transcription failed with all providers',
+      });
+    }
   } catch (error) {
     logger.error('Failed to transcribe audio', { error });
     res.status(500).json({

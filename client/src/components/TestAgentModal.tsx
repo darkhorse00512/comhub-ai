@@ -703,8 +703,15 @@ const TestAgentModal = ({
   // --- Server-side STT (ElevenLabs Scribe v2) ---
   const transcribeViaServer = useCallback(async (audioBlob: Blob): Promise<string | null> => {
     try {
+      // Convert blob to base64 safely (handles large arrays)
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+
       const token = localStorage.getItem("backend_token");
       const response = await fetch(
         `${apiBaseUrl}/agents/${agentId}/transcribe`,
@@ -720,15 +727,15 @@ const TestAgentModal = ({
           }),
         }
       );
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.text) {
-          console.log(`[STT] ElevenLabs: "${data.text}" (${data.durationMs}ms)`);
-          return data.text;
-        }
+      const data = await response.json();
+      if (data.success && data.text) {
+        console.log(`[STT] ElevenLabs: "${data.text}" (${data.durationMs}ms)`);
+        return data.text;
+      } else {
+        console.warn("[STT] Server returned error:", data.error || "no text");
       }
     } catch (err) {
-      console.warn("[STT] Server transcription failed, using browser STT:", err);
+      console.warn("[STT] Server transcription failed:", err);
     }
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
@@ -766,7 +773,8 @@ const TestAgentModal = ({
         let audioChunks: Blob[] = [];
 
         // Silence timeout: how long to wait after last speech before stopping
-        const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 2) * 1000;
+        // Use configured value but cap at 1.5s for responsive calls
+        const silenceTimeoutMs = Math.min((callSettingsRef.current.silenceTimeout || 1) * 1000, 1500);
         const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
         const initialWaitMs = Math.max(onIdleTimeoutMs, 5000);
 
