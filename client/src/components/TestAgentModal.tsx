@@ -828,9 +828,18 @@ const TestAgentModal = ({
           userEndSpeechRef.current = Date.now();
         };
 
+        let browserTranscript = "";
+
         recognition.onresult = (event: any) => {
           hasReceivedSpeech = true;
           noSpeechCountRef.current = 0;
+          // Capture browser transcript as fallback
+          browserTranscript = "";
+          for (let i = 0; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              browserTranscript += event.results[i][0].transcript;
+            }
+          }
           startSilenceTimer(silenceTimeoutMs);
         };
 
@@ -838,18 +847,39 @@ const TestAgentModal = ({
           setIsRecording(false);
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           recognitionRef.current = null;
-          sttEndTimeRef.current = Date.now();
+          const recordEndMs = Date.now();
+          const recordDuration = recordEndMs - sttStartTimeRef.current;
 
           // Stop MediaRecorder and get audio blob
           const audioBlob = await stopRecorder();
+          // recorder stopped
 
           if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
           if (isSpeakingRef.current || isLoadingRef.current) return;
 
-          if (hasReceivedSpeech && audioBlob) {
-            // Send to ElevenLabs STT for accurate transcription
-            const text = await transcribeViaServer(audioBlob);
-            sttEndTimeRef.current = Date.now();
+          if (hasReceivedSpeech) {
+            // Try server STT first (ElevenLabs — more accurate)
+            let text: string | null = null;
+            let sttProvider = "browser";
+            const sttStartMs = Date.now();
+            if (audioBlob) {
+              text = await transcribeViaServer(audioBlob);
+              if (text) sttProvider = "elevenlabs";
+            }
+            const sttDoneMs = Date.now();
+            const sttLatency = sttDoneMs - sttStartMs;
+            sttEndTimeRef.current = sttDoneMs;
+
+            // Fall back to browser transcript if server STT failed
+            if (!text || !text.trim()) {
+              text = browserTranscript.trim() || null;
+              sttProvider = "browser";
+            }
+
+            // Show STT timing
+            addMessage("system",
+              `Record: ${recordDuration}ms | STT (${sttProvider}): ${sttLatency}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
+            );
 
             if (!isCallActiveRef.current) return;
 
@@ -858,7 +888,7 @@ const TestAgentModal = ({
               idleCountRef.current = 0;
               await handleUserMessageRef.current(text.trim());
             } else {
-              // STT returned empty — restart
+              // Both STTs returned empty — restart
               if (isCallActiveRef.current) startAutoRecording();
             }
           } else {
