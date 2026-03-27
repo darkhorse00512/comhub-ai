@@ -959,6 +959,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
       logger.info('WorkflowEngine: Proactive check result', {
         nodeLabel: node.data?.label,
         answer,
+        qaCount: qaSummary.length,
         checkMs: this.lastTiming.proactiveCheckMs,
       });
 
@@ -967,6 +968,24 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
       const matched = transitions.find(
         t => t.name.toLowerCase() === answer.toLowerCase()
       );
+
+      // SAFEGUARD: If the proactive check wants the FIRST transition (happy path / completion),
+      // verify it's reasonable. The first transition means ALL steps are done.
+      // If only a few Q&A pairs exist, the stage is likely NOT complete — block it.
+      if (matched && matched.name === transitions[0].name) {
+        // Count how many questions are in the stage instructions (rough estimate)
+        const instructionQuestionCount = (stageMessage.match(/\?/g) || []).length;
+        // If the instructions have many questions but only a few were asked, block the happy path
+        if (instructionQuestionCount > 3 && qaSummary.length < instructionQuestionCount - 2) {
+          logger.warn('WorkflowEngine: Proactive check blocked — not enough Q&A for happy path', {
+            nodeLabel: node.data?.label,
+            transition: matched.name,
+            qaCount: qaSummary.length,
+            instructionQuestionCount,
+          });
+          return null;
+        }
+      }
 
       if (matched) {
         logger.info('WorkflowEngine: Proactive check result — stage complete', {
