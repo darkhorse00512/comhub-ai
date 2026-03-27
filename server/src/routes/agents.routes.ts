@@ -8,6 +8,12 @@ const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
+});
+
+// Strict file filter for PlayAudio uploads only (not used for STT)
+const uploadAudioStrict = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowedTypes = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave'];
     if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(mp3|m4a|wav)$/i)) {
@@ -40,7 +46,7 @@ router.put('/:id', agentsController.updateAgent);
 router.delete('/:id', agentsController.deleteAgent);
 
 // Upload audio for play audio nodes
-router.post('/:id/upload-audio', upload.single('audio'), agentsController.uploadAudio);
+router.post('/:id/upload-audio', uploadAudioStrict.single('audio'), agentsController.uploadAudio);
 
 // Clone an agent
 router.post('/:id/clone', agentsController.cloneAgent);
