@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { MicVAD, utils as vadUtils } from "@ricky0123/vad-web";
 import { useWorkflowStream, StreamAudioMessage } from "@/hooks/useWorkflowStream";
 import {
   Dialog,
@@ -192,8 +193,8 @@ const TestAgentModal = ({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // Note: MediaRecorder refs removed — VAD handles audio capture directly
+  const vadRef = useRef<MicVAD | null>(null);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -733,239 +734,170 @@ const TestAgentModal = ({
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
 
-  // Start/stop MediaRecorder alongside browser STT for server-side transcription
-  const startMediaRecorder = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-    } catch {
-      // Mic already granted from startCall — this shouldn't fail
+  // Note: MediaRecorder removed — VAD provides audio directly via onSpeechEnd callback
+
+  // --- VAD-based auto recording for audio mode ---
+  // Uses Silero VAD for precise speech start/end detection (~300ms latency).
+  // When speech ends, the audio is sent to ElevenLabs STT for transcription.
+  // Falls back to browser SpeechRecognition if VAD fails to initialize.
+
+  const destroyVAD = useCallback(async () => {
+    if (vadRef.current) {
+      try { await vadRef.current.destroy(); } catch {}
+      vadRef.current = null;
     }
   }, []);
 
-  const stopMediaRecorder = useCallback((): Promise<Blob | null> => {
-    return new Promise((resolve) => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder || recorder.state === "inactive") {
-        resolve(null);
-        return;
-      }
-      recorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        audioChunksRef.current = [];
-        // Stop mic stream
-        recorder.stream.getTracks().forEach(t => t.stop());
-        mediaRecorderRef.current = null;
-        resolve(blob.size > 100 ? blob : null); // ignore tiny blobs (no speech)
-      };
-      recorder.stop();
-    });
-  }, []);
-
-  // --- Auto recording for audio mode ---
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
-    if (!isCallActiveRef.current || callModeRef.current !== "audio") {
-      console.log('[startAutoRecording] BLOCKED: not active or not audio mode');
-      return;
-    }
-    if (!opts?.skipSpeakingCheck && isSpeakingRef.current) {
-      console.log('[startAutoRecording] BLOCKED: agent is speaking');
-      return;
-    }
-    if (recognitionRef.current) {
-      console.log('[startAutoRecording] BLOCKED: recognition already active');
-      return;
-    }
+    if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
+    if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
+    // Prevent duplicate: VAD already listening
+    if (vadRef.current?.listening) return;
+    if (recognitionRef.current) return;
 
-    const SpeechRecognitionAPI =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) {
-      console.error('[startAutoRecording] BLOCKED: SpeechRecognition API not available!');
-      return;
-    }
+    // Idle timeout: if no speech after this duration, trigger idle behavior
+    const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-    console.log('[startAutoRecording] OK — scheduling recognition in 500ms');
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(async () => {
+        // No speech detected within idle timeout
+        if (!isCallActiveRef.current) return;
+        if (isSpeakingRef.current || isLoadingRef.current) return;
 
-    setTimeout(() => {
-      if (!isCallActiveRef.current || callModeRef.current !== "audio") {
-        console.log('[startAutoRecording] BLOCKED inside timeout: not active');
-        return;
-      }
-      if (recognitionRef.current) {
-        console.log('[startAutoRecording] BLOCKED inside timeout: recognition already exists');
-        return;
-      }
-      console.log('[startAutoRecording] Starting recognition NOW');
+        const cs = callSettingsRef.current;
+        idleCountRef.current++;
 
+        if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+          if (cs.onIdleTerminationMessage) {
+            addMessage("ai", cs.onIdleTerminationMessage);
+            await speakText(cs.onIdleTerminationMessage);
+          }
+          endCallRef.current();
+        } else if (cs.onIdleMessage) {
+          addMessage("ai", cs.onIdleMessage);
+          await speakText(cs.onIdleMessage);
+          // After speaking idle message, restart VAD to listen again
+          if (isCallActiveRef.current) startAutoRecording();
+        } else if (isCallActiveRef.current) {
+          startAutoRecording();
+        }
+      }, onIdleTimeoutMs);
+    };
+
+    // Initialize VAD
+    (async () => {
       try {
-        const recognition = new SpeechRecognitionAPI();
-        recognitionRef.current = recognition;
+        // Destroy previous instance if any
+        await destroyVAD();
 
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = voiceConfig?.language || "en-US";
+        const vad = await MicVAD.new({
+          baseAssetPath: "/vad/",
+          onnxWASMBasePath: "/vad/",
+          model: "v5",
+          startOnLoad: true,
 
-        let finalTranscript = "";
-        let interimTranscript = "";
-        let hasReceivedSpeech = false;
+          onSpeechStart: () => {
+            if (!isCallActiveRef.current) return;
+            // If agent is speaking, ignore (mic picked up agent audio)
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+            console.log("[VAD] Speech started");
+            setIsRecording(true);
+            sttStartTimeRef.current = Date.now();
+            // Cancel idle timer — user is speaking
+            if (idleTimer) clearTimeout(idleTimer);
+          },
 
-        const stopRecognition = () => {
-          if (recognitionRef.current) {
-            try { recognitionRef.current.stop(); } catch {}
-          }
-        };
+          onSpeechEnd: async (audioData: Float32Array) => {
+            if (!isCallActiveRef.current) return;
+            if (isSpeakingRef.current || isLoadingRef.current) return;
 
-        // Use configured silence timeout for mid-speech pauses
-        const silenceTimeoutMs = (callSettingsRef.current.silenceTimeout || 2) * 1000;
-        // Use onIdleTimeout for initial wait (how long to wait for user to start speaking)
-        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
-        const initialWaitMs = Math.max(onIdleTimeoutMs, 5000); // use idle timeout, at least 5s
+            console.log("[VAD] Speech ended, audio samples:", audioData.length);
+            userEndSpeechRef.current = Date.now();
+            setIsRecording(false);
 
-        const startSilenceTimer = (ms: number) => {
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = setTimeout(stopRecognition, ms);
-        };
+            // Pause VAD while we process (prevent picking up agent's response)
+            try { await vad.pause(); } catch {}
 
-        recognition.onstart = () => {
-          setIsRecording(true);
-          sttStartTimeRef.current = Date.now();
-          startSilenceTimer(initialWaitMs);
-          // Start recording audio for server-side STT (parallel with browser STT)
-          startMediaRecorder();
-        };
+            // Convert Float32Array (16kHz PCM) to WAV blob for server STT
+            const wavBuffer = vadUtils.encodeWAV(audioData);
+            const audioBlob = new Blob([wavBuffer], { type: "audio/wav" });
 
-        // Track when user actually starts/stops speaking (for latency breakdown)
-        (recognition as any).onspeechstart = () => {
-          sttStartTimeRef.current = Date.now(); // More accurate: when speech actually detected
-        };
-        (recognition as any).onspeechend = () => {
-          userEndSpeechRef.current = Date.now();
-        };
+            // Send to ElevenLabs STT
+            const text = await transcribeViaServer(audioBlob);
+            sttEndTimeRef.current = Date.now();
 
-        recognition.onresult = (event: any) => {
-          hasReceivedSpeech = true;
-          noSpeechCountRef.current = 0; // reset no-speech counter on actual speech
-          interimTranscript = "";
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
-          }
-          startSilenceTimer(silenceTimeoutMs); // configured silence timeout after last speech
-        };
+            if (!isCallActiveRef.current) return;
 
-        recognition.onend = async () => {
-          setIsRecording(false);
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          recognitionRef.current = null;
-          sttEndTimeRef.current = Date.now();
-
-          // Stop MediaRecorder and get the audio blob
-          const audioBlob = await stopMediaRecorder();
-
-          if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-
-          // Browser STT transcript (used as fallback)
-          const browserText = (finalTranscript.trim() || interimTranscript.trim());
-
-          // If speech was detected, try server-side STT for better accuracy
-          let text = browserText;
-          if ((browserText || hasReceivedSpeech) && audioBlob && !isSpeakingRef.current && !isLoadingRef.current) {
-            const serverText = await transcribeViaServer(audioBlob);
-            if (serverText) {
-              text = serverText; // Server STT is more accurate
-            }
-            sttEndTimeRef.current = Date.now(); // Update timing after server STT
-          }
-
-          if (text) {
-            // If agent is still speaking or processing, ignore
-            if (isSpeakingRef.current || isLoadingRef.current) {
-              return;
-            }
-            const cs = callSettingsRef.current;
-            // Interruption sensitivity
-            const wordCount = text.split(/\s+/).length;
-            if (cs.interruptionSensitivity === "high" && cs.interruptionWordCountThreshold > 1 && wordCount < cs.interruptionWordCountThreshold) {
-              if (isCallActiveRef.current) {
-                startAutoRecording();
-              }
-              return;
-            }
-            noSpeechCountRef.current = 0;
-            idleCountRef.current = 0; // reset idle on valid speech
-            await handleUserMessageRef.current(text);
-          } else if (hasReceivedSpeech && !isSpeakingRef.current && !isLoadingRef.current) {
-            // User spoke but speech couldn't be transcribed — trigger fallback
-            await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
-          } else {
-            // No speech detected — but if the agent is speaking (audio playback caused
-            // the abort), do NOT count as idle. Just return silently.
-            if (isSpeakingRef.current || isLoadingRef.current) {
-              return;
-            }
-            // No speech detected — handle idle behavior
-            const cs = callSettingsRef.current;
-            idleCountRef.current++;
-
-            if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
-              // Max idle threshold reached — terminate call
-              if (cs.onIdleTerminationMessage) {
-                addMessage("ai", cs.onIdleTerminationMessage);
-                if (callModeRef.current === "audio") {
-                  await speakText(cs.onIdleTerminationMessage);
-                }
-              }
-              endCallRef.current();
-            } else if (cs.onIdleMessage) {
-              // Send configured idle prompt message
-              addMessage("ai", cs.onIdleMessage);
-              if (callModeRef.current === "audio") {
-                await speakText(cs.onIdleMessage);
-              }
-              if (isCallActiveRef.current) {
-                startAutoRecording();
-              }
-            } else if (idleCountRef.current >= 2) {
-              // No idle message configured — fall back to workflow after 2 cycles
+            if (text && text.trim()) {
+              console.log("[VAD] Transcribed:", text);
               noSpeechCountRef.current = 0;
-              await handleUserMessageRef.current("[SPEECH_NOT_RECOGNIZED]");
-            } else if (isCallActiveRef.current) {
-              startAutoRecording();
+              idleCountRef.current = 0;
+              await handleUserMessageRef.current(text.trim());
+            } else {
+              console.log("[VAD] No text transcribed — restarting");
+              // Restart VAD to listen again
+              if (isCallActiveRef.current && !isSpeakingRef.current) {
+                startAutoRecording();
+              }
             }
-          }
-        };
+          },
 
-        recognition.onerror = (event: any) => {
-          if (event.error === "no-speech") {
-            // Handled by onend
-            setIsRecording(false);
-          } else if (event.error !== "aborted") {
-            console.error("Speech recognition error:", event.error);
-            setIsRecording(false);
-            // Restart on transient errors
-            if (isCallActiveRef.current && callModeRef.current === "audio") {
-              startAutoRecording();
-            }
-          }
-        };
+          onVADMisfire: () => {
+            console.log("[VAD] Misfire (speech too short)");
+            // Too short — not a real utterance, keep listening
+          },
+        });
 
-        recognition.start();
+        vadRef.current = vad;
+        setIsRecording(true);
+        resetIdleTimer();
+        console.log("[VAD] Initialized and listening");
+
       } catch (error) {
-        console.error("Error starting auto-recording:", error);
-        setIsRecording(false);
+        console.error("[VAD] Failed to initialize, falling back to browser STT:", error);
+        // Fallback: use browser SpeechRecognition
+        fallbackBrowserSTT();
       }
-    }, 500);
-  }, []);
+    })();
+
+    // --- Fallback: browser SpeechRecognition (if VAD fails) ---
+    function fallbackBrowserSTT() {
+      const SpeechRecognitionAPI =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+      if (!SpeechRecognitionAPI) return;
+
+      const recognition = new SpeechRecognitionAPI();
+      recognitionRef.current = recognition;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = voiceConfig?.language || "en-US";
+
+      let finalTranscript = "";
+
+      recognition.onstart = () => { setIsRecording(true); };
+      recognition.onresult = (event: any) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+        }
+      };
+      recognition.onend = async () => {
+        setIsRecording(false);
+        recognitionRef.current = null;
+        if (!isCallActiveRef.current) return;
+        const text = finalTranscript.trim();
+        if (text) {
+          await handleUserMessageRef.current(text);
+        } else if (isCallActiveRef.current) {
+          startAutoRecording();
+        }
+      };
+      recognition.onerror = () => { setIsRecording(false); };
+      recognition.start();
+    }
+  }, [destroyVAD, transcribeViaServer, voiceConfig?.language, addMessage, speakText]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -1448,6 +1380,9 @@ const TestAgentModal = ({
     isCallActiveRef.current = false;
     waitingForInputRef.current = false;
 
+    // Destroy VAD instance
+    await destroyVAD();
+
     // End streaming WebSocket session if active
     endWorkflow();
 
@@ -1530,7 +1465,7 @@ const TestAgentModal = ({
       title: "Call Ended",
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow]);
+  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow, destroyVAD]);
 
   // Keep endCallRef in sync
   useEffect(() => {
