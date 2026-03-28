@@ -24,6 +24,17 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+// Serve VAD/ONNX files with correct MIME types (nginx doesn't handle .mjs)
+app.use('/vad', express.static(path.join(__dirname, '../public/vad'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.mjs')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    } else if (filePath.endsWith('.wasm')) {
+      res.setHeader('Content-Type', 'application/wasm');
+    }
+  },
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
