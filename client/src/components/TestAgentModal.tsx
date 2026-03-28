@@ -1325,20 +1325,7 @@ const TestAgentModal = ({
         }, maxDur * 1000);
       }
 
-      // --- STREAMING MODE (audio via WebSocket) ---
-      if (callMode === "audio" && wsConnected) {
-        toast({
-          title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
-          description: "Streaming audio mode active.",
-        });
-        // Start workflow via WebSocket — responses arrive as streaming events
-        // The onStarted/onAudio/onDone callbacks handle playback and recording
-        startWorkflow(agentId, activeTab);
-        // Loading state is managed by onStarted/onDone callbacks
-        return;
-      }
-
-      // --- HTTP MODE (text mode — original batch flow) ---
+      // Start workflow via HTTP
       const result = await startWorkflowCallAPI(activeTab);
 
       if (!result || !result.success) {
@@ -1370,10 +1357,22 @@ const TestAgentModal = ({
 
       toast({
         title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
-        description: "Text mode active. The workflow will execute step by step.",
+        description: callMode === "audio"
+          ? "Audio mode active."
+          : "Text mode active.",
       });
 
+      // Play initial messages
       await processWorkflowResult(result);
+
+      // Start recording after initial messages play (audio mode)
+      if (
+        !result.isComplete &&
+        callModeRef.current === "audio" &&
+        isCallActiveRef.current
+      ) {
+        startAutoRecording();
+      }
     } catch (error) {
       console.error("Error starting call:", error);
       toast({
@@ -1391,9 +1390,6 @@ const TestAgentModal = ({
     startWorkflowCallAPI,
     processWorkflowResult,
     startAutoRecording,
-    wsConnected,
-    startWorkflow,
-    initVAD,
   ]);
 
   // --- End call ---
