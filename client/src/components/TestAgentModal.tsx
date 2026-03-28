@@ -738,10 +738,9 @@ const TestAgentModal = ({
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
 
-  // --- VAD-based recording with echo cancellation + ElevenLabs STT ---
-  // Silero VAD detects speech start/end (~300ms latency).
-  // Mic stream uses echoCancellation + noiseSuppression to handle speaker audio.
-  // VAD's onSpeechEnd provides the audio directly → encode WAV → ElevenLabs STT.
+  // --- VAD: initialize once, pause/resume per turn ---
+  // VAD is created once when the call starts. Between turns, it's paused (during
+  // agent speaking) and resumed (when ready to listen). No re-initialization needed.
 
   const destroyVAD = useCallback(async () => {
     if (vadRef.current) {
@@ -750,143 +749,148 @@ const TestAgentModal = ({
     }
   }, []);
 
+  /** Initialize VAD once for the entire call */
+  const initVAD = useCallback(async () => {
+    if (vadRef.current) return; // Already initialized
+
+    try {
+      const vad = await MicVAD.new({
+        baseAssetPath: "/vad/",
+        onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/",
+        model: "v5",
+        startOnLoad: false, // Don't start yet — startAutoRecording will call start()
+
+        getStream: async () => {
+          return navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+        },
+
+        positiveSpeechThreshold: 0.7,
+        negativeSpeechThreshold: 0.2,
+        redemptionMs: 500,
+        minSpeechMs: 150,
+        preSpeechPadMs: 200,
+        submitUserSpeechOnPause: true,
+
+        onSpeechStart: () => {
+          if (!isCallActiveRef.current) return;
+          if (isSpeakingRef.current || isLoadingRef.current) return;
+          console.log("[VAD] Speech start");
+          setIsRecording(true);
+          sttStartTimeRef.current = Date.now();
+
+          // Clear idle timer
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          // Safety: max 15s recording
+          silenceTimerRef.current = setTimeout(() => {
+            console.log("[VAD] Max duration — pausing");
+            if (vadRef.current?.listening) vadRef.current.pause();
+          }, 15000);
+        },
+
+        onSpeechEnd: async (audioData: Float32Array) => {
+          if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+          if (!isCallActiveRef.current) return;
+          if (isSpeakingRef.current || isLoadingRef.current) return;
+
+          const durationMs = Math.round((audioData.length / 16000) * 1000);
+          if (audioData.length < 2400) return; // < 150ms = noise
+
+          console.log(`[VAD] Speech end: ${durationMs}ms audio`);
+          setIsRecording(false);
+          const recordEndMs = Date.now();
+          const recordDuration = recordEndMs - sttStartTimeRef.current;
+
+          // Pause VAD while processing (don't pick up agent audio)
+          try { if (vadRef.current?.listening) await vadRef.current.pause(); } catch {}
+
+          // Encode WAV → ElevenLabs STT
+          const sttStartMs = Date.now();
+          const wavBuffer = vadUtils.encodeWAV(audioData);
+          const audioBlob = new Blob([wavBuffer], { type: "audio/wav" });
+
+          let text: string | null = null;
+          let sttProvider = "none";
+          const sttResult = await transcribeViaServer(audioBlob);
+          if (sttResult) {
+            text = sttResult.text;
+            sttProvider = sttResult.provider;
+          }
+
+          const sttDoneMs = Date.now();
+          sttEndTimeRef.current = sttDoneMs;
+
+          addMessage("system",
+            `Record: ${recordDuration}ms (${durationMs}ms audio) | STT (${sttProvider}): ${sttDoneMs - sttStartMs}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
+          );
+
+          if (!isCallActiveRef.current) return;
+
+          if (text && text.trim()) {
+            noSpeechCountRef.current = 0;
+            idleCountRef.current = 0;
+            await handleUserMessageRef.current(text.trim());
+          } else {
+            // Empty transcript — resume listening
+            if (isCallActiveRef.current && !isSpeakingRef.current) {
+              startAutoRecordingRef.current();
+            }
+          }
+        },
+
+        onVADMisfire: () => { /* too short — keep listening */ },
+      });
+
+      vadRef.current = vad;
+      console.log("[VAD] Initialized successfully");
+    } catch (error) {
+      console.error("[VAD] Init failed:", error);
+    }
+  }, [transcribeViaServer, addMessage]);
+
+  /** Resume VAD listening (no re-initialization) */
   const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
-    if (vadRef.current?.listening) return;
+    if (vadRef.current?.listening) return; // Already listening
 
+    if (!vadRef.current) {
+      console.warn("[VAD] Not initialized — cannot start recording");
+      return;
+    }
+
+    // Resume VAD
+    vadRef.current.start();
+    setIsRecording(true);
+    console.log("[VAD] Resumed listening");
+
+    // Idle timer
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const resetIdleTimer = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(async () => {
-        if (!isCallActiveRef.current || isSpeakingRef.current || isLoadingRef.current) return;
-        const cs = callSettingsRef.current;
-        idleCountRef.current++;
-        if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
-          if (cs.onIdleTerminationMessage) {
-            addMessage("ai", cs.onIdleTerminationMessage);
-            await speakText(cs.onIdleTerminationMessage);
-          }
-          endCallRef.current();
-        } else if (cs.onIdleMessage) {
-          addMessage("ai", cs.onIdleMessage);
-          await speakText(cs.onIdleMessage);
-          if (isCallActiveRef.current) startAutoRecording();
-        } else if (isCallActiveRef.current) {
-          startAutoRecording();
+    silenceTimerRef.current = setTimeout(async () => {
+      if (!isCallActiveRef.current || isSpeakingRef.current || isLoadingRef.current) return;
+      const cs = callSettingsRef.current;
+      idleCountRef.current++;
+      if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+        if (cs.onIdleTerminationMessage) {
+          addMessage("ai", cs.onIdleTerminationMessage);
+          await speakText(cs.onIdleTerminationMessage);
         }
-      }, onIdleTimeoutMs);
-    };
-
-    (async () => {
-      try {
-        await destroyVAD();
-
-        const vad = await MicVAD.new({
-          baseAssetPath: "/vad/",
-          onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/",
-          model: "v5",
-          startOnLoad: true,
-
-          // Echo cancellation: request mic with browser's built-in echo suppression
-          getStream: async () => {
-            return navigator.mediaDevices.getUserMedia({
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-              },
-            });
-          },
-
-          // Tuned for real-time voice calls
-          positiveSpeechThreshold: 0.7,
-          negativeSpeechThreshold: 0.2,
-          redemptionMs: 500,
-          minSpeechMs: 150,
-          preSpeechPadMs: 200,
-          submitUserSpeechOnPause: true,
-
-          onSpeechStart: () => {
-            if (!isCallActiveRef.current) return;
-            if (isSpeakingRef.current || isLoadingRef.current) return;
-            setIsRecording(true);
-            sttStartTimeRef.current = Date.now();
-            if (idleTimer) clearTimeout(idleTimer);
-
-            // Safety: max 15s recording
-            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(() => {
-              if (vadRef.current?.listening) vadRef.current.pause();
-            }, 15000);
-          },
-
-          onSpeechEnd: async (audioData: Float32Array) => {
-            if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-            if (!isCallActiveRef.current) return;
-            if (isSpeakingRef.current || isLoadingRef.current) return;
-
-            const durationMs = Math.round((audioData.length / 16000) * 1000);
-            if (audioData.length < 2400) { // < 150ms = noise
-              return;
-            }
-
-            setIsRecording(false);
-            const recordEndMs = Date.now();
-            const recordDuration = recordEndMs - sttStartTimeRef.current;
-
-            // Pause VAD while processing
-            try { await vad.pause(); } catch {}
-
-            // Encode to WAV and send to ElevenLabs STT
-            const sttStartMs = Date.now();
-            const wavBuffer = vadUtils.encodeWAV(audioData);
-            const audioBlob = new Blob([wavBuffer], { type: "audio/wav" });
-
-            let text: string | null = null;
-            let sttProvider = "none";
-
-            const result = await transcribeViaServer(audioBlob);
-            if (result) {
-              text = result.text;
-              sttProvider = result.provider;
-            }
-
-            const sttDoneMs = Date.now();
-            sttEndTimeRef.current = sttDoneMs;
-
-            addMessage("system",
-              `Record: ${recordDuration}ms (${durationMs}ms audio) | STT (${sttProvider}): ${sttDoneMs - sttStartMs}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
-            );
-
-            if (!isCallActiveRef.current) return;
-
-            if (text && text.trim()) {
-              noSpeechCountRef.current = 0;
-              idleCountRef.current = 0;
-              await handleUserMessageRef.current(text.trim());
-            } else {
-              if (isCallActiveRef.current && !isSpeakingRef.current) startAutoRecording();
-            }
-          },
-
-          onVADMisfire: () => {
-            // Speech too short — keep listening
-          },
-        });
-
-        vadRef.current = vad;
-        setIsRecording(true);
-        resetIdleTimer();
-
-      } catch (error) {
-        console.error("[VAD] Init failed:", error);
-        setIsRecording(false);
+        endCallRef.current();
+      } else if (cs.onIdleMessage) {
+        addMessage("ai", cs.onIdleMessage);
+        await speakText(cs.onIdleMessage);
+        if (isCallActiveRef.current) startAutoRecording();
+      } else if (isCallActiveRef.current) {
+        startAutoRecording();
       }
-    })();
-  }, [destroyVAD, transcribeViaServer, addMessage, speakText]);
+    }, onIdleTimeoutMs);
+  }, [addMessage, speakText]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -1238,13 +1242,11 @@ const TestAgentModal = ({
       setCallDuration(0);
       setCurrentWorkflowStep("Initializing call...");
 
-      // In audio mode, request mic permission upfront
+      // In audio mode, initialize VAD (also requests mic permission)
       if (callMode === "audio") {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-          stream.getTracks().forEach((track) => track.stop());
+          await initVAD();
+          if (!vadRef.current) throw new Error("VAD failed to initialize");
         } catch {
           toast({
             title: "Microphone Access Required",
@@ -1362,6 +1364,7 @@ const TestAgentModal = ({
     startAutoRecording,
     wsConnected,
     startWorkflow,
+    initVAD,
   ]);
 
   // --- End call ---
