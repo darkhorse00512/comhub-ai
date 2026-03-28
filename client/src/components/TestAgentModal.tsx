@@ -196,6 +196,8 @@ const TestAgentModal = ({
   const vadRef = useRef<MicVAD | null>(null);
   /** When true, VAD events are processed. When false, VAD runs but events are ignored. */
   const vadListeningRef = useRef(false);
+  /** True only when onSpeechStart was processed while listening — prevents stale onSpeechEnd */
+  const vadSpeechActiveRef = useRef(false);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -779,9 +781,10 @@ const TestAgentModal = ({
         preSpeechPadMs: 200,
 
         onSpeechStart: () => {
-          // Ignore if not actively listening (agent speaking, processing, etc.)
+          // Ignore if not actively listening
           if (!vadListeningRef.current) return;
-          console.log("[VAD] Speech start");
+          console.log("[VAD] Speech start (listening=true)");
+          vadSpeechActiveRef.current = true; // Mark: this speech event is valid
           setIsRecording(true);
           sttStartTimeRef.current = Date.now();
 
@@ -790,8 +793,9 @@ const TestAgentModal = ({
         },
 
         onSpeechEnd: async (audioData: Float32Array) => {
-          // Ignore if not actively listening
-          if (!vadListeningRef.current) return;
+          // Only process if this speech was started while we were listening
+          if (!vadSpeechActiveRef.current) return;
+          vadSpeechActiveRef.current = false;
 
           const durationMs = Math.round((audioData.length / 16000) * 1000);
           if (audioData.length < 2400) return; // < 150ms = noise
@@ -859,6 +863,7 @@ const TestAgentModal = ({
 
     // Just flip the flag — VAD is already running continuously
     vadListeningRef.current = true;
+    vadSpeechActiveRef.current = false; // Reset — only new onSpeechStart events count
     setIsRecording(true);
     console.log("[VAD] Listening enabled");
 
@@ -1369,6 +1374,7 @@ const TestAgentModal = ({
 
     // Stop VAD
     vadListeningRef.current = false;
+    vadSpeechActiveRef.current = false;
     await destroyVAD();
 
     // End streaming WebSocket session if active
