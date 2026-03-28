@@ -198,6 +198,8 @@ const TestAgentModal = ({
   const vadListeningRef = useRef(false);
   /** True only when onSpeechStart was processed while listening — prevents stale onSpeechEnd */
   const vadSpeechActiveRef = useRef(false);
+  /** Timestamp after which VAD events should be processed (echo settling period) */
+  const vadReadyAtRef = useRef(0);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -783,7 +785,9 @@ const TestAgentModal = ({
         onSpeechStart: () => {
           // Ignore if not actively listening
           if (!vadListeningRef.current) return;
-          console.log("[VAD] Speech start (listening=true)");
+          // Ignore during echo settling period (first 500ms after agent finishes)
+          if (Date.now() < vadReadyAtRef.current) return;
+          console.log("[VAD] Speech start");
           vadSpeechActiveRef.current = true; // Mark: this speech event is valid
           setIsRecording(true);
           sttStartTimeRef.current = Date.now();
@@ -863,9 +867,11 @@ const TestAgentModal = ({
 
     // Just flip the flag — VAD is already running continuously
     vadListeningRef.current = true;
-    vadSpeechActiveRef.current = false; // Reset — only new onSpeechStart events count
+    vadSpeechActiveRef.current = false;
+    // 500ms echo settling delay — ignore speech events right after agent finishes speaking
+    vadReadyAtRef.current = Date.now() + 500;
     setIsRecording(true);
-    console.log("[VAD] Listening enabled");
+    console.log("[VAD] Listening enabled (ready in 500ms)");
 
     // Idle timer
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
