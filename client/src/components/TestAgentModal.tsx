@@ -786,7 +786,7 @@ const TestAgentModal = ({
 
         const vad = await MicVAD.new({
           baseAssetPath: "/vad/",
-          onnxWASMBasePath: "/vad/",
+          onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/",
           model: "v5",
           startOnLoad: true,
 
