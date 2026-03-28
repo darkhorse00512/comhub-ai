@@ -854,10 +854,13 @@ const TestAgentModal = ({
   }, [transcribeViaServer, addMessage]);
 
   /** Resume VAD listening (no re-initialization) */
-  const startAutoRecording = useCallback((opts?: { skipSpeakingCheck?: boolean }) => {
+  const startAutoRecording = useCallback(async (opts?: { skipSpeakingCheck?: boolean }) => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (!opts?.skipSpeakingCheck && isSpeakingRef.current) return;
-    if (vadRef.current?.listening) return; // Already listening
+    if (vadRef.current?.listening) {
+      console.log("[VAD] Already listening");
+      return;
+    }
 
     if (!vadRef.current) {
       console.warn("[VAD] Not initialized — cannot start recording");
@@ -865,9 +868,26 @@ const TestAgentModal = ({
     }
 
     // Resume VAD
-    vadRef.current.start();
-    setIsRecording(true);
-    console.log("[VAD] Resumed listening");
+    try {
+      await vadRef.current.start();
+      setIsRecording(true);
+      console.log("[VAD] Resumed listening");
+    } catch (err) {
+      console.error("[VAD] Failed to resume:", err);
+      // Re-initialize VAD if start fails
+      try {
+        await destroyVAD();
+        await initVAD();
+        if (vadRef.current) {
+          await vadRef.current.start();
+          setIsRecording(true);
+          console.log("[VAD] Re-initialized and listening");
+        }
+      } catch (err2) {
+        console.error("[VAD] Re-init also failed:", err2);
+        return;
+      }
+    }
 
     // Idle timer
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -890,7 +910,7 @@ const TestAgentModal = ({
         startAutoRecording();
       }
     }, onIdleTimeoutMs);
-  }, [addMessage, speakText]);
+  }, [addMessage, speakText, destroyVAD, initVAD]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
