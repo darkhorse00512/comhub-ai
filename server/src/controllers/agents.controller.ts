@@ -1696,6 +1696,13 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       voiceInfo.actualProvider = agentVoiceService.lastTTSProvider;
     }
 
+    // Include ElevenLabs API key for client-side realtime STT
+    const sttConfig = config.elevenlabs.apiKey ? {
+      provider: 'elevenlabs',
+      apiKey: config.elevenlabs.apiKey,
+      language: s.language || 'en-US',
+    } : null;
+
     res.status(200).json({
       success: true,
       sessionId,
@@ -1704,6 +1711,7 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       collectedFields: engine.getFields(),
       callSettings,
       voiceInfo,
+      sttConfig,
     });
   } catch (error) {
     logger.error('Failed to start workflow call', { error });

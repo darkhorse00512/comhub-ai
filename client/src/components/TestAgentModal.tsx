@@ -100,6 +100,11 @@ interface WorkflowCallResult {
     ttsError?: string | null;
   };
   voiceInfo?: Record<string, string>;
+  sttConfig?: {
+    provider: string;
+    apiKey: string;
+    language: string;
+  } | null;
 }
 
 interface CallSettings {
@@ -193,7 +198,12 @@ const TestAgentModal = ({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // VAD refs removed — using browser SpeechRecognition
+  const sttWsRef = useRef<WebSocket | null>(null);
+  const sttApiKeyRef = useRef<string | null>(null);
+  const sttLanguageRef = useRef<string>("en");
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioWorkletRef = useRef<ScriptProcessorNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   // Workflow state refs
   const isCallActiveRef = useRef(false);
@@ -738,166 +748,132 @@ const TestAgentModal = ({
     return null;
   }, [apiBaseUrl, agentId, voiceConfig?.language]);
 
-  // --- Browser SpeechRecognition (speech detection) + MediaRecorder (capture) + ElevenLabs STT ---
-  // Browser SpeechRecognition has built-in echo cancellation — works reliably every turn.
-  // MediaRecorder captures audio for server-side transcription.
-  // ElevenLabs Scribe v2 provides accurate transcript.
+  // --- ElevenLabs Realtime STT (streaming WebSocket) ---
+  // Audio streams continuously to ElevenLabs → real-time transcripts arrive
+  // → ElevenLabs handles endpointing (speech-end detection) → committed_transcript fires
+  // No silence timer, no batch upload. Transcription is ready the moment user stops.
 
-  const destroyVAD = useCallback(async () => {
-    // No VAD to destroy — using browser SpeechRecognition
-  }, []);
-
-  const initVAD = useCallback(async () => {
-    // No VAD init needed — SpeechRecognition doesn't need setup
+  /** Stop streaming STT — close WebSocket and mic */
+  const stopSTT = useCallback(() => {
+    if (sttWsRef.current) {
+      try { sttWsRef.current.close(); } catch {}
+      sttWsRef.current = null;
+    }
+    if (audioWorkletRef.current) {
+      try { audioWorkletRef.current.disconnect(); } catch {}
+      audioWorkletRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch {}
+      audioContextRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
+    setIsRecording(false);
   }, []);
 
   const startAutoRecording = useCallback(async () => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
     if (isSpeakingRef.current) return;
-    if (recognitionRef.current) return;
+    if (sttWsRef.current) return; // Already streaming
 
-    const SpeechRecognitionAPI =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) return;
-
-    if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-    if (recognitionRef.current) return;
+    const apiKey = sttApiKeyRef.current;
+    if (!apiKey) {
+      console.warn("[STT] No ElevenLabs API key for realtime STT");
+      return;
+    }
 
     try {
-      const recognition = new SpeechRecognitionAPI();
-      recognitionRef.current = recognition;
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = voiceConfig?.language || "en-US";
+      // 1. Open mic with echo cancellation
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      micStreamRef.current = stream;
 
-      let hasReceivedSpeech = false;
-      let browserTranscript = "";
-      let mediaRecorder: MediaRecorder | null = null;
-      let audioChunks: Blob[] = [];
+      // 2. Set up AudioContext to get raw PCM at 16kHz
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
 
-      const silenceTimeoutMs = 500;
-      const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
-      const initialWaitMs = Math.max(onIdleTimeoutMs, 5000);
+      // Use ScriptProcessorNode to capture raw PCM chunks
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      audioWorkletRef.current = processor;
 
-      const stopRecognition = () => {
-        if (recognitionRef.current) {
-          try { recognitionRef.current.stop(); } catch {}
-        }
+      // 3. Connect WebSocket to ElevenLabs Realtime STT
+      const lang = sttLanguageRef.current.split("-")[0] || "en";
+      const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2&language_code=${lang}&sample_rate=16000&encoding=pcm_s16le`;
+
+      const ws = new WebSocket(wsUrl);
+      sttWsRef.current = ws;
+
+      let sttStartMs = Date.now();
+      let isProcessing = false;
+
+      ws.onopen = () => {
+        console.log("[STT] Realtime WebSocket connected");
+        setIsRecording(true);
+        sttStartTimeRef.current = Date.now();
+        sttStartMs = Date.now();
+
+        // Send auth
+        ws.send(JSON.stringify({
+          type: "auth",
+          token: apiKey,
+        }));
       };
 
-      const startSilenceTimer = (ms: number) => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(stopRecognition, ms);
-      };
-
-      const startRecorder = async () => {
+      ws.onmessage = async (event) => {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          });
-          mediaRecorder = new MediaRecorder(stream, {
-            mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-              ? "audio/webm;codecs=opus" : "audio/webm",
-            audioBitsPerSecond: 16000,
-          });
-          audioChunks = [];
-          mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) audioChunks.push(e.data);
-          };
-          mediaRecorder.start();
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === "committed_transcript" && msg.text?.trim()) {
+            if (isProcessing) return;
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+            isProcessing = true;
+
+            const text = msg.text.trim();
+            const totalMs = Date.now() - sttStartMs;
+            console.log(`[STT] Committed: "${text}" (${totalMs}ms)`);
+
+            // Stop streaming — we have the transcript
+            stopSTT();
+            sttEndTimeRef.current = Date.now();
+
+            addMessage("system", `STT (elevenlabs-realtime): ${totalMs}ms | "${text}"`);
+
+            if (!isCallActiveRef.current) return;
+
+            noSpeechCountRef.current = 0;
+            idleCountRef.current = 0;
+            await handleUserMessageRef.current(text);
+          }
         } catch {}
       };
 
-      const stopRecorder = (): Promise<Blob | null> => {
-        return new Promise((resolve) => {
-          if (!mediaRecorder || mediaRecorder.state === "inactive") { resolve(null); return; }
-          mediaRecorder.onstop = () => {
-            const blob = new Blob(audioChunks, { type: "audio/webm" });
-            audioChunks = [];
-            mediaRecorder?.stream.getTracks().forEach(t => t.stop());
-            mediaRecorder = null;
-            resolve(blob.size > 100 ? blob : null);
-          };
-          mediaRecorder.stop();
-        });
-      };
-
-      recognition.onstart = () => {
-        setIsRecording(true);
-        sttStartTimeRef.current = Date.now();
-        startSilenceTimer(initialWaitMs);
-        startRecorder();
-      };
-
-      (recognition as any).onspeechstart = () => { sttStartTimeRef.current = Date.now(); };
-      (recognition as any).onspeechend = () => { userEndSpeechRef.current = Date.now(); };
-
-      recognition.onresult = (event: any) => {
-        hasReceivedSpeech = true;
-        noSpeechCountRef.current = 0;
-        browserTranscript = "";
-        for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) browserTranscript += event.results[i][0].transcript;
+      ws.onerror = (err) => {
+        console.error("[STT] WebSocket error:", err);
+        stopSTT();
+        // Restart on error
+        if (isCallActiveRef.current && !isSpeakingRef.current) {
+          setTimeout(() => startAutoRecording(), 500);
         }
-        startSilenceTimer(silenceTimeoutMs);
       };
 
-      recognition.onend = async () => {
-        setIsRecording(false);
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        recognitionRef.current = null;
-        const recordEndMs = Date.now();
-        const recordDuration = recordEndMs - sttStartTimeRef.current;
-
-        const audioBlob = await stopRecorder();
-
-        if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-        if (isSpeakingRef.current || isLoadingRef.current) return;
-
-        if (hasReceivedSpeech) {
-          let text: string | null = null;
-          let sttProvider = "none";
-          const sttStartMs = Date.now();
-
-          if (audioBlob && audioBlob.size > 100) {
-            const sttResult = await transcribeViaServer(audioBlob);
-            if (sttResult) { text = sttResult.text; sttProvider = sttResult.provider; }
-          }
-          if (!text || !text.trim()) {
-            text = browserTranscript.trim() || null;
-            if (text) sttProvider = "browser";
-          }
-
-          const sttDoneMs = Date.now();
-          sttEndTimeRef.current = sttDoneMs;
-
-          addMessage("system",
-            `Record: ${recordDuration}ms | Blob: ${audioBlob ? Math.round(audioBlob.size/1024) + 'KB' : '-'} | STT (${sttProvider}): ${sttDoneMs - sttStartMs}ms | Total: ${sttDoneMs - sttStartTimeRef.current}ms`
-          );
-
-          if (!isCallActiveRef.current) return;
-
-          if (text && text.trim()) {
-            noSpeechCountRef.current = 0;
-            idleCountRef.current = 0;
-            await handleUserMessageRef.current(text.trim());
-          } else {
-            if (isCallActiveRef.current) startAutoRecording();
-          }
-        } else {
-          // No speech — idle handling
+      ws.onclose = () => {
+        console.log("[STT] WebSocket closed");
+        // If no transcript was committed and call is active, handle idle
+        if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
           const cs = callSettingsRef.current;
           idleCountRef.current++;
           if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
             if (cs.onIdleTerminationMessage) {
               addMessage("ai", cs.onIdleTerminationMessage);
-              await speakText(cs.onIdleTerminationMessage);
             }
             endCallRef.current();
           } else if (cs.onIdleMessage) {
             addMessage("ai", cs.onIdleMessage);
-            await speakText(cs.onIdleMessage);
             if (isCallActiveRef.current) startAutoRecording();
           } else if (isCallActiveRef.current) {
             startAutoRecording();
@@ -905,21 +881,49 @@ const TestAgentModal = ({
         }
       };
 
-      recognition.onerror = (event: any) => {
-        if (event.error === "no-speech") {
-          setIsRecording(false);
-        } else if (event.error !== "aborted") {
-          setIsRecording(false);
-          if (isCallActiveRef.current && callModeRef.current === "audio") startAutoRecording();
+      // 4. Send audio chunks as PCM via WebSocket
+      processor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (isSpeakingRef.current) return; // Don't send agent audio
+
+        const pcmFloat = e.inputBuffer.getChannelData(0);
+        // Convert Float32 [-1,1] to Int16 PCM
+        const pcm16 = new Int16Array(pcmFloat.length);
+        for (let i = 0; i < pcmFloat.length; i++) {
+          const s = Math.max(-1, Math.min(1, pcmFloat[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
+
+        // Send as base64
+        const bytes = new Uint8Array(pcm16.buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const b64 = btoa(binary);
+
+        ws.send(JSON.stringify({
+          type: "input_audio_chunk",
+          data: b64,
+        }));
       };
 
-      recognition.start();
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      // 5. Idle timeout — if no committed transcript within timeout, close and handle idle
+      const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        if (sttWsRef.current && !isProcessing) {
+          console.log("[STT] Idle timeout — closing");
+          stopSTT();
+        }
+      }, onIdleTimeoutMs);
+
     } catch (error) {
-      console.error("Recording error:", error);
-      setIsRecording(false);
+      console.error("[STT] Failed to start:", error);
+      stopSTT();
     }
-  }, [transcribeViaServer, voiceConfig?.language, addMessage, speakText]);
+  }, [stopSTT, addMessage, speakText]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -1348,6 +1352,12 @@ const TestAgentModal = ({
 
       workflowSessionIdRef.current = result.sessionId || null;
 
+      // Store STT config for realtime streaming
+      if (result.sttConfig?.apiKey) {
+        sttApiKeyRef.current = result.sttConfig.apiKey;
+        sttLanguageRef.current = result.sttConfig.language || "en";
+      }
+
       if (result.callSettings) {
         setCallSettings(result.callSettings);
         callSettingsRef.current = result.callSettings;
@@ -1397,11 +1407,8 @@ const TestAgentModal = ({
     isCallActiveRef.current = false;
     waitingForInputRef.current = false;
 
-    // Stop any active recognition
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch {}
-      recognitionRef.current = null;
-    }
+    // Stop streaming STT
+    stopSTT();
 
     // End streaming WebSocket session if active
     endWorkflow();
@@ -1485,7 +1492,7 @@ const TestAgentModal = ({
       title: "Call Ended",
       description: `Call duration: ${formatDuration(callDuration)}. Call saved to history.`,
     });
-  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow, destroyVAD]);
+  }, [callDuration, toast, callSessionId, endWorkflowCallAPI, endWorkflow, stopSTT]);
 
   // Keep endCallRef in sync
   useEffect(() => {
