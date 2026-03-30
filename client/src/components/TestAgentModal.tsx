@@ -801,19 +801,15 @@ const TestAgentModal = ({
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       audioWorkletRef.current = processor;
 
-      // 3. Connect WebSocket to ElevenLabs Realtime STT
-      // Auth via query param (browser WebSocket can't set headers)
-      // commit_strategy=vad → ElevenLabs auto-detects speech end
+      // 3. Connect WebSocket to server's STT proxy (server connects to ElevenLabs with API key header)
       const lang = sttLanguageRef.current.split("-")[0] || "en";
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsHost = window.location.host; // Same host as the page
       const wsParams = new URLSearchParams({
-        token: apiKey,
-        model_id: "scribe_v2",
+        apiKey: apiKey,
         language_code: lang,
-        audio_format: "pcm_16000",
-        commit_strategy: "vad",
-        vad_silence_threshold_secs: "0.5",
       });
-      const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${wsParams}`;
+      const wsUrl = `${wsProtocol}//${wsHost}/stt-realtime?${wsParams}`;
 
       const ws = new WebSocket(wsUrl);
       sttWsRef.current = ws;
@@ -872,8 +868,8 @@ const TestAgentModal = ({
         }
       };
 
-      ws.onclose = () => {
-        console.log("[STT] WebSocket closed");
+      ws.onclose = (event) => {
+        console.log("[STT] WebSocket closed, code:", event.code, "reason:", event.reason);
         if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
           const cs = callSettingsRef.current;
           idleCountRef.current++;

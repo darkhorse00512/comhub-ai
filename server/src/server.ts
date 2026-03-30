@@ -1,4 +1,5 @@
 import http from 'http';
+import WebSocket from 'ws';
 import app from './app';
 import config, { validateConfig } from './config';
 import logger from './utils/logger';
@@ -32,6 +33,65 @@ async function startServer(): Promise<void> {
         logger.warn('Server will continue without ARI integration');
       }
     })();
+
+    // --- STT Realtime WebSocket Proxy ---
+    // Proxies client audio to ElevenLabs Realtime STT via WebSocket.
+    // Client can't set custom headers, so server connects with xi-api-key header.
+    server.on('upgrade', (req, socket, head) => {
+      const url = new URL(req.url || '', `http://${req.headers.host}`);
+      if (!url.pathname.startsWith('/stt-realtime')) return;
+
+      const apiKey = url.searchParams.get('apiKey') || config.elevenlabs.apiKey;
+      const lang = url.searchParams.get('language_code') || 'en';
+
+      if (!apiKey) {
+        socket.destroy();
+        return;
+      }
+
+      // Connect to ElevenLabs with API key header
+      const elUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_16000&commit_strategy=vad&language_code=${lang}&vad_silence_threshold_secs=0.5`;
+      const elWs = new WebSocket(elUrl, { headers: { 'xi-api-key': apiKey } });
+
+      // Create a WebSocket server for this single connection
+      const wss = new WebSocket.Server({ noServer: true });
+      wss.handleUpgrade(req, socket, head, (clientWs) => {
+        let elReady = false;
+
+        elWs.on('open', () => {
+          elReady = true;
+          logger.info('STT proxy: connected to ElevenLabs');
+        });
+
+        elWs.on('message', (data) => {
+          // Forward ElevenLabs messages to client
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(data.toString());
+          }
+        });
+
+        elWs.on('close', (code, reason) => {
+          logger.info('STT proxy: ElevenLabs closed', { code, reason: reason.toString() });
+          if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+        });
+
+        elWs.on('error', (err) => {
+          logger.error('STT proxy: ElevenLabs error', { error: err.message });
+          if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
+        });
+
+        clientWs.on('message', (data) => {
+          // Forward client audio to ElevenLabs
+          if (elReady && elWs.readyState === WebSocket.OPEN) {
+            elWs.send(data.toString());
+          }
+        });
+
+        clientWs.on('close', () => {
+          if (elWs.readyState === WebSocket.OPEN) elWs.close();
+        });
+      });
+    });
 
     server.listen(config.server.port, () => {
       logger.info(`Server is running on port ${config.server.port}`);
