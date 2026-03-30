@@ -802,8 +802,18 @@ const TestAgentModal = ({
       audioWorkletRef.current = processor;
 
       // 3. Connect WebSocket to ElevenLabs Realtime STT
+      // Auth via query param (browser WebSocket can't set headers)
+      // commit_strategy=vad → ElevenLabs auto-detects speech end
       const lang = sttLanguageRef.current.split("-")[0] || "en";
-      const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2&language_code=${lang}&sample_rate=16000&encoding=pcm_s16le`;
+      const wsParams = new URLSearchParams({
+        token: apiKey,
+        model_id: "scribe_v2",
+        language_code: lang,
+        audio_format: "pcm_16000",
+        commit_strategy: "vad",
+        vad_silence_threshold_secs: "0.5",
+      });
+      const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${wsParams}`;
 
       const ws = new WebSocket(wsUrl);
       sttWsRef.current = ws;
@@ -816,19 +826,20 @@ const TestAgentModal = ({
         setIsRecording(true);
         sttStartTimeRef.current = Date.now();
         sttStartMs = Date.now();
-
-        // Send auth
-        ws.send(JSON.stringify({
-          type: "auth",
-          token: apiKey,
-        }));
+        // No auth message needed — token is in query params
+        // Server sends session_started automatically
       };
 
       ws.onmessage = async (event) => {
         try {
           const msg = JSON.parse(event.data);
 
-          if (msg.type === "committed_transcript" && msg.text?.trim()) {
+          if (msg.message_type === "session_started") {
+            console.log("[STT] Session started:", msg.session_id);
+          } else if (msg.message_type === "partial_transcript" && msg.text) {
+            // Show partial transcript as visual feedback (optional)
+            console.log("[STT] Partial:", msg.text);
+          } else if (msg.message_type === "committed_transcript" && msg.text?.trim()) {
             if (isProcessing) return;
             if (isSpeakingRef.current || isLoadingRef.current) return;
             isProcessing = true;
@@ -837,17 +848,18 @@ const TestAgentModal = ({
             const totalMs = Date.now() - sttStartMs;
             console.log(`[STT] Committed: "${text}" (${totalMs}ms)`);
 
-            // Stop streaming — we have the transcript
             stopSTT();
             sttEndTimeRef.current = Date.now();
 
-            addMessage("system", `STT (elevenlabs-realtime): ${totalMs}ms | "${text}"`);
+            addMessage("system", `STT (elevenlabs-realtime): ${totalMs}ms`);
 
             if (!isCallActiveRef.current) return;
 
             noSpeechCountRef.current = 0;
             idleCountRef.current = 0;
             await handleUserMessageRef.current(text);
+          } else if (msg.message_type === "error") {
+            console.error("[STT] Error:", msg.error_type, msg.error_message);
           }
         } catch {}
       };
@@ -855,7 +867,6 @@ const TestAgentModal = ({
       ws.onerror = (err) => {
         console.error("[STT] WebSocket error:", err);
         stopSTT();
-        // Restart on error
         if (isCallActiveRef.current && !isSpeakingRef.current) {
           setTimeout(() => startAutoRecording(), 500);
         }
@@ -863,7 +874,6 @@ const TestAgentModal = ({
 
       ws.onclose = () => {
         console.log("[STT] WebSocket closed");
-        // If no transcript was committed and call is active, handle idle
         if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
           const cs = callSettingsRef.current;
           idleCountRef.current++;
@@ -881,7 +891,7 @@ const TestAgentModal = ({
         }
       };
 
-      // 4. Send audio chunks as PCM via WebSocket
+      // 4. Send audio chunks as PCM Int16 via WebSocket
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         if (isSpeakingRef.current) return; // Don't send agent audio
@@ -894,22 +904,23 @@ const TestAgentModal = ({
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
 
-        // Send as base64
+        // Convert to base64
         const bytes = new Uint8Array(pcm16.buffer);
         let binary = '';
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         const b64 = btoa(binary);
 
+        // Send with correct message format
         ws.send(JSON.stringify({
-          type: "input_audio_chunk",
-          data: b64,
+          message_type: "input_audio_chunk",
+          audio_base_64: b64,
         }));
       };
 
       source.connect(processor);
       processor.connect(audioContext.destination);
 
-      // 5. Idle timeout — if no committed transcript within timeout, close and handle idle
+      // 5. Idle timeout
       const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = setTimeout(() => {
