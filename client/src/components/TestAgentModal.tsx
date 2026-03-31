@@ -816,7 +816,31 @@ const TestAgentModal = ({
 
       let isProcessing = false;
       let speechDetectedMs = 0;
-      let sessionReady = false;
+      let lastPartialText = "";
+      let partialCommitTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // When a partial arrives, start a 500ms timer.
+      // If no new partial arrives within 500ms, treat it as final (user stopped speaking).
+      const commitPartial = async () => {
+        if (isProcessing || !lastPartialText.trim()) return;
+        if (isSpeakingRef.current || isLoadingRef.current) return;
+        isProcessing = true;
+
+        const text = lastPartialText.trim();
+        const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
+        console.log(`[STT] Auto-committed: "${text}" (${fromSpeech}ms from speech)`);
+
+        stopSTT();
+        sttEndTimeRef.current = Date.now();
+
+        addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms`);
+
+        if (!isCallActiveRef.current) return;
+
+        noSpeechCountRef.current = 0;
+        idleCountRef.current = 0;
+        await handleUserMessageRef.current(text);
+      };
 
       ws.onopen = () => {
         console.log("[STT] WebSocket connected, waiting for session_started...");
@@ -828,27 +852,32 @@ const TestAgentModal = ({
           const msg = JSON.parse(event.data);
 
           if (msg.message_type === "session_started") {
-            sessionReady = true;
             setIsRecording(true);
             console.log("[STT] Session started:", msg.session_id);
           } else if (msg.message_type === "partial_transcript" && msg.text) {
-            // First partial = user started speaking
             if (!speechDetectedMs) speechDetectedMs = Date.now();
+            lastPartialText = msg.text;
             console.log("[STT] Partial:", msg.text);
+
+            // Reset commit timer — user is still speaking
+            if (partialCommitTimer) clearTimeout(partialCommitTimer);
+            // If no new partial within 500ms → user stopped → commit
+            partialCommitTimer = setTimeout(commitPartial, 500);
           } else if (msg.message_type === "committed_transcript" && msg.text?.trim()) {
+            // ElevenLabs committed — use this (cancel partial timer)
+            if (partialCommitTimer) clearTimeout(partialCommitTimer);
             if (isProcessing) return;
             if (isSpeakingRef.current || isLoadingRef.current) return;
             isProcessing = true;
 
             const text = msg.text.trim();
             const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
-            const fromStart = Date.now() - sttStartTimeRef.current;
-            console.log(`[STT] Committed: "${text}" (${fromSpeech}ms from speech, ${fromStart}ms from start)`);
+            console.log(`[STT] Committed: "${text}" (${fromSpeech}ms from speech)`);
 
             stopSTT();
             sttEndTimeRef.current = Date.now();
 
-            addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms from speech | ${fromStart}ms total`);
+            addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms`);
 
             if (!isCallActiveRef.current) return;
 
