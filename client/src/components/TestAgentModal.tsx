@@ -899,11 +899,11 @@ const TestAgentModal = ({
             // Reset commit timer — user is still speaking
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             if (currentPartial.trim()) {
+              // 1.2s without new partial = user stopped speaking
               partialCommitTimer = setTimeout(() => {
-                // No new partial in 500ms — finalize everything
                 const final = (fullTranscript + " " + currentPartial).trim();
                 finalizeTranscript(final);
-              }, 500);
+              }, 1200);
             }
 
           } else if (msg.message_type === "committed_transcript") {
@@ -916,10 +916,10 @@ const TestAgentModal = ({
               console.log(`[STT] Chunk committed: "${chunk}" | Full: "${fullTranscript}"`);
               updateLiveTranscript("");
 
-              // Wait 500ms for more chunks, then finalize
+              // Wait 1.2s for more chunks, then finalize
               partialCommitTimer = setTimeout(() => {
                 finalizeTranscript(fullTranscript);
-              }, 500);
+              }, 1200);
             }
 
           } else if (msg.message_type === "error") {

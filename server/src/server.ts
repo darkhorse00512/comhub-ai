@@ -56,9 +56,9 @@ async function startServer(): Promise<void> {
         audio_format: 'pcm_16000',
         commit_strategy: 'vad',
         language_code: lang,
-        vad_silence_threshold_secs: '0.3',  // 300ms silence = speech ended (min allowed)
-        min_silence_duration_ms: '100',
-        min_speech_duration_ms: '50',
+        vad_silence_threshold_secs: '1.0',  // 1s silence = speech ended (allows natural pauses)
+        min_silence_duration_ms: '300',
+        min_speech_duration_ms: '100',
       });
       const elUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${elParams}`;
       const elWs = new WebSocket(elUrl, { headers: { 'xi-api-key': apiKey } });
