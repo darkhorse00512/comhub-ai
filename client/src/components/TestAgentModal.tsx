@@ -474,7 +474,7 @@ const TestAgentModal = ({
           // Estimate speech duration (~150 words/min) and start recording 2s before end
           const wordCount = text.split(/\s+/).length;
           const estimatedDurationMs = (wordCount / 150) * 60 * 1000;
-          const earlyStartMs = Math.max(estimatedDurationMs - 2000, 500);
+          const earlyStartMs = Math.max(estimatedDurationMs - 1500, 300);
           if (estimatedDurationMs > 3000) {
             setTimeout(() => {
               if (!earlyRecordingTriggered) {
@@ -511,11 +511,12 @@ const TestAgentModal = ({
       const safetyTimer = setTimeout(done, 30000);
       let earlyRecordingTriggered = false;
       audio.onplay = () => onStart?.();
-      // Start STT connection early so it's ready the moment audio ends
+      // Start STT WebSocket 1.5s before audio ends — gives time to connect
+      // so it's fully ready the moment audio finishes
       audio.ontimeupdate = () => {
         if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
           const remaining = audio.duration - audio.currentTime;
-          if (remaining <= 0.5 && remaining > 0) {
+          if (remaining <= 1.5 && remaining > 0) {
             earlyRecordingTriggered = true;
             startAutoRecordingRef.current();
           }
