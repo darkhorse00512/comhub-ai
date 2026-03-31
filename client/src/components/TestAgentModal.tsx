@@ -511,13 +511,13 @@ const TestAgentModal = ({
       const safetyTimer = setTimeout(done, 30000);
       let earlyRecordingTriggered = false;
       audio.onplay = () => onStart?.();
-      // Start recording ~2s before audio ends to eliminate dead time
+      // Start STT connection early so it's ready the moment audio ends
       audio.ontimeupdate = () => {
         if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
           const remaining = audio.duration - audio.currentTime;
-          if (remaining <= 2 && remaining > 0) {
+          if (remaining <= 0.5 && remaining > 0) {
             earlyRecordingTriggered = true;
-            startAutoRecordingRef.current({ skipSpeakingCheck: true });
+            startAutoRecordingRef.current();
           }
         }
       };
@@ -816,34 +816,65 @@ const TestAgentModal = ({
 
       let isProcessing = false;
       let speechDetectedMs = 0;
-      let lastPartialText = "";
+      let fullTranscript = ""; // Accumulated from all committed chunks
+      let currentPartial = ""; // Current partial (not yet committed)
       let partialCommitTimer: ReturnType<typeof setTimeout> | null = null;
+      let liveMessageId: string | null = null; // ID of the live transcript message in chat
 
-      // When a partial arrives, start a 500ms timer.
-      // If no new partial arrives within 500ms, treat it as final (user stopped speaking).
-      const commitPartial = async () => {
-        if (isProcessing || !lastPartialText.trim()) return;
-        if (isSpeakingRef.current || isLoadingRef.current) return;
+      // Update or create the live transcript message in chat
+      const updateLiveTranscript = (text: string) => {
+        if (!text.trim()) return;
+        const displayText = (fullTranscript + " " + text).trim();
+        if (!liveMessageId) {
+          liveMessageId = crypto.randomUUID();
+          setMessages((prev) => [...prev, {
+            id: liveMessageId!,
+            role: "user" as const,
+            content: displayText + " ...",
+            timestamp: new Date(),
+          }]);
+        } else {
+          setMessages((prev) => prev.map((m) =>
+            m.id === liveMessageId ? { ...m, content: displayText + " ..." } : m
+          ));
+        }
+      };
+
+      // Finalize transcript and process
+      const finalizeTranscript = async (text: string) => {
+        if (isProcessing || !text.trim()) return;
         isProcessing = true;
+        if (partialCommitTimer) clearTimeout(partialCommitTimer);
 
-        const text = lastPartialText.trim();
+        const finalText = text.trim();
         const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
-        console.log(`[STT] Auto-committed: "${text}" (${fromSpeech}ms from speech)`);
+        console.log(`[STT] Final: "${finalText}" (${fromSpeech}ms)`);
+
+        // Update the live message to final text (remove "...")
+        if (liveMessageId) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === liveMessageId ? { ...m, content: finalText } : m
+          ));
+        }
 
         stopSTT();
         sttEndTimeRef.current = Date.now();
 
-        addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms`);
+        addMessage("system", `STT: ${fromSpeech}ms`);
 
         if (!isCallActiveRef.current) return;
 
         noSpeechCountRef.current = 0;
         idleCountRef.current = 0;
-        await handleUserMessageRef.current(text);
+        // Remove the live message — handleUserMessage will add the final one
+        if (liveMessageId) {
+          setMessages((prev) => prev.filter((m) => m.id !== liveMessageId));
+        }
+        await handleUserMessageRef.current(finalText);
       };
 
       ws.onopen = () => {
-        console.log("[STT] WebSocket connected, waiting for session_started...");
+        console.log("[STT] WebSocket connected...");
         sttStartTimeRef.current = Date.now();
       };
 
@@ -854,36 +885,41 @@ const TestAgentModal = ({
           if (msg.message_type === "session_started") {
             setIsRecording(true);
             console.log("[STT] Session started:", msg.session_id);
-          } else if (msg.message_type === "partial_transcript" && msg.text) {
-            if (!speechDetectedMs) speechDetectedMs = Date.now();
-            lastPartialText = msg.text;
-            console.log("[STT] Partial:", msg.text);
+
+          } else if (msg.message_type === "partial_transcript") {
+            // Real-time partial — show in chat as user types
+            if (!speechDetectedMs && msg.text?.trim()) speechDetectedMs = Date.now();
+            currentPartial = msg.text || "";
+            if (currentPartial.trim()) {
+              updateLiveTranscript(currentPartial);
+            }
 
             // Reset commit timer — user is still speaking
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            // If no new partial within 500ms → user stopped → commit
-            partialCommitTimer = setTimeout(commitPartial, 500);
-          } else if (msg.message_type === "committed_transcript" && msg.text?.trim()) {
-            // ElevenLabs committed — use this (cancel partial timer)
+            if (currentPartial.trim()) {
+              partialCommitTimer = setTimeout(() => {
+                // No new partial in 500ms — finalize everything
+                const final = (fullTranscript + " " + currentPartial).trim();
+                finalizeTranscript(final);
+              }, 500);
+            }
+
+          } else if (msg.message_type === "committed_transcript") {
+            // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            if (isProcessing) return;
-            if (isSpeakingRef.current || isLoadingRef.current) return;
-            isProcessing = true;
+            const chunk = (msg.text || "").trim();
+            if (chunk) {
+              fullTranscript = (fullTranscript + " " + chunk).trim();
+              currentPartial = "";
+              console.log(`[STT] Chunk committed: "${chunk}" | Full: "${fullTranscript}"`);
+              updateLiveTranscript("");
 
-            const text = msg.text.trim();
-            const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
-            console.log(`[STT] Committed: "${text}" (${fromSpeech}ms from speech)`);
+              // Wait 500ms for more chunks, then finalize
+              partialCommitTimer = setTimeout(() => {
+                finalizeTranscript(fullTranscript);
+              }, 500);
+            }
 
-            stopSTT();
-            sttEndTimeRef.current = Date.now();
-
-            addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms`);
-
-            if (!isCallActiveRef.current) return;
-
-            noSpeechCountRef.current = 0;
-            idleCountRef.current = 0;
-            await handleUserMessageRef.current(text);
           } else if (msg.message_type === "error") {
             console.error("[STT] Error:", msg.error_type, msg.error_message);
           }
