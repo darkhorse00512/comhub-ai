@@ -50,7 +50,18 @@ async function startServer(): Promise<void> {
       }
 
       // Connect to ElevenLabs with API key header
-      const elUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&audio_format=pcm_16000&commit_strategy=vad&language_code=${lang}&vad_silence_threshold_secs=0.5`;
+      // Aggressive VAD settings for near-instant speech-end detection
+      const elParams = new URLSearchParams({
+        model_id: 'scribe_v2_realtime',
+        audio_format: 'pcm_16000',
+        commit_strategy: 'vad',
+        language_code: lang,
+        vad_silence_threshold_secs: '0.2',  // 200ms silence = speech ended
+        min_silence_duration_ms: '50',       // 50ms min silence
+        min_speech_duration_ms: '50',        // Accept very short speech
+        vad_threshold: '0.3',               // Lower = more sensitive to speech end
+      });
+      const elUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${elParams}`;
       const elWs = new WebSocket(elUrl, { headers: { 'xi-api-key': apiKey } });
 
       // Create a WebSocket server for this single connection

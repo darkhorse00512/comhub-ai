@@ -797,8 +797,8 @@ const TestAgentModal = ({
       audioContextRef.current = audioContext;
       const source = audioContext.createMediaStreamSource(stream);
 
-      // Use ScriptProcessorNode to capture raw PCM chunks
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      // Capture raw PCM chunks — tiny buffer = minimum latency (32ms per chunk)
+      const processor = audioContext.createScriptProcessor(512, 1, 1);
       audioWorkletRef.current = processor;
 
       // 3. Connect WebSocket to server's STT proxy (server connects to ElevenLabs with API key header)
@@ -814,16 +814,13 @@ const TestAgentModal = ({
       const ws = new WebSocket(wsUrl);
       sttWsRef.current = ws;
 
-      let sttStartMs = Date.now();
       let isProcessing = false;
+      let speechDetectedMs = 0; // When we first detect user is speaking
 
       ws.onopen = () => {
         console.log("[STT] Realtime WebSocket connected");
         setIsRecording(true);
         sttStartTimeRef.current = Date.now();
-        sttStartMs = Date.now();
-        // No auth message needed — token is in query params
-        // Server sends session_started automatically
       };
 
       ws.onmessage = async (event) => {
@@ -833,7 +830,8 @@ const TestAgentModal = ({
           if (msg.message_type === "session_started") {
             console.log("[STT] Session started:", msg.session_id);
           } else if (msg.message_type === "partial_transcript" && msg.text) {
-            // Show partial transcript as visual feedback (optional)
+            // First partial = user started speaking
+            if (!speechDetectedMs) speechDetectedMs = Date.now();
             console.log("[STT] Partial:", msg.text);
           } else if (msg.message_type === "committed_transcript" && msg.text?.trim()) {
             if (isProcessing) return;
@@ -841,13 +839,14 @@ const TestAgentModal = ({
             isProcessing = true;
 
             const text = msg.text.trim();
-            const totalMs = Date.now() - sttStartMs;
-            console.log(`[STT] Committed: "${text}" (${totalMs}ms)`);
+            const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
+            const fromStart = Date.now() - sttStartTimeRef.current;
+            console.log(`[STT] Committed: "${text}" (${fromSpeech}ms from speech, ${fromStart}ms from start)`);
 
             stopSTT();
             sttEndTimeRef.current = Date.now();
 
-            addMessage("system", `STT (elevenlabs-realtime): ${totalMs}ms`);
+            addMessage("system", `STT (elevenlabs-realtime): ${fromSpeech}ms from speech | ${fromStart}ms total`);
 
             if (!isCallActiveRef.current) return;
 
