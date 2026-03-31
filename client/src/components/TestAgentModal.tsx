@@ -777,7 +777,8 @@ const TestAgentModal = ({
 
   const startAutoRecording = useCallback(async () => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-    if (isSpeakingRef.current) return;
+    // Don't check isSpeakingRef — we WANT to open the WebSocket early
+    // (while agent is still speaking). Audio chunks are filtered in onaudioprocess.
     if (sttWsRef.current) return; // Already streaming
 
     const apiKey = sttApiKeyRef.current;
