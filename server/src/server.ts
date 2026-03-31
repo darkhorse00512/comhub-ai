@@ -67,17 +67,33 @@ async function startServer(): Promise<void> {
       const wss = new WebSocket.Server({ noServer: true });
       wss.handleUpgrade(req, socket, head, (clientWs) => {
         let elReady = false;
+        const pendingMessages: string[] = []; // Buffer messages until ElevenLabs is ready
 
         elWs.on('open', () => {
           elReady = true;
-          logger.info('STT proxy: connected to ElevenLabs');
+          logger.info('STT proxy: connected to ElevenLabs, flushing ' + pendingMessages.length + ' buffered messages');
+          // Flush any messages that arrived before ElevenLabs was ready
+          for (const msg of pendingMessages) {
+            elWs.send(msg);
+          }
+          pendingMessages.length = 0;
         });
 
         elWs.on('message', (data) => {
+          const str = data.toString();
           // Forward ElevenLabs messages to client
           if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(data.toString());
+            clientWs.send(str);
           }
+          // Log important messages
+          try {
+            const msg = JSON.parse(str);
+            if (msg.message_type === 'committed_transcript') {
+              logger.info('STT proxy: committed transcript', { text: msg.text });
+            } else if (msg.message_type === 'error' || msg.message_type === 'invalid_request') {
+              logger.error('STT proxy: ElevenLabs error', { type: msg.message_type, error: msg.error });
+            }
+          } catch {}
         });
 
         elWs.on('close', (code, reason) => {
@@ -91,9 +107,12 @@ async function startServer(): Promise<void> {
         });
 
         clientWs.on('message', (data) => {
-          // Forward client audio to ElevenLabs
+          const str = data.toString();
           if (elReady && elWs.readyState === WebSocket.OPEN) {
-            elWs.send(data.toString());
+            elWs.send(str);
+          } else {
+            // Buffer until ElevenLabs is ready
+            pendingMessages.push(str);
           }
         });
 

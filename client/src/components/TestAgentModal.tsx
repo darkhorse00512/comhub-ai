@@ -815,11 +815,11 @@ const TestAgentModal = ({
       sttWsRef.current = ws;
 
       let isProcessing = false;
-      let speechDetectedMs = 0; // When we first detect user is speaking
+      let speechDetectedMs = 0;
+      let sessionReady = false;
 
       ws.onopen = () => {
-        console.log("[STT] Realtime WebSocket connected");
-        setIsRecording(true);
+        console.log("[STT] WebSocket connected, waiting for session_started...");
         sttStartTimeRef.current = Date.now();
       };
 
@@ -828,6 +828,8 @@ const TestAgentModal = ({
           const msg = JSON.parse(event.data);
 
           if (msg.message_type === "session_started") {
+            sessionReady = true;
+            setIsRecording(true);
             console.log("[STT] Session started:", msg.session_id);
           } else if (msg.message_type === "partial_transcript" && msg.text) {
             // First partial = user started speaking
