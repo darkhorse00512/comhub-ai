@@ -135,16 +135,17 @@ export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
     []
   );
 
-  // Send message
-  const sendMessage = useCallback((message: string) => {
+  // Send message — returns true if sent, false if no active streaming session
+  const sendMessage = useCallback((message: string): boolean => {
     if (!socketRef.current?.connected || !sessionIdRef.current) {
-      console.error("[useWorkflowStream] Not connected or no session");
-      return;
+      console.warn("[useWorkflowStream] Not connected or no session — falling back to HTTP");
+      return false;
     }
     socketRef.current.emit("workflow:message", {
       sessionId: sessionIdRef.current,
       message,
     });
+    return true;
   }, []);
 
   // End workflow

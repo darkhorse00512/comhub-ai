@@ -1219,13 +1219,17 @@ const TestAgentModal = ({
       // --- STREAMING MODE (audio calls via WebSocket) ---
       // Send via WebSocket — responses arrive as streaming events (onAudio, onDone)
       // which are handled by the useWorkflowStream callbacks above.
+      // Only use streaming if a streaming session actually exists (sendMessage returns true).
       if (callModeRef.current === "audio" && wsConnected) {
         // Reset audio index for new turn
         nextPlayIndexRef.current = 0;
         audioBufferRef.current.clear();
-        wsSendMessage(text);
-        // Don't await — the onDone callback handles recording restart and loading state
-        return;
+        const sent = wsSendMessage(text);
+        if (sent) {
+          // Don't await — the onDone callback handles recording restart and loading state
+          return;
+        }
+        // Streaming session not active — fall through to HTTP mode
       }
 
       // --- HTTP MODE (text calls — original batch flow) ---
