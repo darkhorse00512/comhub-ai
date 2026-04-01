@@ -823,6 +823,23 @@ const TestAgentModal = ({
       let partialCommitTimer: ReturnType<typeof setTimeout> | null = null;
       let liveMessageId: string | null = null; // ID of the live transcript message in chat
 
+      // Start the idle timer only after speaking stops (not when WebSocket opens)
+      const startIdleTimer = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+        silenceTimerRef.current = setTimeout(() => {
+          if (sttWsRef.current && !isProcessing) {
+            console.log("[STT] Idle timeout — closing");
+            stopSTT();
+          }
+        }, onIdleTimeoutMs);
+      };
+
+      // Reset the idle timer when user starts speaking
+      const resetIdleTimer = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      };
+
       // Update or create the live transcript message in chat
       const updateLiveTranscript = (text: string) => {
         if (!text.trim()) return;
@@ -894,6 +911,8 @@ const TestAgentModal = ({
             currentPartial = msg.text || "";
             if (currentPartial.trim()) {
               updateLiveTranscript(currentPartial);
+              // User IS speaking — cancel idle timer
+              resetIdleTimer();
             }
 
             // Reset commit timer — user is still speaking
@@ -909,6 +928,8 @@ const TestAgentModal = ({
           } else if (msg.message_type === "committed_transcript") {
             // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
+            // User spoke — cancel idle timer
+            resetIdleTimer();
             const chunk = (msg.text || "").trim();
             if (chunk) {
               fullTranscript = (fullTranscript + " " + chunk).trim();
@@ -941,14 +962,22 @@ const TestAgentModal = ({
         if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
           const cs = callSettingsRef.current;
           idleCountRef.current++;
+          console.log(`[STT] Idle count: ${idleCountRef.current}/${cs.onIdleThreshold}`);
+
           if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+            // Max idle reached — speak termination message and end call
             if (cs.onIdleTerminationMessage) {
-              addMessage("ai", cs.onIdleTerminationMessage);
+              outputAndSpeakRef.current(cs.onIdleTerminationMessage).then(() => {
+                endCallRef.current();
+              });
+            } else {
+              endCallRef.current();
             }
-            endCallRef.current();
           } else if (cs.onIdleMessage) {
-            addMessage("ai", cs.onIdleMessage);
-            if (isCallActiveRef.current) startAutoRecording();
+            // Speak idle prompt and restart listening
+            outputAndSpeakRef.current(cs.onIdleMessage).then(() => {
+              if (isCallActiveRef.current) startAutoRecording();
+            });
           } else if (isCallActiveRef.current) {
             startAutoRecording();
           }
@@ -956,9 +985,18 @@ const TestAgentModal = ({
       };
 
       // 4. Send audio chunks as PCM Int16 via WebSocket
+      let idleTimerStarted = false;
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        if (isSpeakingRef.current) return; // Don't send agent audio
+        if (isSpeakingRef.current) {
+          idleTimerStarted = false; // Reset — will start when speaking stops
+          return; // Don't send agent audio
+        }
+        // Start idle timer the first time we're NOT speaking (agent finished)
+        if (!idleTimerStarted) {
+          idleTimerStarted = true;
+          startIdleTimer();
+        }
 
         const pcmFloat = e.inputBuffer.getChannelData(0);
         // Convert Float32 [-1,1] to Int16 PCM
@@ -984,15 +1022,9 @@ const TestAgentModal = ({
       source.connect(processor);
       processor.connect(audioContext.destination);
 
-      // 5. Idle timeout
-      const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => {
-        if (sttWsRef.current && !isProcessing) {
-          console.log("[STT] Idle timeout — closing");
-          stopSTT();
-        }
-      }, onIdleTimeoutMs);
+      // 5. Idle timeout — NOT started here.
+      // It's started by onaudioprocess when isSpeaking becomes false,
+      // ensuring the idle timer only counts silence AFTER the agent finishes speaking.
 
     } catch (error) {
       console.error("[STT] Failed to start:", error);
