@@ -398,7 +398,18 @@ export class WorkflowEngine {
       return null;
     }
 
-    // No specific transition — use default handle or positional fallback
+    // If transitions ARE defined but no specific one was requested, we cannot
+    // pick a random edge — that would bypass the intended transition routing.
+    // Return null so the caller stays in dialogue.
+    if (transitions.length > 0) {
+      logger.warn('WorkflowEngine: Dialogue has transitions defined but none specified — cannot route', {
+        nodeLabel: node.data?.label,
+        transitionCount: transitions.length,
+      });
+      return null;
+    }
+
+    // No transitions defined at all — use default handle (simple "Next" output)
     return this.getNextNodeId(node.id);
   }
 
@@ -1195,8 +1206,11 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
 
+    // Whether the node has ANY transitions defined (connected or not)
+    const hasTransitionsDefined = (dialogueNode.data?.transitions || []).length > 0;
+
     if (effectiveComplete && connectedTransitionNames.length > 0) {
-      // AI signaled [NEXT] — determine WHICH transition to take
+      // AI signaled [NEXT] — determine WHICH connected transition to take
       shouldAdvance = true;
       transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
       if (!transition) transition = connectedTransitionNames[0];
@@ -1206,16 +1220,29 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
       logger.info('WorkflowEngine: [NEXT] → advancing', { nodeLabel, transition, targetLabel });
       messages.push({ type: 'system', text: `${nodeLabel} → [${transition}] → ${targetLabel || 'next'}` });
 
-    } else if (effectiveComplete && connectedTransitionNames.length === 0) {
-      // [NEXT] but no transitions — just advance to next connected node
+    } else if (effectiveComplete && !hasTransitionsDefined) {
+      // [NEXT] and NO transitions defined at all — advance via default "Next" output
       shouldAdvance = true;
-      logger.info('WorkflowEngine: [NEXT] → no transitions, advancing to next node', { nodeLabel });
+      logger.info('WorkflowEngine: [NEXT] → no transitions defined, advancing to default output', { nodeLabel });
+
+    } else if (effectiveComplete && hasTransitionsDefined && connectedTransitionNames.length === 0) {
+      // [NEXT] but transitions exist with NO edges connected — cannot route, stay in dialogue
+      logger.warn('WorkflowEngine: [NEXT] but all transitions are unconnected — staying', {
+        nodeLabel,
+        transitionCount: (dialogueNode.data?.transitions || []).length,
+      });
+      messages.push({ type: 'system', text: `⚠️ No transitions connected in "${nodeLabel}" — staying` });
 
     } else if (maxTurnsReached) {
-      shouldAdvance = true;
       if (connectedTransitionNames.length > 0) {
+        shouldAdvance = true;
         transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
         if (!transition) transition = connectedTransitionNames[0];
+      } else if (!hasTransitionsDefined) {
+        shouldAdvance = true;
+      } else {
+        // Max turns reached but transitions defined with none connected — stay
+        logger.warn('WorkflowEngine: Max turns reached but no transitions connected — staying', { nodeLabel });
       }
       messages.push({ type: 'system', text: `Max turns (${maxTurns}) reached` });
     }
