@@ -486,7 +486,7 @@ export class WorkflowEngine {
   }
 
   private buildDialogueSystemPrompt(node: WorkflowNode): string {
-    const agentSetup = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
+    const agentSetup = this.substituteFieldVariables(this.state.agentSystemMessage || 'You are a helpful AI phone assistant.');
     const stageMessage = node.data?.stageMessage || 'Have a natural conversation.';
     const substituted = this.substituteFieldVariables(stageMessage);
     const label = node.data?.label || 'Dialogue';
@@ -1656,9 +1656,10 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         }
 
         case 'call_transfer': {
-          const transferMsg =
+          const transferMsg = this.substituteFieldVariables(
             node.data?.transferMessage ||
-            `Transferring your call to ${node.data?.transferTo || 'an agent'}.`;
+            `Transferring your call to ${node.data?.transferTo || 'an agent'}.`
+          );
           messages.push({
             type: 'scripted',
             text: transferMsg,
@@ -1687,8 +1688,9 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         }
 
         case 'voicemail': {
-          const greeting =
-            node.data?.greetingMessage || 'Please leave a message after the beep.';
+          const greeting = this.substituteFieldVariables(
+            node.data?.greetingMessage || 'Please leave a message after the beep.'
+          );
           messages.push({
             type: 'scripted',
             text: greeting,
@@ -1712,7 +1714,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         }
 
         case 'play_audio': {
-          const fallbackText = node.data?.fallbackText || 'Playing audio...';
+          const fallbackText = this.substituteFieldVariables(node.data?.fallbackText || 'Playing audio...');
           messages.push({
             type: 'scripted',
             text: fallbackText,
@@ -1746,8 +1748,9 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         }
 
         case 'fallback': {
-          const fallbackMsg =
-            node.data?.fallbackMessage || "I'm sorry, I didn't understand that.";
+          const fallbackMsg = this.substituteFieldVariables(
+            node.data?.fallbackMessage || "I'm sorry, I didn't understand that."
+          );
           messages.push({
             type: 'scripted',
             text: fallbackMsg,
@@ -1785,7 +1788,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
           }
 
           // --- Generate summary if summaryPrompt is configured ---
-          const summaryPrompt = node.data?.summaryPrompt;
+          const summaryPrompt = node.data?.summaryPrompt ? this.substituteFieldVariables(node.data.summaryPrompt) : null;
           if (summaryPrompt) {
             try {
               const summaryResult = await gptService.generateWithCustomPrompt(
