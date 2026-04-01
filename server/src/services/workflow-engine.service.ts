@@ -474,141 +474,64 @@ export class WorkflowEngine {
     return [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))];
   }
 
-  private buildDialogueSystemPrompt(node: WorkflowNode, includeTranscript = true): string {
-    // Extract only the [Identity] and [Style] sections from the agent setup.
-    // Do NOT include [Limits] or strategy/goals — they cause the AI to go off-topic.
-    let agentContext = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
+  private buildDialogueSystemPrompt(node: WorkflowNode): string {
+    const agentSetup = this.state.agentSystemMessage || 'You are a helpful AI phone assistant.';
+    const stageMessage = node.data?.stageMessage || 'Have a natural conversation.';
+    const substituted = this.substituteFieldVariables(stageMessage);
+    const label = node.data?.label || 'Dialogue';
 
-    // If the agent setup has ### sections, only keep Identity and Style
-    if (agentContext.includes('###') || agentContext.includes('[Identity]') || agentContext.includes('[Style]')) {
-      const sections = agentContext.split(/###\s*/);
-      const keepSections = sections.filter(s => {
-        const lower = s.toLowerCase();
-        // Keep the preamble (before first ###) and Identity/Style sections
-        return !lower.startsWith('[limit') && !lower.startsWith('[voicemail');
-      });
-      agentContext = keepSections.join('### ').trim();
-    }
-
-    let prompt = agentContext;
-
-    const stageMessage = node.data?.stageMessage || 'Engage in natural conversation with the caller.';
-    const substitutedStageMessage = this.substituteFieldVariables(stageMessage);
-
-    // Only include field values that are actually used as {{variables}} in this stage's instructions.
-    // This prevents the AI from acting on data it shouldn't know about (e.g., address in Introduction).
-    const usedVars = this.extractUsedVariables(stageMessage);
-    if (usedVars.length > 0) {
-      const relevantFields: string[] = [];
-      for (const varName of usedVars) {
-        const val = this.state.fields[varName];
-        if (val !== undefined && val !== null && val !== '') {
-          relevantFields.push(`${varName} = ${JSON.stringify(val)}`);
-        }
-      }
-      if (relevantFields.length > 0) {
-        prompt += `\n\nVariable values for this stage: ${relevantFields.join(', ')}`;
-      }
-    }
-
-    prompt += `\n\n## ABSOLUTE RULES — FOLLOW WITHOUT EXCEPTION:
-1. You are in a REAL-TIME VOICE CALL. Be extremely concise — max 1 short sentence per response.
-2. You must ONLY do what the Stage Instructions below tell you to do. NOTHING ELSE.
-3. Do NOT ask questions, verify data, or discuss topics that are NOT explicitly mentioned in the Stage Instructions.
-4. Do NOT improvise, add pleasantries, or go beyond the scope of the Stage Instructions.
-5. When the Stage Instructions say to "execute transition" or "move to next" → append [NEXT] to your response.
-6. When ALL tasks in the Stage Instructions are complete → append [NEXT].
-7. [NEXT] is invisible to the caller — never say it aloud.
-8. Do NOT repeat questions already asked. Do NOT re-introduce yourself.
-9. One thought per response. If Stage Instructions have a long paragraph, break it into the shortest single statement.`;
-
-    prompt += `\n\n---\n\n## Current Stage: "${node.data?.label || 'Dialogue'}"`;
-    prompt += `\n\n### Stage Instructions (follow EXACTLY — do NOTHING beyond this):\n${substitutedStageMessage}`;
-
-    const extraInstructions: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
-    if (extraInstructions.length > 0) {
-      prompt += `\n\n### Additional Instructions:`;
-      extraInstructions.forEach((inst: string, idx: number) => {
-        prompt += `\n${idx + 1}. ${this.substituteFieldVariables(inst)}`;
-      });
-    }
-
-    const overrides: Array<{ key: string; value: string }> = (node.data?.stageOverrides || []).filter((o: any) => o.key.trim());
-    if (overrides.length > 0) {
-      prompt += `\n\n### Stage Settings Overrides:`;
-      overrides.forEach((o: any) => {
-        prompt += `\n- ${o.key}: ${o.value}`;
-      });
-    }
-
-    const enabledFunctions: Array<{ name: string; enabled: boolean }> = (node.data?.functions || []).filter((f: any) => f.enabled);
-    if (enabledFunctions.length > 0) {
-      prompt += `\n\n### Available Functions:`;
-      prompt += `\nYou have access to these functions: ${enabledFunctions.map((f: any) => f.name).join(', ')}`;
-    }
-
-    const enabledKBs: Array<{ name: string; enabled: boolean }> = (node.data?.knowledgeBases || []).filter((kb: any) => kb.enabled);
-    if (enabledKBs.length > 0) {
-      prompt += `\n\n### Knowledge Bases:`;
-      prompt += `\nYou have access to: ${enabledKBs.map((kb: any) => kb.name).join(', ')}`;
-    }
-
-    // NOTE: Field values are NOT shown to the AI. They are only used for
-    // {{variable}} substitution in stage instructions. Showing raw field data
-    // causes the AI to act on it (e.g., verifying addresses) even when the
-    // stage instructions don't mention it.
-
-    // --- CONVERSATION CONTEXT: only THIS stage's conversation ---
-    // CRITICAL: Only include messages from the CURRENT dialogue node.
-    // Including messages from other stages (Survey, Qualification, etc.) causes the AI
-    // to get confused about its role and ask questions from other stages.
-    const currentStageLabel = node.data?.label;
-    if (includeTranscript && this.state.conversationContext.length > 0) {
-      // Filter to ONLY messages from this stage
-      const stageContext = this.state.conversationContext.filter(
-        e => e.nodeLabel === currentStageLabel
-      );
-
-      if (stageContext.length > 0) {
-        prompt += `\n\n### THIS STAGE'S CONVERSATION SO FAR:`;
-        for (const entry of stageContext) {
-          if (entry.role === 'agent') {
-            prompt += `\nYou: "${entry.text}"`;
-          } else {
-            prompt += `\nCaller: "${entry.text}"`;
-          }
-        }
-      }
-
-      prompt += `\n\n⚠️ STRICT RULES:
-- Do NOT repeat anything from the conversation above.
-- The caller's previous answers are final — do NOT re-ask.
-- Continue from exactly where this stage left off.
-- ONLY follow YOUR Stage Instructions. Do NOT ask questions from other topics.`;
-    } else if (!includeTranscript) {
-      prompt += `\n\n⚠️ STRICT RULES:
-- The call history is provided as chat messages above.
-- Do NOT repeat anything you already said.
-- The caller's previous answers are final — do NOT re-ask.
-- Continue from exactly where this stage left off.
-- ONLY follow YOUR Stage Instructions. Do NOT ask questions from other topics.`;
-    }
-
-    const maxTurns = parseInt(node.data?.maxTurns);
-    if (maxTurns > 0) {
-      prompt += `\n\nYou have a maximum of ${maxTurns} conversation turns in this stage.`;
-    }
-
+    // Only get transitions that have connected edges
     const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+    const outEdges = this.edges.filter(e => e.source === node.id);
+    const connectedTransitions = transitions.filter(t => {
+      const handleId = t.id || `t-${t.name}`;
+      return outEdges.some(e => e.sourceHandle === handleId);
+    });
 
-    if (transitions.length > 0) {
-      prompt += `\n\n### Stage Exits: ${transitions.map((t: any) => `"${t.name}"`).join(', ')}`;
-      prompt += `\nThe system routes to the correct exit automatically. When the Stage Instructions say to "execute transition" or all tasks are done, append [NEXT].`;
-    } else {
-      prompt += `\n\nWhen all tasks in the Stage Instructions are complete, append [NEXT].`;
+    // Only this stage's conversation
+    const stageContext = this.state.conversationContext
+      .filter(e => e.nodeLabel === label);
+
+    let prompt = `${agentSetup}
+
+---
+
+## YOUR TASK: "${label}"
+
+${substituted}`;
+
+    // Extra instructions
+    const extras: string[] = (node.data?.extraInstructions || []).filter((i: string) => i.trim());
+    if (extras.length > 0) {
+      prompt += `\n\n## Additional Instructions:`;
+      extras.forEach((inst, i) => { prompt += `\n${i + 1}. ${this.substituteFieldVariables(inst)}`; });
     }
-    prompt += `\n[NEXT] is invisible to the caller. Never include [NEXT] if you just asked a question — wait for the answer first.`;
-    prompt += `\nIf the caller is unintelligible after multiple attempts, append [FALLBACK].`;
+
+    // Conversation so far (this stage only)
+    if (stageContext.length > 0) {
+      prompt += `\n\n## Conversation in this stage:`;
+      for (const e of stageContext) {
+        prompt += `\n${e.role === 'agent' ? 'You' : 'Caller'}: "${e.text}"`;
+      }
+    }
+
+    // Transitions
+    if (connectedTransitions.length > 0) {
+      prompt += `\n\n## When this stage is COMPLETE:`;
+      prompt += `\nAppend [NEXT] to your response. The system will route to the correct exit.`;
+      prompt += `\nAvailable exits: ${connectedTransitions.map(t => `"${t.name}"`).join(', ')}`;
+    } else {
+      prompt += `\n\nWhen done, append [NEXT].`;
+    }
+
+    // Rules — keep SHORT
+    prompt += `\n\n## Rules:
+- Real-time voice call. Keep responses to 1 short sentence.
+- Follow ONLY the task above. Do NOT ask questions not in the task.
+- Do NOT repeat questions already asked above.
+- [NEXT] means this stage is complete. Only append it when ALL tasks are done.
+- NEVER append [NEXT] if you just asked a question — wait for the answer.
+- If caller is unintelligible, append [FALLBACK].`;
 
     return prompt;
   }
@@ -645,7 +568,7 @@ export class WorkflowEngine {
     // Full history from ALL stages confuses the AI about its current role.
     // Instead, buildDialogueSystemPrompt includes only THIS stage's conversation
     // from conversationContext, which is sufficient and stage-scoped.
-    const stagePrompt = this.buildDialogueSystemPrompt(node, true);
+    const stagePrompt = this.buildDialogueSystemPrompt(node);
 
     const history: ChatMessage[] = [{ role: 'system', content: stagePrompt }];
 
@@ -842,8 +765,9 @@ RULES:
     // earlier stages' content from confusing the routing decision.
     // Note: the current user message and AI response are already in conversationContext
     // (pushed at lines above), so we just use the filtered context — no need to add them again.
+    // Only this stage's conversation — strict filter, no cross-stage
     const currentStageContext = this.state.conversationContext
-      .filter(e => e.nodeLabel === node.data?.label || !e.nodeLabel)
+      .filter(e => e.nodeLabel === node.data?.label)
       .slice(-10);
 
     const analysisPrompt = `You are a routing analyzer. The agent has signaled that this stage is complete. Your job is to decide WHICH exit to take.
@@ -1146,481 +1070,167 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
 
     // --- Case 2: In dialogue ---
     if (!this.state.isInDialogue || !this.state.currentDialogueNodeId) {
-      logger.warn('WorkflowEngine: processMessage called but not in dialogue and not waiting', {
-        isInDialogue: this.state.isInDialogue,
-        currentDialogueNodeId: this.state.currentDialogueNodeId,
-      });
       return {
         messages: [{ type: 'system', text: 'Not waiting for input' }],
-        waitingForInput: false,
-        isComplete: this.state.isComplete,
+        waitingForInput: true,
+        isComplete: false,
         currentStage: null,
       };
     }
 
-    let dialogueNode = this.nodes.find((n) => n.id === this.state.currentDialogueNodeId);
+    const dialogueNode = this.nodes.find((n) => n.id === this.state.currentDialogueNodeId);
     if (!dialogueNode) {
-      // Node not found — try to find ANY dialogue node to recover
-      const anyDialogue = this.nodes.find(n =>
-        (n.type === 'dialogue' || n.data?.type === 'dialogue') &&
-        !this.state.completedDialogueNodeIds?.includes(n.id)
-      );
-      if (anyDialogue) {
-        logger.warn('WorkflowEngine: currentDialogueNodeId not found — recovering to first available dialogue', {
-          missingId: this.state.currentDialogueNodeId,
-          recoveredTo: anyDialogue.data?.label,
-        });
-        this.state.currentDialogueNodeId = anyDialogue.id;
-        dialogueNode = anyDialogue;
-      } else {
-        this.state.isInDialogue = false;
-        this.state.isComplete = true;
-        return {
-          messages: [{ type: 'system', text: 'Dialogue node not found' }],
-          waitingForInput: false,
-          isComplete: true,
-          currentStage: null,
-        };
-      }
+      return {
+        messages: [{ type: 'system', text: 'Dialogue node not found' }],
+        waitingForInput: true,
+        isComplete: false,
+        currentStage: null,
+      };
     }
 
-    // GUARD: Self-healing auto-correction for stale currentDialogueNodeId.
-    // After a server restart, the persisted state may point to an old dialogue node
-    // (e.g. "Introduction") while the conversation has already moved on (e.g. "Survey").
-    // Instead of crashing/ending the workflow, detect and auto-correct.
-    let wasAutoCorrected = false;
-    const currentLabel = dialogueNode.data?.label;
+    const nodeLabel = dialogueNode.data?.label || 'Dialogue';
 
-    // Check: does the recent conversation context show we should be in a DIFFERENT stage?
-    const lastAgentEntry = [...this.state.conversationContext]
-      .reverse()
-      .find(e => e.role === 'agent' && e.nodeLabel);
-    const mostRecentStageLabel = lastAgentEntry?.nodeLabel;
-
-    // Only auto-correct if:
-    // 1. The current stage HAS spoken before (not a fresh entry)
-    // 2. The most recent agent message is from a DIFFERENT stage
-    const currentStageHasSpoken = currentLabel && this.state.conversationContext.some(
-      e => e.role === 'agent' && e.nodeLabel === currentLabel
-    );
-
-    logger.info('WorkflowEngine: State check', {
-      currentDialogueNodeId: this.state.currentDialogueNodeId,
-      currentLabel,
-      mostRecentStageLabel,
-      currentStageHasSpoken,
-      contextLength: this.state.conversationContext.length,
-      completedIds: this.state.completedDialogueNodeIds,
-    });
-
-    if (currentStageHasSpoken && mostRecentStageLabel && mostRecentStageLabel !== currentLabel) {
-      // Recent conversation is from a different stage — currentDialogueNodeId is stale.
-      // Find the correct dialogue node and switch to it.
-      const correctNode = this.nodes.find(
-        n => (n.type === 'dialogue' || n.data?.type === 'dialogue') &&
-             n.data?.label === mostRecentStageLabel
-      );
-
-      if (correctNode && correctNode.id !== dialogueNode.id) {
-        logger.error('WorkflowEngine: STALE currentDialogueNodeId — auto-correcting', {
-          staleLabel: currentLabel,
-          staleNodeId: dialogueNode.id,
-          correctLabel: mostRecentStageLabel,
-          correctNodeId: correctNode.id,
-        });
-        messages.push({
-          type: 'system',
-          text: `Auto-corrected: ${currentLabel} → ${mostRecentStageLabel} (state recovered)`,
-        });
-
-        // Fix the state: switch to the correct dialogue node
-        this.state.currentDialogueNodeId = correctNode.id;
-        dialogueNode = correctNode;
-
-        // Clean up completedDialogueNodeIds: only keep the corrected node
-        // (and any nodes before it). Remove nodes that come AFTER so they
-        // can be entered normally when the workflow advances.
-        const correctNodeIdx = this.state.completedDialogueNodeIds.indexOf(correctNode.id);
-        if (correctNodeIdx >= 0) {
-          // Keep only up to and including the correct node
-          this.state.completedDialogueNodeIds = this.state.completedDialogueNodeIds.slice(0, correctNodeIdx + 1);
-        }
-
-        // Rebuild dialogue history for the correct node WITH the user's message
-        // (the old history was for the wrong node — useless)
-        this.state.dialogueHistory = await this.buildInitialDialogueHistory(correctNode, userMessage);
-        this.state.dialogueTurnCount = 1; // reset turn count for corrected node
-        wasAutoCorrected = true; // user message already included in rebuilt history
-        this.persistState();
-      }
-    }
-
-    // Collect the valid transition names for this dialogue node
+    // Get ONLY transitions that have connected edges
     const transitions: Array<{ id: string; name: string }> = dialogueNode.data?.transitions || [];
-    const validTransitionNames = transitions.map((t) => t.name);
+    const outEdges = this.edges.filter(e => e.source === dialogueNode.id);
+    const connectedTransitions = transitions.filter(t => {
+      const handleId = t.id || `t-${t.name}`;
+      return outEdges.some(e => e.sourceHandle === handleId);
+    });
+    const connectedTransitionNames = connectedTransitions.map(t => t.name);
 
-    // --- Handle unrecognized speech (voice mode) ---
+    // --- Handle unrecognized speech ---
     if (userMessage === '[SPEECH_NOT_RECOGNIZED]') {
-      logger.info('WorkflowEngine: Speech not recognized, checking for fallback', {
-        nodeLabel: dialogueNode.data?.label,
-      });
-
       const fallbackNodeId = this.getDialogueFallbackNodeId(dialogueNode);
       if (fallbackNodeId) {
-        // Follow fallback edge
         this.state.isInDialogue = false;
         this.state.currentDialogueNodeId = null;
         this.state.currentNodeId = fallbackNodeId;
         return this.executeFromCurrent(messages);
       }
-
-      // No fallback connected — use language-aware fallback directly (more reliable than asking AI)
-      const detectedLang = this.detectLanguage();
       const retryMsg = this.getLanguageAwareFallback('retry');
-      // Also push to dialogue history so AI knows a retry happened
-      this.state.dialogueHistory.push({
-        role: 'user',
-        content: `[Speech was unclear — agent asked caller to repeat in ${detectedLang}]`,
-      });
       this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
-
-      messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
-      this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
-
-      return {
-        messages,
-        waitingForInput: true,
-        isComplete: false,
-        currentStage: dialogueNode.data?.label || 'AI Dialogue',
-      };
+      messages.push({ type: 'ai', text: retryMsg, nodeLabel });
+      this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel });
+      return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
     }
 
-    logger.info('WorkflowEngine: Processing dialogue message', {
-      userMessage: userMessage.substring(0, 100),
-      nodeLabel: dialogueNode.data?.label,
-      turnCount: this.state.dialogueTurnCount,
-      historyLength: this.state.dialogueHistory.length,
-      availableTransitions: validTransitionNames,
-    });
-
-    // Add user message to conversation context (ALWAYS — needed by proactive check).
-    // For dialogue history: skip if auto-corrected (already included in rebuilt history).
-    this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel: dialogueNode.data?.label });
-    if (!wasAutoCorrected) {
-      this.state.dialogueHistory.push({ role: 'user', content: userMessage });
-      this.state.dialogueTurnCount++;
-    }
-
-    // Persist state BEFORE the AI call. This is critical because:
-    // - The AI call takes seconds (GPT API)
-    // - If the server restarts during the call, the disk state must reflect
-    //   the current dialogue with the user's latest message
-    // - Without this, a restart loads stale state from the previous turn
+    // Add user message
+    this.state.dialogueHistory.push({ role: 'user', content: userMessage });
+    this.state.conversationContext.push({ role: 'user', text: userMessage, nodeLabel });
+    this.state.dialogueTurnCount++;
     this.persistState();
 
-    // Determine if this is a simple stage (few questions) or complex (many questions).
-    // The proactive check ONLY runs for simple stages (≤3 questions).
-    // For complex stages (Survey: 3+ questions, Qualification: 8+ questions),
-    // the proactive check misfires constantly, causing premature transitions and loops.
-    // Complex stages rely SOLELY on the AI's [NEXT] signal.
-    const stageInstructions = dialogueNode.data?.stageMessage || '';
-    const questionCountInInstructions = (stageInstructions.match(/\?/g) || []).length;
-    const isSimpleStage = questionCountInInstructions <= 3;
+    logger.info('WorkflowEngine: Processing dialogue', {
+      nodeLabel,
+      userMessage: userMessage.substring(0, 80),
+      turn: this.state.dialogueTurnCount,
+      connectedTransitions: connectedTransitionNames,
+    });
 
-    const [aiResponse, proactiveTransition] = await Promise.all([
-      this.generateAIResponse(),
-      (isSimpleStage && validTransitionNames.length > 0)
-        ? this.checkStageCompletion(dialogueNode, userMessage)
-        : Promise.resolve(null),
-    ]);
-
-    if (isSimpleStage) {
-      logger.info('WorkflowEngine: Simple stage — proactive check enabled', {
-        nodeLabel: dialogueNode.data?.label,
-        questionCount: questionCountInInstructions,
-        proactiveResult: proactiveTransition,
-      });
-    } else {
-      logger.info('WorkflowEngine: Complex stage — proactive check disabled, relying on AI [NEXT]', {
-        nodeLabel: dialogueNode.data?.label,
-        questionCount: questionCountInInstructions,
-      });
-    }
+    // --- Generate AI response ---
+    const aiResponse = await this.generateAIResponse();
 
     if (!aiResponse) {
-      // AI failed — if proactive check found a transition, use a brief ack and advance
-      if (proactiveTransition) {
-        const ack = this.getBriefAcknowledgment();
-        messages.push({ type: 'ai', text: ack, nodeLabel: dialogueNode.data?.label });
-        this.state.conversationContext.push({ role: 'agent', text: ack, nodeLabel: dialogueNode.data?.label });
-        this.state.dialogueHistory.push({ role: 'assistant', content: ack });
-        // Fall through to transition logic below with proactiveTransition set
-      } else {
-        // AI failed and no proactive transition — keep dialogue open
-        const fallback = this.getLanguageAwareFallback('error');
-        messages.push({ type: 'ai', text: fallback, nodeLabel: dialogueNode.data?.label });
-        this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
-        this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel: dialogueNode.data?.label });
-        return {
-          messages,
-          waitingForInput: true,
-          isComplete: false,
-          currentStage: dialogueNode.data?.label || 'AI Dialogue',
-        };
-      }
+      const fallback = this.getLanguageAwareFallback('error');
+      messages.push({ type: 'ai', text: fallback, nodeLabel });
+      this.state.dialogueHistory.push({ role: 'assistant', content: fallback });
+      this.state.conversationContext.push({ role: 'agent', text: fallback, nodeLabel });
+      return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
     }
 
-    // --- Parse AI response and determine what to output ---
-    let text = '';
-    let wantsFallback = false;
-    let wantsToComplete = false;
-    let effectiveComplete = false;
-    let aiEndsWithQuestion = false;
+    // --- Parse AI response ---
+    const parsed = parseAIResponse(aiResponse, connectedTransitionNames);
+    const sentences = splitIntoSentences(parsed.text);
+    const text = parsed.text;
+    const wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
+    const aiEndsWithQuestion = text.trim().endsWith('?');
+    const effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
 
-    if (aiResponse) {
-      const parsed = parseAIResponse(aiResponse, validTransitionNames);
-      const allSentences = splitIntoSentences(parsed.text);
-      text = parsed.text;
-      wantsFallback = parsed.wantsFallback;
-
-      // Check for [NEXT] / [STAGE_COMPLETE] signal from the response AI
-      wantsToComplete = aiResponse.includes('[NEXT]') || aiResponse.includes('[STAGE_COMPLETE]');
-      const cleanedTextTrimmed = text.trim();
-      aiEndsWithQuestion = cleanedTextTrimmed.endsWith('?');
-      effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
-
-      if (aiEndsWithQuestion && wantsToComplete) {
-        logger.info('WorkflowEngine: AI included [NEXT] but response ends with "?" — suppressing', {
-          nodeLabel: dialogueNode.data?.label,
-          turnCount: this.state.dialogueTurnCount,
-        });
-      }
-
-      // Determine which sentences to output:
-      // The PROACTIVE CHECK is the authority on transitions. If it says the stage
-      // is done, truncate the AI response to only acknowledgment sentences and advance.
-      // The AI often goes off-topic (asks questions from other stages) — don't trust it.
-      let outputSentences: string[];
-      if (proactiveTransition && !effectiveComplete) {
-        // Proactive check says stage is done. Keep only non-question acknowledgments.
-        const ackOnly = allSentences.filter(s => !s.trim().endsWith('?'));
-        if (ackOnly.length > 0) {
-          outputSentences = ackOnly.slice(0, 1);
-        } else {
-          outputSentences = [this.getBriefAcknowledgment()];
-        }
-        logger.info('WorkflowEngine: Truncated AI response (proactive completion)', {
-          nodeLabel: dialogueNode.data?.label,
-          originalSentences: allSentences.length,
-          droppedQuestions: allSentences.filter(s => s.trim().endsWith('?')).length,
-        });
-      } else {
-        outputSentences = allSentences;
-      }
-
-      logger.info('WorkflowEngine: Dialogue AI response', {
-        rawResponse: aiResponse.substring(0, 150),
-        cleanedText: text.substring(0, 100),
-        wantsFallback,
-        effectiveComplete,
-        proactiveTransition,
-        sentenceCount: outputSentences.length,
-        turnCount: this.state.dialogueTurnCount,
-        nodeLabel: dialogueNode.data?.label,
-      });
-
-      // Deliver sentences as messages
-      for (const sentence of outputSentences) {
-        if (sentence) {
-          messages.push({ type: 'ai', text: sentence, nodeLabel: dialogueNode.data?.label });
-          this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel: dialogueNode.data?.label });
-        }
-      }
-      // Store in dialogue history (use what was actually output, not the full AI text)
-      const outputText = outputSentences.filter(Boolean).join(' ');
-      if (outputText) {
-        this.state.dialogueHistory.push({ role: 'assistant', content: outputText });
+    // Deliver sentences
+    for (const sentence of sentences) {
+      if (sentence) {
+        messages.push({ type: 'ai', text: sentence, nodeLabel });
+        this.state.conversationContext.push({ role: 'agent', text: sentence, nodeLabel });
       }
     }
-
-    // Persist AFTER AI response — captures the response before transition logic.
+    if (text) {
+      this.state.dialogueHistory.push({ role: 'assistant', content: text });
+    }
     this.persistState();
 
-    // --- Handle AI-triggered fallback ---
-    if (wantsFallback) {
+    // --- Handle fallback ---
+    if (parsed.wantsFallback) {
       const fallbackNodeId = this.getDialogueFallbackNodeId(dialogueNode);
       if (fallbackNodeId) {
-        logger.info('WorkflowEngine: AI triggered fallback', { nodeLabel: dialogueNode.data?.label });
         this.state.isInDialogue = false;
         this.state.currentDialogueNodeId = null;
         this.state.currentNodeId = fallbackNodeId;
         return this.executeFromCurrent(messages);
       }
-      // No fallback connected — STAY in the dialogue
-      logger.warn('WorkflowEngine: AI triggered [FALLBACK] but no fallback node connected — staying in dialogue');
-      const retryMsg = this.getLanguageAwareFallback('retry');
-      messages.push({ type: 'ai', text: retryMsg, nodeLabel: dialogueNode.data?.label });
-      messages.push({ type: 'system', text: `⚠️ No fallback connected to "${dialogueNode.data?.label}" — staying in current stage` });
-      this.state.dialogueHistory.push({ role: 'assistant', content: retryMsg });
-      this.state.conversationContext.push({ role: 'agent', text: retryMsg, nodeLabel: dialogueNode.data?.label });
-      return {
-        messages,
-        waitingForInput: true,
-        isComplete: false,
-        currentStage: dialogueNode.data?.label || 'AI Dialogue',
-      };
+      messages.push({ type: 'system', text: `⚠️ No fallback connected to "${nodeLabel}"` });
+      return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
     }
 
-    // --- Transition decision logic ---
-    //
-    // Two authorities can trigger advancement:
-    //   1. RESPONSE AI signals [NEXT] — it explicitly says the stage is done.
-    //   2. PROACTIVE CHECK — a parallel gpt-4o-mini call determined the stage
-    //      objective was met, even though the Response AI forgot [NEXT].
-    //      This prevents the AI from staying stuck or going off-topic.
-    //   The TRANSITION ANALYZER decides WHERE to go (which named transition).
-    //
+    // --- Transition logic: AI is the SOLE authority via [NEXT] ---
+    let shouldAdvance = false;
     let transition: string | null = null;
+
     const maxTurns = parseInt(dialogueNode.data?.maxTurns) || 0;
     const maxTurnsReached = maxTurns > 0 && this.state.dialogueTurnCount >= maxTurns;
-    let shouldAdvance = false;
 
-    if (effectiveComplete) {
-      // Response AI signaled [NEXT] and is NOT asking a question → stage is done.
+    if (effectiveComplete && connectedTransitionNames.length > 0) {
+      // AI signaled [NEXT] — determine WHICH transition to take
       shouldAdvance = true;
-      if (validTransitionNames.length > 0) {
-        // Use proactiveTransition if available (already computed), else run analyzer
-        if (proactiveTransition) {
-          transition = proactiveTransition;
-        } else {
-          transition = await this.analyzeTransition(dialogueNode, text, userMessage);
-        }
-        if (!transition) {
-          transition = validTransitionNames[0]; // default to first
-        }
-      }
-      const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
-      const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
-      logger.info('WorkflowEngine: AI signaled completion, advancing', {
-        transition,
-        nodeLabel: dialogueNode.data?.label,
-        turnCount: this.state.dialogueTurnCount,
-        targetLabel: advanceTarget?.data?.label,
-      });
-      messages.push({
-        type: 'system',
-        text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
-      });
-    } else if (proactiveTransition) {
-      // Proactive check detected stage completion — advance regardless of AI's response.
-      // The proactive check is the authority on transitions, not the AI.
+      transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+      if (!transition) transition = connectedTransitionNames[0];
+
+      const targetId = this.getDialogueNextNodeId(dialogueNode, transition);
+      const targetLabel = targetId ? this.nodes.find(n => n.id === targetId)?.data?.label : null;
+      logger.info('WorkflowEngine: [NEXT] → advancing', { nodeLabel, transition, targetLabel });
+      messages.push({ type: 'system', text: `${nodeLabel} → [${transition}] → ${targetLabel || 'next'}` });
+
+    } else if (effectiveComplete && connectedTransitionNames.length === 0) {
+      // [NEXT] but no transitions — just advance to next connected node
       shouldAdvance = true;
-      transition = proactiveTransition;
-      const advanceTargetId = this.getDialogueNextNodeId(dialogueNode, transition);
-      const advanceTarget = advanceTargetId ? this.nodes.find(n => n.id === advanceTargetId) : null;
-      logger.info('WorkflowEngine: Proactive check triggered advancement (AI missed [NEXT])', {
-        transition,
-        nodeLabel: dialogueNode.data?.label,
-        turnCount: this.state.dialogueTurnCount,
-        targetLabel: advanceTarget?.data?.label,
-      });
-      messages.push({
-        type: 'system',
-        text: `${dialogueNode.data?.label} → [${transition}] → ${advanceTarget?.data?.label || advanceTargetId || 'unknown'}`,
-      });
+      logger.info('WorkflowEngine: [NEXT] → no transitions, advancing to next node', { nodeLabel });
+
     } else if (maxTurnsReached) {
-      // Safety net: max turns exceeded — force advance.
       shouldAdvance = true;
-      if (validTransitionNames.length > 0) {
+      if (connectedTransitionNames.length > 0) {
         transition = await this.analyzeTransition(dialogueNode, text, userMessage);
-        if (!transition) {
-          transition = validTransitionNames[0];
-        }
+        if (!transition) transition = connectedTransitionNames[0];
       }
-      messages.push({ type: 'system', text: `Max turns reached (${maxTurns}), advancing via "${transition}"` });
+      messages.push({ type: 'system', text: `Max turns (${maxTurns}) reached` });
     }
-    // else: stay in dialogue — neither AI nor proactive check signaled completion.
 
     if (shouldAdvance) {
-
       const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
 
-      // If the transition edge isn't connected, stay in dialogue (don't end the call).
       if (!nextNodeId) {
-        logger.warn('WorkflowEngine: Transition edge not connected — staying in dialogue', {
-          transition,
-          fromLabel: dialogueNode.data?.label,
-        });
-        messages.push({
-          type: 'system',
-          text: `⚠️ Transition "${transition}" from "${dialogueNode.data?.label}" is not connected — staying in current stage`,
-        });
-        // Fall through to "dialogue continues" return below
-        shouldAdvance = false;
+        // Transition not connected — stay in dialogue
+        logger.warn('WorkflowEngine: Transition not connected', { transition, nodeLabel });
+        messages.push({ type: 'system', text: `⚠️ "${transition}" not connected — staying` });
+        return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
       }
 
-      // Verify the target is NOT an already-visited dialogue — if it is,
-      // the transition was wrong (proactive check misfired or stale state).
-      // Cancel the transition and stay in the current dialogue.
-      if (shouldAdvance && nextNodeId) {
-        const targetNode = this.nodes.find(n => n.id === nextNodeId);
-        const targetType = targetNode?.type || targetNode?.data?.type;
-        const targetLabel = targetNode?.data?.label;
+      logger.info('WorkflowEngine: Advancing', { nodeLabel, transition, nextNodeId });
 
-        if (targetType === 'dialogue') {
-          const targetAlreadyVisited =
-            this.state.completedDialogueNodeIds?.includes(nextNodeId) ||
-            (targetLabel && this.state.conversationContext.some(
-              e => e.role === 'agent' && e.nodeLabel === targetLabel
-            ));
-
-          if (targetAlreadyVisited) {
-            logger.warn('WorkflowEngine: Transition target is already-visited dialogue — cancelling transition', {
-              transition,
-              fromLabel: dialogueNode.data?.label,
-              targetLabel,
-            });
-            messages.push({
-              type: 'system',
-              text: `⚠️ Transition cancelled (target "${targetLabel}" already visited) — staying in current stage`,
-            });
-            shouldAdvance = false;
-          }
-        }
+      // Exit dialogue
+      if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+      if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
+        this.state.completedDialogueNodeIds.push(dialogueNode.id);
       }
+      this.state.isInDialogue = false;
+      this.state.currentDialogueNodeId = null;
+      this.state.currentNodeId = nextNodeId;
+      this.persistState();
 
-      if (shouldAdvance && nextNodeId) {
-        const targetLabel = this.nodes.find(n => n.id === nextNodeId)?.data?.label || nextNodeId;
-        logger.info('WorkflowEngine: Dialogue advancing', {
-          transition,
-          fromLabel: dialogueNode.data?.label,
-          toNodeId: nextNodeId,
-          toLabel: targetLabel,
-        });
-
-        // Exit dialogue and continue workflow — mark as completed
-        if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
-        if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
-          this.state.completedDialogueNodeIds.push(dialogueNode.id);
-        }
-        this.state.isInDialogue = false;
-        this.state.currentDialogueNodeId = null;
-        this.state.currentNodeId = nextNodeId;
-
-        // Persist state NOW — before the async executeFromCurrent call.
-        this.persistState();
-
-        return this.executeFromCurrent(messages);
-      }
+      return this.executeFromCurrent(messages);
     }
 
-    // Dialogue continues — wait for the user's next message
-    return {
-      messages,
-      waitingForInput: true,
-      isComplete: false,
-      currentStage: dialogueNode.data?.label || 'AI Dialogue',
-    };
+    // --- Stay in dialogue ---
+    return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
   }
 
   /**
