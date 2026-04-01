@@ -1073,6 +1073,23 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     this._processStartMs = Date.now();
     this.lastTiming = { promptReadyAt: 0, llmRequestSentAt: 0, llmDoneAt: 0, proactiveCheckMs: 0 };
 
+    // Comprehensive state log at entry — helps diagnose routing issues
+    const currentNode = this.state.currentNodeId ? this.nodes.find(n => n.id === this.state.currentNodeId) : null;
+    const dialogueNode2 = this.state.currentDialogueNodeId ? this.nodes.find(n => n.id === this.state.currentDialogueNodeId) : null;
+    logger.info('WorkflowEngine: processMessage entry state', {
+      userMessage: userMessage.substring(0, 80),
+      isInDialogue: this.state.isInDialogue,
+      isWaitingAfterSpoken: this.state.isWaitingAfterSpoken,
+      currentNodeId: this.state.currentNodeId,
+      currentNodeLabel: currentNode?.data?.label,
+      currentNodeType: currentNode?.data?.type || currentNode?.type,
+      currentDialogueNodeId: this.state.currentDialogueNodeId,
+      currentDialogueLabel: dialogueNode2?.data?.label,
+      dialogueTurnCount: this.state.dialogueTurnCount,
+      completedDialogueNodeIds: this.state.completedDialogueNodeIds,
+      contextLength: this.state.conversationContext.length,
+    });
+
     if (this.state.isComplete) {
       return {
         messages: [{ type: 'system', text: 'Workflow completed' }],
@@ -1174,6 +1191,18 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     const aiEndsWithQuestion = text.trim().endsWith('?');
     const effectiveComplete = wantsToComplete && !aiEndsWithQuestion;
 
+    logger.info('WorkflowEngine: AI response parsed', {
+      nodeLabel,
+      rawResponse: aiResponse.substring(0, 200),
+      parsedText: text.substring(0, 100),
+      wantsToComplete,
+      aiEndsWithQuestion,
+      effectiveComplete,
+      wantsFallback: parsed.wantsFallback,
+      parsedTransition: parsed.transition,
+      sentenceCount: sentences.length,
+    });
+
     // Deliver sentences
     for (const sentence of sentences) {
       if (sentence) {
@@ -1208,6 +1237,9 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
 
     // Whether the node has ANY transitions defined (connected or not)
     const hasTransitionsDefined = (dialogueNode.data?.transitions || []).length > 0;
+
+    // Debug: show transition decision context
+    messages.push({ type: 'system', text: `[ROUTE] effective=${effectiveComplete}, transitions=${(dialogueNode.data?.transitions || []).length}, connected=${connectedTransitionNames.length}, fallback=${parsed.wantsFallback}` });
 
     if (effectiveComplete && connectedTransitionNames.length > 0) {
       // AI signaled [NEXT] — determine WHICH connected transition to take
