@@ -749,22 +749,22 @@ RULES:
    * This decouples routing decisions from response generation,
    * preventing the AI from prematurely firing transitions.
    */
+  /**
+   * Separate AI call to analyze which transition should fire.
+   * Only considers transitions that have connected edges — unconnected
+   * transitions are invisible to the LLM to prevent routing to dead ends.
+   */
   private async analyzeTransition(
     node: WorkflowNode,
     aiResponseText: string,
     userMessage: string,
+    connectedTransitionNames: string[],
   ): Promise<string | null> {
-    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
-    if (transitions.length === 0) return null;
+    if (connectedTransitionNames.length === 0) return null;
 
     const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
-    const transitionList = transitions.map(t => t.name).join(', ');
+    const transitionList = connectedTransitionNames.join(', ');
 
-    // Build a focused prompt for transition analysis.
-    // Only include conversation from THIS stage (filtered by nodeLabel) to prevent
-    // earlier stages' content from confusing the routing decision.
-    // Note: the current user message and AI response are already in conversationContext
-    // (pushed at lines above), so we just use the filtered context — no need to add them again.
     // Only this stage's conversation — strict filter, no cross-stage
     const currentStageContext = this.state.conversationContext
       .filter(e => e.nodeLabel === node.data?.label)
@@ -777,7 +777,7 @@ STAGE INSTRUCTIONS:
 ${stageMessage}
 
 AVAILABLE TRANSITIONS: ${transitionList}
-- "${transitions[0]?.name}" = the caller completed the stage successfully (default/happy path).
+- "${connectedTransitionNames[0]}" = the caller completed the stage successfully (default/happy path).
 - Other transitions = the caller indicated a specific exit condition (e.g. refused, not qualified, wants to end).
 
 CONVERSATION IN THIS STAGE:
@@ -798,16 +798,16 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
         userMessage: userMessage.substring(0, 50),
         aiResponse: aiResponseText.substring(0, 50),
         analysisResult: answer,
-        validTransitions: transitions.map(t => t.name),
+        validTransitions: connectedTransitionNames,
       });
 
       if (!answer || answer.toUpperCase() === 'NONE') return null;
 
-      // Validate the answer against available transitions
-      const matched = transitions.find(
-        t => t.name.toLowerCase() === answer.toLowerCase()
+      // Validate the answer against CONNECTED transitions only
+      const matched = connectedTransitionNames.find(
+        name => name.toLowerCase() === answer.toLowerCase()
       );
-      return matched ? matched.name : null;
+      return matched || null;
     } catch (error) {
       logger.error('WorkflowEngine: Transition analysis failed', { error });
       return null;
@@ -823,12 +823,27 @@ Based on the conversation outcome, which transition best matches? Output ONLY th
   private async checkStageCompletion(
     node: WorkflowNode,
     userMessage: string,
+    connectedTransitionNames?: string[],
   ): Promise<string | null> {
-    const transitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
-    if (transitions.length === 0) return null;
+    // Use only connected transitions when provided, otherwise compute them
+    const allTransitions: Array<{ id: string; name: string }> = node.data?.transitions || [];
+    if (allTransitions.length === 0) return null;
+
+    let transitionNames: string[];
+    if (connectedTransitionNames && connectedTransitionNames.length > 0) {
+      transitionNames = connectedTransitionNames;
+    } else {
+      const outEdges = this.edges.filter(e => e.source === node.id);
+      transitionNames = allTransitions
+        .filter(t => {
+          const handleId = t.id || `t-${t.name}`;
+          return outEdges.some(e => e.sourceHandle === handleId);
+        })
+        .map(t => t.name);
+      if (transitionNames.length === 0) return null;
+    }
 
     const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
-    const transitionNames = transitions.map(t => t.name);
 
     // Only include messages from THIS stage to avoid cross-stage confusion
     const stageContext = this.state.conversationContext
@@ -889,21 +904,22 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
 
       if (!answer || answer.toUpperCase() === 'NONE') return null;
 
-      const matched = transitions.find(
-        t => t.name.toLowerCase() === answer.toLowerCase()
+      // Validate against connected transition names only
+      const matched = transitionNames.find(
+        name => name.toLowerCase() === answer.toLowerCase()
       );
 
       // SAFEGUARD: If the proactive check wants the FIRST transition (happy path / completion),
       // verify it's reasonable. The first transition means ALL steps are done.
       // If only a few Q&A pairs exist, the stage is likely NOT complete — block it.
-      if (matched && matched.name === transitions[0].name) {
+      if (matched && matched === transitionNames[0]) {
         // Count how many questions are in the stage instructions (rough estimate)
         const instructionQuestionCount = (stageMessage.match(/\?/g) || []).length;
         // If the instructions have many questions but only a few were asked, block the happy path
         if (instructionQuestionCount > 3 && qaSummary.length < instructionQuestionCount - 2) {
           logger.warn('WorkflowEngine: Proactive check blocked — not enough Q&A for happy path', {
             nodeLabel: node.data?.label,
-            transition: matched.name,
+            transition: matched,
             qaCount: qaSummary.length,
             instructionQuestionCount,
           });
@@ -914,7 +930,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
       if (matched) {
         logger.info('WorkflowEngine: Proactive check result — stage complete', {
           nodeLabel: node.data?.label,
-          transition: matched.name,
+          transition: matched,
           contextEntries: stageContext.length,
           userMessage: userMessage.substring(0, 50),
           checkMs: this.lastTiming.proactiveCheckMs,
@@ -927,7 +943,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         });
       }
 
-      return matched ? matched.name : null;
+      return matched || null;
     } catch (error) {
       this.lastTiming.proactiveCheckMs = Date.now() - (this._processStartMs || Date.now());
       logger.error('WorkflowEngine: Stage completion check failed', { error });
@@ -1182,7 +1198,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     if (effectiveComplete && connectedTransitionNames.length > 0) {
       // AI signaled [NEXT] — determine WHICH transition to take
       shouldAdvance = true;
-      transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+      transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
       if (!transition) transition = connectedTransitionNames[0];
 
       const targetId = this.getDialogueNextNodeId(dialogueNode, transition);
@@ -1198,7 +1214,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     } else if (maxTurnsReached) {
       shouldAdvance = true;
       if (connectedTransitionNames.length > 0) {
-        transition = await this.analyzeTransition(dialogueNode, text, userMessage);
+        transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
         if (!transition) transition = connectedTransitionNames[0];
       }
       messages.push({ type: 'system', text: `Max turns (${maxTurns}) reached` });
