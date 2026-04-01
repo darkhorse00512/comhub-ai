@@ -1503,9 +1503,26 @@ function deleteSessionFromDisk(sessionId: string): void {
   } catch {}
 }
 
-/** Look up a session: try in-memory first, then fall back to disk */
+/**
+ * Look up a session — always prefer disk state in cluster mode.
+ *
+ * PM2 cluster mode runs multiple worker processes, each with its own
+ * in-memory workflowSessions Map. When requests round-robin across workers,
+ * a worker's in-memory session may be STALE (another worker processed the
+ * last message and persisted updated state to disk). Always loading from
+ * disk ensures we get the latest state regardless of which worker handles
+ * the request.
+ */
 function getSession(sessionId: string): WorkflowSession | null {
-  return workflowSessions.get(sessionId) || loadSessionFromDisk(sessionId);
+  // Always try disk first — it has the latest state across all cluster workers
+  const diskSession = loadSessionFromDisk(sessionId);
+  if (diskSession) {
+    // Replace stale in-memory session with fresh disk state
+    workflowSessions.set(sessionId, diskSession);
+    return diskSession;
+  }
+  // Fall back to in-memory (e.g., session just created, not yet persisted)
+  return workflowSessions.get(sessionId) || null;
 }
 
 // Cleanup stale sessions older than 30 minutes (both in-memory and disk)
