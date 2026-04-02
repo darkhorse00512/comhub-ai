@@ -50,14 +50,16 @@ async function startServer(): Promise<void> {
       }
 
       // Connect to ElevenLabs with API key header
-      // Tuned VAD settings for responsive conversation
+      // Balanced VAD settings — fast enough for good UX, but won't cut off mid-sentence.
+      // The client-side amplitude VAD (1s silence) is the primary finalization signal.
+      // ElevenLabs VAD commits chunks which the client accumulates.
       const elParams = new URLSearchParams({
         model_id: 'scribe_v2_realtime',
         audio_format: 'pcm_16000',
         commit_strategy: 'vad',
         language_code: lang,
-        vad_silence_threshold_secs: '0.5',  // 0.5s silence = speech ended (fast response)
-        min_silence_duration_ms: '200',     // 200ms minimum silence to count as pause
+        vad_silence_threshold_secs: '1.0',  // 1s silence = commit chunk (not finalize — client decides when done)
+        min_silence_duration_ms: '300',     // 300ms minimum silence to count as pause
         min_speech_duration_ms: '100',      // 100ms minimum speech to count as utterance
       });
       const elUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${elParams}`;

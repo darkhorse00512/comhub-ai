@@ -839,13 +839,17 @@ const TestAgentModal = ({
 
       // --- Client-side amplitude VAD ---
       // Tracks RMS energy of mic audio to detect when user truly stops speaking.
-      // If amplitude drops below threshold for vadSilenceDurationMs after speech
-      // was detected, finalize immediately — don't wait for ElevenLabs commit timer.
-      const VAD_SPEECH_THRESHOLD = 0.015;   // RMS above this = speech
-      const VAD_SILENCE_DURATION_MS = 600;   // 600ms of silence after speech = done
+      // The amplitude VAD is the PRIMARY finalization signal. Transcript timers
+      // are FALLBACKS only — they use longer timeouts so they don't cut off speech.
+      //
+      // Flow: user speaks → partials arrive → user pauses between words (timers reset)
+      //   → user finishes → amplitude drops for 1s → VAD finalizes
+      //   → OR: no new transcript for 1.5s → timer finalizes (fallback)
+      const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech (sensitive)
+      const VAD_SILENCE_DURATION_MS = 1000;  // 1s of amplitude silence after speech = done
       const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
-      const PARTIAL_TIMEOUT_MS = 700;        // 700ms without new partial = done
-      const COMMIT_WAIT_MS = 300;            // 300ms after committed chunk for more chunks
+      const PARTIAL_TIMEOUT_MS = 1500;       // 1.5s without new partial = done (fallback)
+      const COMMIT_WAIT_MS = 1200;           // 1.2s after last committed chunk (fallback)
 
       let vadSpeechActive = false;
       let vadSilenceStartMs = 0;
@@ -942,9 +946,11 @@ const TestAgentModal = ({
             currentPartial = msg.text || "";
             if (currentPartial.trim()) {
               updateLiveTranscript(currentPartial);
-              // User IS speaking — cancel idle timer and VAD finalize
+              // User IS speaking — cancel ALL finalization signals
               resetIdleTimer();
               if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+              vadSpeechActive = true;   // Mark speech active from transcript
+              vadSilenceStartMs = 0;    // Reset silence counter
 
               // Start max utterance safety timer on first speech
               if (!maxUtteranceTimer) {
@@ -956,7 +962,7 @@ const TestAgentModal = ({
               }
             }
 
-            // Reset commit timer — user is still speaking
+            // Reset fallback timer — user is still speaking
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             if (currentPartial.trim()) {
               partialCommitTimer = setTimeout(() => {
@@ -968,8 +974,12 @@ const TestAgentModal = ({
           } else if (msg.message_type === "committed_transcript") {
             // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            // User spoke — cancel idle timer
+            // User spoke — cancel ALL finalization signals, reset VAD
             resetIdleTimer();
+            if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+            vadSpeechActive = true;
+            vadSilenceStartMs = 0;
+
             const chunk = (msg.text || "").trim();
             if (chunk) {
               fullTranscript = (fullTranscript + " " + chunk).trim();
@@ -977,23 +987,23 @@ const TestAgentModal = ({
               console.log(`[STT] Chunk committed: "${chunk}" | Full: "${fullTranscript}"`);
               updateLiveTranscript("");
 
-              // Short wait for more committed chunks (they arrive in bursts)
+              // Fallback timer — VAD will usually finalize before this
               partialCommitTimer = setTimeout(() => {
                 finalizeTranscript(fullTranscript);
               }, COMMIT_WAIT_MS);
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
-            // ElevenLabs VAD detected speech ended — finalize immediately
+            // ElevenLabs VAD detected speech ended — finalize after short grace period
             console.log("[STT] ElevenLabs end_of_speech detected");
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             const final = (fullTranscript + " " + currentPartial).trim();
             if (final) {
-              // Tiny delay to catch any final committed_transcript that arrives right after
+              // Short delay to catch any final committed_transcript
               partialCommitTimer = setTimeout(() => {
                 const latestFinal = (fullTranscript + " " + currentPartial).trim();
                 finalizeTranscript(latestFinal || final);
-              }, 150);
+              }, 300);
             }
 
           } else if (msg.message_type === "error") {
