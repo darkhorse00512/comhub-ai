@@ -822,6 +822,22 @@ const TestAgentModal = ({
       let currentPartial = ""; // Current partial (not yet committed)
       let partialCommitTimer: ReturnType<typeof setTimeout> | null = null;
       let liveMessageId: string | null = null; // ID of the live transcript message in chat
+      let maxUtteranceTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // --- Client-side amplitude VAD ---
+      // Tracks RMS energy of mic audio to detect when user truly stops speaking.
+      // If amplitude drops below threshold for vadSilenceDurationMs after speech
+      // was detected, finalize immediately — don't wait for ElevenLabs commit timer.
+      const VAD_SPEECH_THRESHOLD = 0.015;   // RMS above this = speech
+      const VAD_SILENCE_DURATION_MS = 600;   // 600ms of silence after speech = done
+      const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
+      const PARTIAL_TIMEOUT_MS = 700;        // 700ms without new partial = done
+      const COMMIT_WAIT_MS = 300;            // 300ms after committed chunk for more chunks
+
+      let vadSpeechActive = false;
+      let vadSilenceStartMs = 0;
+      let vadFinalizeScheduled = false;
+      let vadFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
 
       // Start the idle timer only after speaking stops (not when WebSocket opens)
       const startIdleTimer = () => {
@@ -864,6 +880,8 @@ const TestAgentModal = ({
         if (isProcessing || !text.trim()) return;
         isProcessing = true;
         if (partialCommitTimer) clearTimeout(partialCommitTimer);
+        if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
+        if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
 
         const finalText = text.trim();
         const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
@@ -911,18 +929,27 @@ const TestAgentModal = ({
             currentPartial = msg.text || "";
             if (currentPartial.trim()) {
               updateLiveTranscript(currentPartial);
-              // User IS speaking — cancel idle timer
+              // User IS speaking — cancel idle timer and VAD finalize
               resetIdleTimer();
+              if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+
+              // Start max utterance safety timer on first speech
+              if (!maxUtteranceTimer) {
+                maxUtteranceTimer = setTimeout(() => {
+                  console.log("[STT] Max utterance timeout — force finalizing");
+                  const final = (fullTranscript + " " + currentPartial).trim();
+                  if (final) finalizeTranscript(final);
+                }, MAX_UTTERANCE_MS);
+              }
             }
 
             // Reset commit timer — user is still speaking
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             if (currentPartial.trim()) {
-              // 1.2s without new partial = user stopped speaking
               partialCommitTimer = setTimeout(() => {
                 const final = (fullTranscript + " " + currentPartial).trim();
                 finalizeTranscript(final);
-              }, 1200);
+              }, PARTIAL_TIMEOUT_MS);
             }
 
           } else if (msg.message_type === "committed_transcript") {
@@ -937,10 +964,23 @@ const TestAgentModal = ({
               console.log(`[STT] Chunk committed: "${chunk}" | Full: "${fullTranscript}"`);
               updateLiveTranscript("");
 
-              // Wait 1.2s for more chunks, then finalize
+              // Short wait for more committed chunks (they arrive in bursts)
               partialCommitTimer = setTimeout(() => {
                 finalizeTranscript(fullTranscript);
-              }, 1200);
+              }, COMMIT_WAIT_MS);
+            }
+
+          } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
+            // ElevenLabs VAD detected speech ended — finalize immediately
+            console.log("[STT] ElevenLabs end_of_speech detected");
+            if (partialCommitTimer) clearTimeout(partialCommitTimer);
+            const final = (fullTranscript + " " + currentPartial).trim();
+            if (final) {
+              // Tiny delay to catch any final committed_transcript that arrives right after
+              partialCommitTimer = setTimeout(() => {
+                const latestFinal = (fullTranscript + " " + currentPartial).trim();
+                finalizeTranscript(latestFinal || final);
+              }, 150);
             }
 
           } else if (msg.message_type === "error") {
@@ -959,6 +999,8 @@ const TestAgentModal = ({
 
       ws.onclose = (event) => {
         console.log("[STT] WebSocket closed, code:", event.code, "reason:", event.reason);
+        if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
+        if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
         if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
           const cs = callSettingsRef.current;
           idleCountRef.current++;
@@ -985,11 +1027,14 @@ const TestAgentModal = ({
       };
 
       // 4. Send audio chunks as PCM Int16 via WebSocket
+      // Also performs client-side amplitude VAD to detect speech end faster.
       let idleTimerStarted = false;
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         if (isSpeakingRef.current) {
           idleTimerStarted = false; // Reset — will start when speaking stops
+          vadSpeechActive = false;
+          vadSilenceStartMs = 0;
           return; // Don't send agent audio
         }
         // Start idle timer the first time we're NOT speaking (agent finished)
@@ -999,6 +1044,43 @@ const TestAgentModal = ({
         }
 
         const pcmFloat = e.inputBuffer.getChannelData(0);
+
+        // --- Amplitude VAD: compute RMS energy ---
+        let sumSquares = 0;
+        for (let i = 0; i < pcmFloat.length; i++) {
+          sumSquares += pcmFloat[i] * pcmFloat[i];
+        }
+        const rms = Math.sqrt(sumSquares / pcmFloat.length);
+
+        if (rms > VAD_SPEECH_THRESHOLD) {
+          // Audio above threshold — user is speaking
+          vadSpeechActive = true;
+          vadSilenceStartMs = 0;
+          // Cancel any pending VAD finalize
+          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+        } else if (vadSpeechActive && vadSilenceStartMs === 0) {
+          // First silent frame after speech — start silence timer
+          vadSilenceStartMs = Date.now();
+        }
+
+        // Check if silence has lasted long enough after speech to finalize
+        if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
+          const silenceDuration = Date.now() - vadSilenceStartMs;
+          if (silenceDuration >= VAD_SILENCE_DURATION_MS) {
+            // User stopped speaking (amplitude confirms) — schedule finalize
+            // Only finalize if we have transcript text to send
+            const pendingText = (fullTranscript + " " + currentPartial).trim();
+            if (pendingText && !isProcessing) {
+              vadFinalizeScheduled = true;
+              console.log(`[STT] VAD: silence ${silenceDuration}ms after speech — finalizing`);
+              vadFinalizeTimer = setTimeout(() => {
+                const final = (fullTranscript + " " + currentPartial).trim();
+                if (final) finalizeTranscript(final);
+              }, 100); // Tiny delay to catch any last transcript
+            }
+          }
+        }
+
         // Convert Float32 [-1,1] to Int16 PCM
         const pcm16 = new Int16Array(pcmFloat.length);
         for (let i = 0; i < pcmFloat.length; i++) {
@@ -1021,10 +1103,6 @@ const TestAgentModal = ({
 
       source.connect(processor);
       processor.connect(audioContext.destination);
-
-      // 5. Idle timeout — NOT started here.
-      // It's started by onaudioprocess when isSpeaking becomes false,
-      // ensuring the idle timer only counts silence AFTER the agent finishes speaking.
 
     } catch (error) {
       console.error("[STT] Failed to start:", error);
