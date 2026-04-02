@@ -225,7 +225,7 @@ const TestAgentModal = ({
   const nextPlayIndexRef = useRef(0);
   const isPlayingQueueRef = useRef(false);
   const expectedCountRef = useRef(0);
-  const outputAndSpeakRef = useRef<(text: string, nodeLabel?: string, blob?: Blob | null) => Promise<void>>(async () => {});
+  const outputAndSpeakRef = useRef<(text: string, nodeLabel?: string, blob?: Blob | null, isLastMessage?: boolean) => Promise<void>>(async () => {});
 
   const playAudioQueue = useCallback(async () => {
     if (isPlayingQueueRef.current) return;
@@ -247,7 +247,10 @@ const TestAgentModal = ({
           blob = new Blob([bytes], { type: "audio/mpeg" });
         } catch { /* fallback to no blob */ }
       }
-      await outputAndSpeakRef.current(msg.text, msg.nodeLabel, blob);
+      // Check if this is the last message in the queue (no more buffered)
+      const isLast = !audioBufferRef.current.has(nextPlayIndexRef.current) &&
+                     nextPlayIndexRef.current >= expectedCountRef.current;
+      await outputAndSpeakRef.current(msg.text, msg.nodeLabel, blob, isLast);
     }
 
     isPlayingQueueRef.current = false;
@@ -494,7 +497,7 @@ const TestAgentModal = ({
   }, [voiceConfig?.language]);
 
   // Play audio from a Blob (non-streaming fallback)
-  const playBlobAudio = useCallback((blob: Blob, onStart?: () => void): Promise<void> => {
+  const playBlobAudio = useCallback((blob: Blob, onStart?: () => void, isLastMessage?: boolean): Promise<void> => {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -510,10 +513,18 @@ const TestAgentModal = ({
       // Safety timeout: never hang more than 30s per audio clip
       const safetyTimer = setTimeout(done, 30000);
       let earlyRecordingTriggered = false;
-      audio.onplay = () => onStart?.();
-      // Start STT WebSocket 1.5s before audio ends — gives time to connect
-      // so it's fully ready the moment audio finishes
+      audio.onplay = () => {
+        onStart?.();
+        // For the last message, start STT immediately on play start.
+        // The mic + WebSocket connect while audio is playing, so STT is
+        // ready the instant audio finishes — zero gap.
+        if (isLastMessage && !earlyRecordingTriggered) {
+          earlyRecordingTriggered = true;
+          startAutoRecordingRef.current();
+        }
+      };
       audio.ontimeupdate = () => {
+        // Fallback: if not last message, still start 1.5s before end
         if (!earlyRecordingTriggered && audio.duration && isFinite(audio.duration)) {
           const remaining = audio.duration - audio.currentTime;
           if (remaining <= 1.5 && remaining > 0) {
@@ -561,7 +572,7 @@ const TestAgentModal = ({
   }, [voiceConfig?.ttsProvider, agentId, apiBaseUrl]);
 
   // Play a pre-fetched TTS blob (skips the TTS API call)
-  const speakPrefetchedBlob = useCallback(async (blob: Blob, onAudioStart?: () => void): Promise<void> => {
+  const speakPrefetchedBlob = useCallback(async (blob: Blob, onAudioStart?: () => void, isLastMessage?: boolean): Promise<void> => {
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch {}
       recognitionRef.current = null;
@@ -579,7 +590,7 @@ const TestAgentModal = ({
     };
 
     try {
-      await playBlobAudio(blob, fireStart);
+      await playBlobAudio(blob, fireStart, isLastMessage);
       fireStart();
     } catch {
       fireStart();
@@ -670,8 +681,10 @@ const TestAgentModal = ({
   // Output a message and optionally speak it (audio mode)
   // In audio mode: text appears only when audio starts playing
   // If a pre-fetched TTS blob is provided, plays it directly (no TTS API call).
+  // isLastMessage: when true, STT starts immediately when audio begins playing
+  // so the mic is ready the instant audio finishes (zero gap).
   const outputAndSpeak = useCallback(
-    async (text: string, nodeLabel?: string, prefetchedBlob?: Blob | null) => {
+    async (text: string, nodeLabel?: string, prefetchedBlob?: Blob | null, isLastMessage?: boolean) => {
       const msgId = crypto.randomUUID();
       const msg: Message = {
         id: msgId,
@@ -692,7 +705,7 @@ const TestAgentModal = ({
         setSpeakingMessageId(msgId);
         if (prefetchedBlob) {
           // Play pre-fetched audio — no TTS generation delay
-          await speakPrefetchedBlob(prefetchedBlob, showMessage);
+          await speakPrefetchedBlob(prefetchedBlob, showMessage, isLastMessage);
         } else {
           // Live TTS generation + playback
           await speakText(text, showMessage);
@@ -1028,59 +1041,66 @@ const TestAgentModal = ({
 
       // 4. Send audio chunks as PCM Int16 via WebSocket
       // Also performs client-side amplitude VAD to detect speech end faster.
+      // Barge-in support: audio is ALWAYS sent to ElevenLabs, even while agent
+      // is speaking. The browser's echo cancellation removes agent audio from
+      // the mic feed, so ElevenLabs only hears the user. If user speaks during
+      // agent playback, the transcript captures it. VAD only runs when agent
+      // is NOT speaking (to avoid false triggers from residual echo).
       let idleTimerStarted = false;
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        if (isSpeakingRef.current) {
-          idleTimerStarted = false; // Reset — will start when speaking stops
+
+        const pcmFloat = e.inputBuffer.getChannelData(0);
+        const isSpeaking = isSpeakingRef.current;
+
+        if (isSpeaking) {
+          idleTimerStarted = false;
+          // Reset VAD state while speaking — don't detect silence from echo
           vadSpeechActive = false;
           vadSilenceStartMs = 0;
-          return; // Don't send agent audio
+          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
         }
-        // Start idle timer the first time we're NOT speaking (agent finished)
-        if (!idleTimerStarted) {
+
+        // Start idle timer the first time agent is NOT speaking
+        if (!isSpeaking && !idleTimerStarted) {
           idleTimerStarted = true;
           startIdleTimer();
         }
 
-        const pcmFloat = e.inputBuffer.getChannelData(0);
+        // --- Amplitude VAD (only when agent is NOT speaking) ---
+        if (!isSpeaking) {
+          let sumSquares = 0;
+          for (let i = 0; i < pcmFloat.length; i++) {
+            sumSquares += pcmFloat[i] * pcmFloat[i];
+          }
+          const rms = Math.sqrt(sumSquares / pcmFloat.length);
 
-        // --- Amplitude VAD: compute RMS energy ---
-        let sumSquares = 0;
-        for (let i = 0; i < pcmFloat.length; i++) {
-          sumSquares += pcmFloat[i] * pcmFloat[i];
-        }
-        const rms = Math.sqrt(sumSquares / pcmFloat.length);
+          if (rms > VAD_SPEECH_THRESHOLD) {
+            vadSpeechActive = true;
+            vadSilenceStartMs = 0;
+            if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+          } else if (vadSpeechActive && vadSilenceStartMs === 0) {
+            vadSilenceStartMs = Date.now();
+          }
 
-        if (rms > VAD_SPEECH_THRESHOLD) {
-          // Audio above threshold — user is speaking
-          vadSpeechActive = true;
-          vadSilenceStartMs = 0;
-          // Cancel any pending VAD finalize
-          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-        } else if (vadSpeechActive && vadSilenceStartMs === 0) {
-          // First silent frame after speech — start silence timer
-          vadSilenceStartMs = Date.now();
-        }
-
-        // Check if silence has lasted long enough after speech to finalize
-        if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
-          const silenceDuration = Date.now() - vadSilenceStartMs;
-          if (silenceDuration >= VAD_SILENCE_DURATION_MS) {
-            // User stopped speaking (amplitude confirms) — schedule finalize
-            // Only finalize if we have transcript text to send
-            const pendingText = (fullTranscript + " " + currentPartial).trim();
-            if (pendingText && !isProcessing) {
-              vadFinalizeScheduled = true;
-              console.log(`[STT] VAD: silence ${silenceDuration}ms after speech — finalizing`);
-              vadFinalizeTimer = setTimeout(() => {
-                const final = (fullTranscript + " " + currentPartial).trim();
-                if (final) finalizeTranscript(final);
-              }, 100); // Tiny delay to catch any last transcript
+          if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
+            const silenceDuration = Date.now() - vadSilenceStartMs;
+            if (silenceDuration >= VAD_SILENCE_DURATION_MS) {
+              const pendingText = (fullTranscript + " " + currentPartial).trim();
+              if (pendingText && !isProcessing) {
+                vadFinalizeScheduled = true;
+                console.log(`[STT] VAD: silence ${silenceDuration}ms after speech — finalizing`);
+                vadFinalizeTimer = setTimeout(() => {
+                  const final = (fullTranscript + " " + currentPartial).trim();
+                  if (final) finalizeTranscript(final);
+                }, 100);
+              }
             }
           }
         }
 
+        // ALWAYS send audio to ElevenLabs — echo cancellation handles agent audio.
+        // This enables barge-in: user speech during agent playback is captured.
         // Convert Float32 [-1,1] to Int16 PCM
         const pcm16 = new Int16Array(pcmFloat.length);
         for (let i = 0; i < pcmFloat.length; i++) {
@@ -1262,9 +1282,10 @@ const TestAgentModal = ({
         if (msg.type === "scripted" || msg.type === "ai") {
           const blob = audioBlobs[speakableIdx] ?? null;
           speakableIdx++;
-          await outputAndSpeak(msg.text, msg.nodeLabel, blob);
+          const isLast = speakableIdx >= speakableMessages.length;
+          await outputAndSpeak(msg.text, msg.nodeLabel, blob, isLast);
           // Tiny pause between sentences for natural breath rhythm
-          if (speakableIdx < speakableMessages.length) {
+          if (!isLast) {
             await new Promise((r) => setTimeout(r, 80));
           }
         } else if (msg.type === "system") {
