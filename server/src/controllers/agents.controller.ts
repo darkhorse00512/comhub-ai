@@ -1889,18 +1889,22 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       messages: messagesWithAudio,
       collectedFields: session.engine.getFields(),
       timing: {
-        aiProcessingMs,
-        ttsStartMs: ttsDoneMs,  // backwards compat (old field name)
-        ttsMs: ttsDoneMs,       // backwards compat
-        // Detailed breakdown
-        promptReadyAt: engineTiming.promptReadyAt,
+        // Pipeline steps (offsets from request received):
+        // Step 3: llm_request_sent
         llmRequestSentAt: engineTiming.llmRequestSentAt,
-        llmDoneAt: engineTiming.llmDoneAt,
-        llmLatencyMs: engineTiming.llmDoneAt - engineTiming.llmRequestSentAt,
-        llmFirstTokenMs: engineTiming.llmDoneAt - engineTiming.llmRequestSentAt, // non-streaming: same as total
-        proactiveCheckMs: engineTiming.proactiveCheckMs,
-        ttsFirstAudioMs,
-        ttsDoneMs,
+        // Step 4: llm_first_token_received
+        llmFirstTokenAt: engineTiming.llmFirstTokenAt,
+        // Step 5: llm_full_response_received
+        llmFullResponseAt: engineTiming.llmFullResponseAt,
+        // Step 6: tts_request_sent (= llmFullResponseAt, TTS starts right after LLM)
+        ttsRequestSentAt: engineTiming.llmFullResponseAt,
+        // Step 7: tts_first_audio_byte_received
+        ttsFirstAudioAt: ttsFirstAudioMs > 0 ? engineTiming.llmFullResponseAt + ttsFirstAudioMs : 0,
+        // tts_all_audio_ready (all sentences done)
+        ttsAllAudioAt: engineTiming.llmFullResponseAt + ttsDoneMs,
+        // Total server processing
+        serverTotalMs: aiProcessingMs + ttsDoneMs,
+        // Metadata
         ttsProvider: agentVoiceService.lastTTSProvider,
         ttsError: agentVoiceService.lastTTSError,
       },

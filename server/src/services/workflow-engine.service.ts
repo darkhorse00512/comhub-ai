@@ -199,14 +199,28 @@ function parseAIResponse(response: string, validTransitionNames?: string[]): Par
  * - Interactive nodes (dialogue) pause and wait for user input.
  * - conversationContext persists across ALL nodes so the AI always knows what happened before.
  */
+/**
+ * Detailed pipeline timing — each field is offset (ms) from processMessage start.
+ * Maps to the 9-step voice call pipeline:
+ *   1. user_speech_end_detected  — client-side (not in this struct)
+ *   2. stt_final_received        — client-side (not in this struct)
+ *   3. llm_request_sent          — when the LLM API call was dispatched
+ *   4. llm_first_token_received  — when the first token arrived (streaming) or response completed (non-streaming)
+ *   5. llm_full_response_received — when the full LLM response was available
+ *   6. tts_request_sent          — controller-side (not in this struct)
+ *   7. tts_first_audio_byte_received — controller-side (not in this struct)
+ *   8. audio_playback_started    — client-side (not in this struct)
+ *   9. audio_playback_finished   — client-side (not in this struct)
+ */
 export interface EngineTiming {
-  /** Offset (ms) from processMessage start when the prompt/history was assembled */
-  promptReadyAt: number;
-  /** Offset (ms) from processMessage start when the LLM API call was sent */
+  /** Step 3: offset (ms) when LLM API call was sent */
   llmRequestSentAt: number;
-  /** Offset (ms) from processMessage start when the LLM API call returned */
-  llmDoneAt: number;
-  /** Duration (ms) of the proactive stage completion check (runs in parallel) */
+  /** Step 4: offset (ms) when first LLM token arrived */
+  llmFirstTokenAt: number;
+  /** Step 5: offset (ms) when full LLM response was available */
+  llmFullResponseAt: number;
+  /** Legacy compat */
+  promptReadyAt: number;
   proactiveCheckMs: number;
 }
 
@@ -218,7 +232,7 @@ export class WorkflowEngine {
   /** Reference timestamp for per-turn timing measurements */
   private _processStartMs = 0;
   /** Timing data from the last processMessage call */
-  public lastTiming: EngineTiming = { promptReadyAt: 0, llmRequestSentAt: 0, llmDoneAt: 0, proactiveCheckMs: 0 };
+  public lastTiming: EngineTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
   /**
    * Optional callback to fetch full call message history from the database.
    * Set by VoiceConversationService to ensure end_call analysis gets ALL messages.
@@ -698,7 +712,7 @@ RULES:
       // Resolve model: per-node override > agent-level > server default
       const model = this.resolveDialogueModel();
 
-      // Track timing: prompt is ready, LLM call about to start
+      // Step 3: llm_request_sent
       this.lastTiming.promptReadyAt = Date.now() - this._processStartMs;
       this.lastTiming.llmRequestSentAt = Date.now() - this._processStartMs;
 
@@ -707,8 +721,10 @@ RULES:
         { maxTokens: 150, temperature: 0.2, model }
       );
 
-      // Track timing: LLM call done (non-streaming, so first_token = done)
-      this.lastTiming.llmDoneAt = Date.now() - this._processStartMs;
+      // Steps 4+5: non-streaming — first token = full response
+      const llmDoneOffset = Date.now() - this._processStartMs;
+      this.lastTiming.llmFirstTokenAt = llmDoneOffset;
+      this.lastTiming.llmFullResponseAt = llmDoneOffset;
 
       return aiResponse.text || null;
     } catch (error) {
@@ -737,16 +753,26 @@ RULES:
 
       const model = this.resolveDialogueModel();
 
+      // Step 3: llm_request_sent
       this.lastTiming.promptReadyAt = Date.now() - this._processStartMs;
       this.lastTiming.llmRequestSentAt = Date.now() - this._processStartMs;
 
+      let firstTokenTracked = false;
       const aiResponse = await gptService.streamWithHistory(
         messages,
-        onSentence,
+        (sentence) => {
+          // Step 4: llm_first_token_received (on first sentence callback)
+          if (!firstTokenTracked) {
+            firstTokenTracked = true;
+            this.lastTiming.llmFirstTokenAt = Date.now() - this._processStartMs;
+          }
+          onSentence(sentence);
+        },
         { maxTokens: 150, temperature: 0.2, model }
       );
 
-      this.lastTiming.llmDoneAt = Date.now() - this._processStartMs;
+      // Step 5: llm_full_response_received
+      this.lastTiming.llmFullResponseAt = Date.now() - this._processStartMs;
 
       return aiResponse.text || null;
     } catch (error) {
@@ -1071,7 +1097,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     const messages: WorkflowMessage[] = [];
     // Reset timing for this turn
     this._processStartMs = Date.now();
-    this.lastTiming = { promptReadyAt: 0, llmRequestSentAt: 0, llmDoneAt: 0, proactiveCheckMs: 0 };
+    this.lastTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
 
     // Comprehensive state log at entry — helps diagnose routing issues
     const currentNode = this.state.currentNodeId ? this.nodes.find(n => n.id === this.state.currentNodeId) : null;

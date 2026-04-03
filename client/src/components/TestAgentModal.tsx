@@ -86,16 +86,14 @@ interface WorkflowCallResult {
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
   timing?: {
-    aiProcessingMs: number;
-    ttsMs?: number;
-    promptReadyAt?: number;
-    llmRequestSentAt?: number;
-    llmDoneAt?: number;
-    llmLatencyMs?: number;
-    llmFirstTokenMs?: number;
-    proactiveCheckMs?: number;
-    ttsFirstAudioMs?: number;
-    ttsDoneMs?: number;
+    // Pipeline steps (offsets from server request received, in ms):
+    llmRequestSentAt?: number;     // Step 3
+    llmFirstTokenAt?: number;      // Step 4
+    llmFullResponseAt?: number;    // Step 5
+    ttsRequestSentAt?: number;     // Step 6
+    ttsFirstAudioAt?: number;      // Step 7
+    ttsAllAudioAt?: number;        // All TTS done
+    serverTotalMs?: number;
     ttsProvider?: string;
     ttsError?: string | null;
   };
@@ -515,9 +513,11 @@ const TestAgentModal = ({
       let earlyRecordingTriggered = false;
       audio.onplay = () => {
         onStart?.();
+        // Step 8: audio_playback_started (first audio of this turn)
+        if (!audioPlaybackStartRef.current) {
+          audioPlaybackStartRef.current = Date.now();
+        }
         // For the last message, start STT immediately on play start.
-        // The mic + WebSocket connect while audio is playing, so STT is
-        // ready the instant audio finishes — zero gap.
         if (isLastMessage && !earlyRecordingTriggered) {
           earlyRecordingTriggered = true;
           startAutoRecordingRef.current();
@@ -533,7 +533,12 @@ const TestAgentModal = ({
           }
         }
       };
-      audio.onended = () => { clearTimeout(safetyTimer); done(); };
+      audio.onended = () => {
+        // Step 9: audio_playback_finished (last audio of this turn)
+        audioPlaybackEndRef.current = Date.now();
+        clearTimeout(safetyTimer);
+        done();
+      };
       audio.onerror = () => { clearTimeout(safetyTimer); done(); };
       audio.play().catch(() => { clearTimeout(safetyTimer); done(); });
     });
@@ -896,6 +901,8 @@ const TestAgentModal = ({
       const finalizeTranscript = async (text: string) => {
         if (isProcessing || !text.trim()) return;
         isProcessing = true;
+        // Step 1: user_speech_end_detected (VAD/silence triggered finalization)
+        userSpeechEndRef.current = Date.now();
         if (partialCommitTimer) clearTimeout(partialCommitTimer);
         if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
         if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
@@ -913,8 +920,8 @@ const TestAgentModal = ({
 
         stopSTT();
         sttEndTimeRef.current = Date.now();
-
-        addMessage("system", `STT: ${fromSpeech}ms`);
+        // Step 2: stt_final_received
+        sttFinalRef.current = Date.now();
 
         if (!isCallActiveRef.current) return;
 
@@ -1333,11 +1340,16 @@ const TestAgentModal = ({
 
   // --- Handle user message (sent to server-side workflow engine) ---
   const isLoadingRef = useRef(false);
-  /** Timestamp (ms) when speech recognition started hearing speech */
+  /** Step 1: user_speech_end_detected — when VAD/silence detected user stopped */
+  const userSpeechEndRef = useRef<number>(0);
+  /** Step 2: stt_final_received — when final transcript was produced */
+  const sttFinalRef = useRef<number>(0);
+  /** Step 8: audio_playback_started — when first audio byte played to speaker */
+  const audioPlaybackStartRef = useRef<number>(0);
+  /** Step 9: audio_playback_finished — when last audio byte finished */
+  const audioPlaybackEndRef = useRef<number>(0);
+  // Legacy refs (still used by STT internals)
   const sttStartTimeRef = useRef<number>(0);
-  /** Timestamp (ms) when user stopped speaking (browser speechend event) */
-  const userEndSpeechRef = useRef<number>(0);
-  /** Timestamp (ms) when STT finished recognizing speech — set in recognition.onend */
   const sttEndTimeRef = useRef<number>(0);
 
   const handleUserMessage = useCallback(
@@ -1396,65 +1408,75 @@ const TestAgentModal = ({
           messageTypes: result.messages?.map((m: any) => `${m.type}:${m.nodeLabel}`),
           currentStage: result.currentStage,
         });
-        // DEBUG: Show every server response status
         addMessage("system", `[DEBUG] msg: isComplete=${result.isComplete}, waitingForInput=${result.waitingForInput}, stage=${result.currentStage}, msgs=${result.messages?.length}`);
-        const ttsStartMs = Date.now();
+
+        // Reset playback timestamps before playing
+        audioPlaybackStartRef.current = 0;
+        audioPlaybackEndRef.current = 0;
+
         await processWorkflowResult(result);
-        const ttsDoneMs = Date.now();
-        const ttsMs = ttsDoneMs - ttsStartMs; // TTS prefetch + playback time
 
         setIsLoading(false);
         isLoadingRef.current = false;
 
-        // Show detailed timing breakdown as system messages
+        // --- 9-Step Pipeline Timing ---
         if (!isSpeechNotRecognized) {
           const t = result.timing;
-          const userEndSpeech = userEndSpeechRef.current || sttDoneAt;
-          const sttStart = sttStartTimeRef.current || 0;
+          const t0 = userSpeechEndRef.current || sttFinalRef.current || sttDoneAt; // baseline: user stopped speaking
 
-          // --- Calculated latencies ---
-          const sttLatency = sttStart > 0 ? sttDoneAt - sttStart : 0;
-          const orchestrationLatency = t?.promptReadyAt ?? 0; // server-side: time from request to prompt ready
-          const llmTTFT = t?.llmFirstTokenMs ?? 0; // non-streaming: same as total
-          const llmTotal = t?.llmLatencyMs ?? (t?.aiProcessingMs ?? 0);
-          const ttsFirstAudio = t?.ttsFirstAudioMs ?? 0;
-          const ttsDone = t?.ttsDoneMs ?? (t?.ttsMs ?? 0);
-          const serverTotalMs = (t?.aiProcessingMs ?? 0) + ttsDone;
-          const netOverhead = Math.max(0, networkMs - serverTotalMs);
-          // End-to-end: from user stops speaking to first audio played
-          const e2eMs = userEndSpeech > 0 ? ttsDoneMs - userEndSpeech : 0;
+          // Client-side steps (absolute timestamps → offsets from t0)
+          const step1 = userSpeechEndRef.current ? userSpeechEndRef.current - t0 : 0;
+          const step2 = sttFinalRef.current ? sttFinalRef.current - t0 : 0;
+          const step8 = audioPlaybackStartRef.current ? audioPlaybackStartRef.current - t0 : 0;
+          const step9 = audioPlaybackEndRef.current ? audioPlaybackEndRef.current - t0 : 0;
 
-          // Line 1: Summary (compact)
-          const summary: string[] = [];
-          if (sttLatency > 0) summary.push(`STT: ${(sttLatency / 1000).toFixed(1)}s`);
-          summary.push(`LLM: ${(llmTotal / 1000).toFixed(1)}s`);
-          if (ttsDone > 0) summary.push(`TTS: ${(ttsDone / 1000).toFixed(1)}s`);
-          summary.push(`Net: ${(netOverhead / 1000).toFixed(1)}s`);
-          summary.push(`Play: ${(ttsMs / 1000).toFixed(1)}s`);
-          summary.push(`Total: ${((ttsDoneMs - sttDoneAt) / 1000).toFixed(1)}s`);
-          addMessage("system", summary.join(" | "));
+          // Server-side steps (offsets from request received → add network one-way ~= networkMs/2)
+          const netOneWay = Math.round(Math.max(0, networkMs - (t?.serverTotalMs ?? 0)) / 2);
+          const serverBase = step2 + netOneWay; // approximate when server received request
+          const step3 = t?.llmRequestSentAt ? serverBase + t.llmRequestSentAt : 0;
+          const step4 = t?.llmFirstTokenAt ? serverBase + t.llmFirstTokenAt : 0;
+          const step5 = t?.llmFullResponseAt ? serverBase + t.llmFullResponseAt : 0;
+          const step6 = t?.ttsRequestSentAt ? serverBase + t.ttsRequestSentAt : 0;
+          const step7 = t?.ttsFirstAudioAt ? serverBase + t.ttsFirstAudioAt : 0;
 
-          // Line 2: Detailed timestamps
-          const details: string[] = [];
-          if (sttLatency > 0) details.push(`STT latency: ${sttLatency}ms`);
-          if (orchestrationLatency > 0) details.push(`Orchestration: ${orchestrationLatency}ms`);
-          if (llmTTFT > 0) details.push(`LLM TTFT: ${llmTTFT}ms`);
-          if (llmTotal > 0) details.push(`LLM total: ${llmTotal}ms`);
-          if (ttsFirstAudio > 0) details.push(`TTS first-audio: ${ttsFirstAudio}ms`);
-          if (ttsDone > 0) details.push(`TTS done: ${ttsDone}ms`);
-          if (t?.proactiveCheckMs) details.push(`Proactive: ${t.proactiveCheckMs}ms`);
-          if (e2eMs > 0) details.push(`E2E: ${e2eMs}ms`);
-          if (details.length > 0) {
-            addMessage("system", details.join(" | "));
+          // Display as pipeline with delta between each step
+          const steps = [
+            { name: "speech_end", ms: step1 },
+            { name: "stt_final", ms: step2 },
+            { name: "llm_req", ms: step3 },
+            { name: "llm_1st_tok", ms: step4 },
+            { name: "llm_done", ms: step5 },
+            { name: "tts_req", ms: step6 },
+            { name: "tts_1st_byte", ms: step7 },
+            { name: "play_start", ms: step8 },
+            { name: "play_end", ms: step9 },
+          ];
+
+          // Line 1: step deltas (time between each step)
+          const deltas: string[] = [];
+          for (let i = 1; i < steps.length; i++) {
+            if (steps[i].ms > 0 && steps[i - 1].ms >= 0) {
+              const delta = steps[i].ms - steps[i - 1].ms;
+              deltas.push(`${steps[i].name}:+${delta}ms`);
+            }
           }
-          // Show TTS provider warning if fallback was used
+          addMessage("system", `⏱ ${deltas.join(" → ")}`);
+
+          // Line 2: key summary
+          const e2e = step9 > 0 ? step9 : 0;
+          const ttfb = step8 > 0 ? step8 : 0; // time to first audio byte from user speech end
+          addMessage("system", `TTFB: ${ttfb}ms | E2E: ${e2e}ms | Net: ${netOneWay}ms×2`);
+
           if (t?.ttsError) {
             addMessage("system", `⚠️ TTS Error: ${t.ttsError} (used ${t.ttsProvider || 'openai'} fallback)`);
           }
         }
 
-        // Start recording for next user input
-        addMessage("system", `[DEBUG] after msg play: isCallActive=${isCallActiveRef.current}, isSpeaking=${isSpeakingRef.current}, isComplete=${result.isComplete}`);
+        // Reset timing refs for next turn
+        userSpeechEndRef.current = 0;
+        sttFinalRef.current = 0;
+        audioPlaybackStartRef.current = 0;
+        audioPlaybackEndRef.current = 0;
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
           if (result.isComplete) {
             addMessage("system", "Workflow complete — ending call");
