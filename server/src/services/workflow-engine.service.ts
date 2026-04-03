@@ -1356,21 +1356,23 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     }
 
     if (shouldAdvance) {
-      const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
-
-      if (!nextNodeId) {
-        // Transition not connected — stay in dialogue
-        logger.warn('WorkflowEngine: Transition not connected', { transition, nodeLabel });
-        messages.push({ type: 'system', text: `⚠️ "${transition}" not connected — staying` });
-        return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
+      // If transition is already known (single transition), validate it now
+      if (transition) {
+        const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition);
+        if (!nextNodeId) {
+          logger.warn('WorkflowEngine: Transition not connected', { transition, nodeLabel });
+          messages.push({ type: 'system', text: `⚠️ "${transition}" not connected — staying` });
+          return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
+        }
       }
+      // If transition is null (multiple transitions), analyzeTransition runs in phase 2
 
       // Save transition intent — return dialogue response immediately.
       // The controller will call executePendingTransition() in the background
       // while the client plays the dialogue response audio.
       this._pendingTransition = { dialogueNode, transition, nodeLabel };
       logger.info('WorkflowEngine: [NEXT] detected — returning dialogue response, transition pending', {
-        nodeLabel, transition, nextNodeId,
+        nodeLabel, transition,
       });
       return { messages, waitingForInput: false, isComplete: false, currentStage: nodeLabel, transitionPending: true };
     }
