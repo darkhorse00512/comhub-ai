@@ -30,6 +30,8 @@ export interface WorkflowStepResult {
   currentStage: string | null;
   transferTo?: string;
   transferType?: string;
+  /** When true, a transition is pending — call executePendingTransition() to continue */
+  transitionPending?: boolean;
 }
 
 /** A single entry in the running conversation log (persists across all nodes) */
@@ -250,6 +252,17 @@ export class WorkflowEngine {
    * The callback receives the speakable messages generated so far.
    */
   public onDialogueResponseReady?: (messages: WorkflowMessage[]) => void;
+
+  /**
+   * Pending transition state — set when processMessage detects [NEXT] but
+   * returns the dialogue response immediately instead of blocking on transition.
+   * Call executePendingTransition() to continue.
+   */
+  private _pendingTransition: {
+    dialogueNode: WorkflowNode;
+    transition: string | null;
+    nodeLabel: string;
+  } | null = null;
 
   /**
    * Optional callback to persist state to disk.
@@ -1297,17 +1310,13 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     }
 
     if (effectiveComplete && connectedTransitionNames.length > 0) {
-      // AI signaled [NEXT] — determine WHICH connected transition to take
+      // AI signaled [NEXT] — return immediately, transition runs in background
       shouldAdvance = true;
-      this.lastTiming.transitionAnalysisStartAt = Date.now() - this._processStartMs;
-      transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
-      this.lastTiming.transitionAnalysisDoneAt = Date.now() - this._processStartMs;
-      if (!transition) transition = connectedTransitionNames[0];
-
-      const targetId = this.getDialogueNextNodeId(dialogueNode, transition);
-      const targetLabel = targetId ? this.nodes.find(n => n.id === targetId)?.data?.label : null;
-      logger.info('WorkflowEngine: [NEXT] → advancing', { nodeLabel, transition, targetLabel });
-      messages.push({ type: 'system', text: `${nodeLabel} → [${transition}] → ${targetLabel || 'next'}` });
+      // Single transition: pre-select it (no LLM needed)
+      if (connectedTransitionNames.length === 1) {
+        transition = connectedTransitionNames[0];
+      }
+      // Multiple transitions: analyzeTransition runs in executePendingTransition()
 
     } else if (effectiveComplete && !hasTransitionsDefined) {
       // [NEXT] and NO transitions defined at all — advance via default "Next" output
@@ -1346,23 +1355,79 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
       }
 
-      logger.info('WorkflowEngine: Advancing', { nodeLabel, transition, nextNodeId });
-
-      // Exit dialogue
-      if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
-      if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
-        this.state.completedDialogueNodeIds.push(dialogueNode.id);
-      }
-      this.state.isInDialogue = false;
-      this.state.currentDialogueNodeId = null;
-      this.state.currentNodeId = nextNodeId;
-      this.persistState();
-
-      return this.executeFromCurrent(messages);
+      // Save transition intent — return dialogue response immediately.
+      // The controller will call executePendingTransition() in the background
+      // while the client plays the dialogue response audio.
+      this._pendingTransition = { dialogueNode, transition, nodeLabel };
+      logger.info('WorkflowEngine: [NEXT] detected — returning dialogue response, transition pending', {
+        nodeLabel, transition, nextNodeId,
+      });
+      return { messages, waitingForInput: false, isComplete: false, currentStage: nodeLabel, transitionPending: true };
     }
 
     // --- Stay in dialogue ---
     return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
+  }
+
+  /**
+   * Execute a pending transition (phase 2).
+   * Called by the controller AFTER sending the dialogue response to the client.
+   * Runs analyzeTransition + executeFromCurrent to produce transition messages.
+   */
+  async executePendingTransition(): Promise<WorkflowStepResult | null> {
+    if (!this._pendingTransition) return null;
+
+    const { dialogueNode, transition: preSelectedTransition, nodeLabel } = this._pendingTransition;
+    this._pendingTransition = null;
+
+    // Reset timing for this phase
+    this._processStartMs = Date.now();
+    this.lastTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, transitionAnalysisStartAt: 0, transitionAnalysisDoneAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
+
+    const messages: WorkflowMessage[] = [];
+    const transitions: Array<{ id: string; name: string }> = dialogueNode.data?.transitions || [];
+    const outEdges = this.edges.filter(e => e.source === dialogueNode.id);
+    const connectedTransitions = transitions.filter(t => {
+      const handleId = t.id || `t-${t.name}`;
+      return outEdges.some(e => e.sourceHandle === handleId);
+    });
+    const connectedTransitionNames = connectedTransitions.map(t => t.name);
+
+    // Determine transition
+    let transition = preSelectedTransition;
+    if (!transition && connectedTransitionNames.length > 0) {
+      this.lastTiming.transitionAnalysisStartAt = Date.now() - this._processStartMs;
+      const lastUserMsg = this.state.conversationContext.filter(e => e.role === 'user').pop()?.text || '';
+      const lastAgentMsg = this.state.conversationContext.filter(e => e.role === 'agent').pop()?.text || '';
+      transition = await this.analyzeTransition(dialogueNode, lastAgentMsg, lastUserMsg, connectedTransitionNames);
+      this.lastTiming.transitionAnalysisDoneAt = Date.now() - this._processStartMs;
+      if (!transition) transition = connectedTransitionNames[0];
+    }
+
+    const nextNodeId = this.getDialogueNextNodeId(dialogueNode, transition || undefined);
+    if (!nextNodeId) {
+      logger.warn('WorkflowEngine: Transition not connected in phase 2', { transition, nodeLabel });
+      messages.push({ type: 'system', text: `⚠️ "${transition}" not connected` });
+      // Re-enter dialogue since transition failed
+      this.state.isInDialogue = true;
+      this.state.currentDialogueNodeId = dialogueNode.id;
+      return { messages, waitingForInput: true, isComplete: false, currentStage: nodeLabel };
+    }
+
+    const targetLabel = this.nodes.find(n => n.id === nextNodeId)?.data?.label;
+    messages.push({ type: 'system', text: `${nodeLabel} → [${transition}] → ${targetLabel || 'next'}` });
+
+    // Exit dialogue and advance
+    if (!this.state.completedDialogueNodeIds) this.state.completedDialogueNodeIds = [];
+    if (!this.state.completedDialogueNodeIds.includes(dialogueNode.id)) {
+      this.state.completedDialogueNodeIds.push(dialogueNode.id);
+    }
+    this.state.isInDialogue = false;
+    this.state.currentDialogueNodeId = null;
+    this.state.currentNodeId = nextNodeId;
+    this.persistState();
+
+    return this.executeFromCurrent(messages);
   }
 
   /**

@@ -1410,6 +1410,10 @@ const workflowSessions = new Map<string, WorkflowSession>();
 // Auto-cleaned after 30 seconds.
 const deferredAudioCache = new Map<string, (string | null)[]>();
 
+// Deferred messages cache — stores transition result messages (phase 2).
+// The client fetches these along with deferred audio.
+const deferredMessagesCache = new Map<string, import('../services/workflow-engine.service').WorkflowStepResult>();
+
 // Per-session lock to prevent concurrent processMessage calls from corrupting state.
 // If two requests arrive for the same session while one is processing, the second is queued.
 const sessionLocks = new Map<string, Promise<void>>();
@@ -1838,23 +1842,9 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     // Clean up callback
     session.engine.onDialogueResponseReady = undefined;
 
-    // Clean up if workflow is complete, otherwise persist updated state
-    if (result.isComplete) {
-      workflowSessions.delete(sessionId);
-      deleteSessionFromDisk(sessionId);
-    } else {
-      persistSession(sessionId, session);
-    }
-
-    // --- Server-side TTS generation ---
-    // Only await TTS for the FIRST speakable message (embedded in response).
-    // Remaining TTS runs in background → cached for deferred fetch by client.
+    // --- Server-side TTS for the immediate response ---
     const ttsStartMs = Date.now();
     let ttsFirstAudioMs = 0;
-    const allSpeakable = result.messages.filter(
-      (m) => m.type === 'ai' || m.type === 'scripted'
-    );
-    const remainingSpeakable = allSpeakable.slice(earlyTTSCtx.msgCount);
 
     // Await ONLY the early TTS (first message — already in-flight, likely done)
     let firstAudio: string | null = null;
@@ -1864,28 +1854,11 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     }
     const ttsDoneMs = Date.now() - ttsStartMs;
 
-    // Remaining early TTS (if dialogue response had multiple sentences) + new node TTS
-    // Fire in background — DO NOT await. Results go to deferred cache.
-    const remainingEarlyPromises = earlyTTSCtx.promises.slice(1);
-    const remainingTTSPromises: Promise<string | null>[] = remainingSpeakable.map(async (msg) => {
-      try {
-        const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
-        return buffer.toString('base64');
-      } catch (err) {
-        logger.warn('Server-side TTS failed for sentence, client will fallback', {
-          text: msg.text.substring(0, 50),
-          error: err instanceof Error ? err.message : err,
-        });
-        return null;
-      }
-    });
-    const allDeferredPromises = [...remainingEarlyPromises, ...remainingTTSPromises];
-
     // Build response with only first audio embedded
     let speakableIdx = 0;
     let deferredAudioKey: string | null = null;
 
-    const messagesWithAudio = result.messages.map((msg) => {
+    const messagesWithAudio = result.messages.map((msg: any) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
         if (speakableIdx === 0) {
           speakableIdx++;
@@ -1897,20 +1870,97 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return msg;
     });
 
-    // Cache deferred audio in background (resolves while client plays first message)
-    if (allDeferredPromises.length > 0) {
+    // --- Handle deferred content (remaining early TTS + transition phase 2) ---
+    // When transitionPending, run the ENTIRE transition + new node in background.
+    // The deferred cache will contain: transition messages + new node messages + their audio.
+    if (result.transitionPending) {
       deferredAudioKey = `${sessionId}-${Date.now()}`;
-      // Store a placeholder immediately so the key exists
-      deferredAudioCache.set(deferredAudioKey, []);
+      deferredAudioCache.set(deferredAudioKey, []); // placeholder
       const capturedKey = deferredAudioKey;
-      // Resolve all deferred TTS in background, then update cache
-      Promise.all(allDeferredPromises).then((audio) => {
-        deferredAudioCache.set(capturedKey, audio);
-        // Auto-cleanup after 30s
-        setTimeout(() => deferredAudioCache.delete(capturedKey), 30000);
-      }).catch(() => {
-        deferredAudioCache.delete(capturedKey);
+      const capturedSession = session;
+
+      // Fire-and-forget: run transition + TTS in background
+      (async () => {
+        try {
+          // Phase 2: execute transition (analyzeTransition + new node opening)
+          const transitionResult = await withSessionLock(sessionId, async () => {
+            return await capturedSession.engine.executePendingTransition();
+          });
+
+          if (!transitionResult) {
+            deferredAudioCache.delete(capturedKey);
+            return;
+          }
+
+          // Persist updated state
+          if (transitionResult.isComplete) {
+            workflowSessions.delete(sessionId);
+            deleteSessionFromDisk(sessionId);
+          } else {
+            persistSession(sessionId, capturedSession);
+          }
+
+          // TTS all speakable messages from transition result
+          const transitionSpeakable = transitionResult.messages.filter(
+            (m: any) => m.type === 'ai' || m.type === 'scripted'
+          );
+          const transitionAudio = await Promise.all(
+            transitionSpeakable.map(async (msg: any) => {
+              try {
+                const buffer = await agentVoiceService.generateTTS(msg.text, capturedSession.voiceSettings ?? null);
+                return buffer.toString('base64');
+              } catch { return null; }
+            })
+          );
+
+          // Store transition result + audio in deferred cache
+          deferredAudioCache.set(capturedKey, transitionAudio);
+
+          // Also store the transition messages so the client can display them
+          deferredMessagesCache.set(capturedKey, transitionResult);
+
+          setTimeout(() => {
+            deferredAudioCache.delete(capturedKey);
+            deferredMessagesCache.delete(capturedKey);
+          }, 30000);
+        } catch (err) {
+          logger.error('Background transition failed', { error: err });
+          deferredAudioCache.delete(capturedKey);
+          deferredMessagesCache.delete(capturedKey);
+        }
+      })();
+    } else {
+      // No transition — handle remaining TTS from current response normally
+      const allSpeakable = result.messages.filter(
+        (m: any) => m.type === 'ai' || m.type === 'scripted'
+      );
+      const remainingSpeakable = allSpeakable.slice(earlyTTSCtx.msgCount);
+      const remainingEarlyPromises = earlyTTSCtx.promises.slice(1);
+      const remainingTTSPromises: Promise<string | null>[] = remainingSpeakable.map(async (msg: any) => {
+        try {
+          const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+          return buffer.toString('base64');
+        } catch { return null; }
       });
+      const allDeferredPromises = [...remainingEarlyPromises, ...remainingTTSPromises];
+
+      if (allDeferredPromises.length > 0) {
+        deferredAudioKey = `${sessionId}-${Date.now()}`;
+        deferredAudioCache.set(deferredAudioKey, []);
+        const capturedKey = deferredAudioKey;
+        Promise.all(allDeferredPromises).then((audio) => {
+          deferredAudioCache.set(capturedKey, audio);
+          setTimeout(() => deferredAudioCache.delete(capturedKey), 30000);
+        }).catch(() => deferredAudioCache.delete(capturedKey));
+      }
+
+      // Clean up / persist
+      if (result.isComplete) {
+        workflowSessions.delete(sessionId);
+        deleteSessionFromDisk(sessionId);
+      } else {
+        persistSession(sessionId, session);
+      }
     }
 
     // Collect engine-level timing (LLM breakdown)
@@ -1926,7 +1976,8 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       ttsDoneMs,
       ttsFirstAudioMs,
       audioEmbedded: firstAudio ? 1 : 0,
-      deferredCount: allDeferredPromises.length,
+      transitionPending: result.transitionPending || false,
+      deferredAudioKey,
       engineTiming,
     });
 
@@ -1993,9 +2044,13 @@ export const getDeferredAudio = async (req: AuthRequest, res: Response): Promise
       if (!deferredAudioCache.has(key)) break;
     }
 
+    // Also get transition messages if available
+    const transitionResult = deferredMessagesCache.get(key) || null;
+
     // Delete after fetch — one-time use
     deferredAudioCache.delete(key);
-    res.status(200).json({ success: true, audio });
+    deferredMessagesCache.delete(key);
+    res.status(200).json({ success: true, audio, transitionResult });
   } catch (error) {
     logger.error('Failed to fetch deferred audio', { error });
     res.status(500).json({ success: false, error: 'Internal error' });

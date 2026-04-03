@@ -84,6 +84,7 @@ interface WorkflowCallResult {
   transferType?: string;
   error?: string;
   deferredAudioKey?: string;
+  transitionPending?: boolean;
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
   timing?: {
@@ -1287,13 +1288,14 @@ const TestAgentModal = ({
         );
       }
 
-      // Fetch deferred audio in background while first message plays.
-      // The server only embeds audio for the first speakable message (fast TTFB).
-      // Remaining audio is cached server-side and fetched here.
+      // Fetch deferred content in background while first message plays.
+      // This includes: remaining audio from current response AND/OR
+      // transition messages + audio from phase 2 (new node opening).
       let deferredAudioBlobs: (Blob | null)[] = [];
-      let deferredAudioPromise: Promise<void> | null = null;
-      if (result.deferredAudioKey && callModeRef.current === "audio") {
-        deferredAudioPromise = (async () => {
+      let deferredTransitionResult: WorkflowCallResult | null = null;
+      let deferredFetchPromise: Promise<void> | null = null;
+      if (result.deferredAudioKey) {
+        deferredFetchPromise = (async () => {
           try {
             const token = localStorage.getItem("backend_token");
             const resp = await fetch(
@@ -1306,6 +1308,9 @@ const TestAgentModal = ({
                 deferredAudioBlobs = (data.audio as (string | null)[]).map(
                   (b64: string | null) => b64 ? base64ToBlob(b64) : null
                 );
+              }
+              if (data.transitionResult) {
+                deferredTransitionResult = data.transitionResult as WorkflowCallResult;
               }
             }
           } catch (err) {
@@ -1332,9 +1337,9 @@ const TestAgentModal = ({
             blob = base64ToBlob(msg.audioBase64);
           } else if (hasServerAudio && !msg.audioBase64) {
             // Deferred message — wait for background fetch if needed
-            if (deferredAudioPromise) {
-              await deferredAudioPromise;
-              deferredAudioPromise = null; // only await once
+            if (deferredFetchPromise) {
+              await deferredFetchPromise;
+              deferredFetchPromise = null; // only await once
             }
             blob = deferredAudioBlobs[deferredIdx] ?? null;
             deferredIdx++;
@@ -1350,6 +1355,49 @@ const TestAgentModal = ({
           }
         } else if (msg.type === "system") {
           addMessage("system", msg.text);
+        }
+      }
+
+      // --- Play transition messages (phase 2) if pending ---
+      if (result.transitionPending && deferredFetchPromise) {
+        await deferredFetchPromise;
+        deferredFetchPromise = null;
+
+        if (deferredTransitionResult) {
+          // Display system messages and play audio from transition result
+          const trSpeakable = deferredTransitionResult.messages.filter(
+            (m: any) => m.type === "ai" || m.type === "scripted"
+          );
+          let trSpeakableIdx = 0;
+          for (const msg of deferredTransitionResult.messages) {
+            if (!isCallActiveRef.current) break;
+            if (msg.type === "scripted" || msg.type === "ai") {
+              const blob = deferredAudioBlobs[trSpeakableIdx] ?? null;
+              trSpeakableIdx++;
+              const isLast = trSpeakableIdx >= trSpeakable.length;
+              await outputAndSpeak(msg.text, msg.nodeLabel, blob, isLast);
+              if (!isLast) await new Promise((r) => setTimeout(r, 80));
+            } else if (msg.type === "system") {
+              addMessage("system", msg.text);
+            }
+          }
+
+          // Update state from transition result
+          if (deferredTransitionResult.collectedFields) {
+            setCollectedFields((prev) => {
+              const merged = { ...prev, ...deferredTransitionResult!.collectedFields };
+              collectedFieldsRef.current = merged;
+              return merged;
+            });
+          }
+          setCurrentWorkflowStep(
+            deferredTransitionResult.currentStage || result.currentStage
+          );
+          setWaitingForInput(deferredTransitionResult.waitingForInput);
+          waitingForInputRef.current = deferredTransitionResult.waitingForInput;
+
+          // Use transition result's completion state
+          result = { ...result, ...deferredTransitionResult, messages: [...result.messages, ...deferredTransitionResult.messages] };
         }
       }
 
