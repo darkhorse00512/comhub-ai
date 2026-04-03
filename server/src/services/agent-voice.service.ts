@@ -119,26 +119,31 @@ class AgentVoiceService {
   public lastTTSProvider: string = 'openai';
   public lastTTSError: string | null = null;
 
-  async generateTTS(text: string, voiceSettings: ResolvedVoiceSettings | null): Promise<Buffer> {
+  async generateTTS(
+    text: string,
+    voiceSettings: ResolvedVoiceSettings | null,
+    onFirstChunk?: (partialBuffer: Buffer) => void,
+  ): Promise<Buffer> {
     this.lastTTSError = null;
 
     if (voiceSettings &&
         (voiceSettings.ttsProvider === 'comhubai' || voiceSettings.ttsProvider === 'elevenlabs') &&
         voiceSettings.elevenlabsApiKey && voiceSettings.elevenlabsVoiceId) {
       try {
-        logger.info('Generating TTS via ElevenLabs', {
+        logger.info('Generating TTS via ElevenLabs (streaming)', {
           provider: voiceSettings.ttsProvider,
           voiceId: voiceSettings.elevenlabsVoiceId,
-          model: voiceSettings.elevenlabsModel,
           textLength: text.length,
         });
-        // Always use eleven_turbo_v2_5 for speed (~0.5s vs ~3s for multilingual_v2).
-        // The turbo model supports all languages and has similar quality.
-        const buffer = await ttsService.elevenlabsTextToSpeech(text, {
-          apiKey: voiceSettings.elevenlabsApiKey,
-          voiceId: voiceSettings.elevenlabsVoiceId,
-          model: 'eleven_turbo_v2_5',
-        });
+        const buffer = await ttsService.elevenlabsTextToSpeechWithEarlyCallback(
+          text,
+          {
+            apiKey: voiceSettings.elevenlabsApiKey,
+            voiceId: voiceSettings.elevenlabsVoiceId,
+            model: 'eleven_turbo_v2_5',
+          },
+          onFirstChunk,
+        );
         this.lastTTSProvider = voiceSettings.ttsProvider;
         return buffer;
       } catch (err) {
@@ -146,10 +151,8 @@ class AgentVoiceService {
         logger.error('ElevenLabs TTS failed, falling back to OpenAI', {
           error: errMsg,
           voiceId: voiceSettings.elevenlabsVoiceId,
-          model: voiceSettings.elevenlabsModel,
         });
         this.lastTTSError = `ElevenLabs failed: ${errMsg}`;
-        // Fall through to OpenAI TTS
       }
     }
 
