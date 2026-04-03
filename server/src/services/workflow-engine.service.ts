@@ -1232,8 +1232,17 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
       connectedTransitions: connectedTransitionNames,
     });
 
-    // --- Generate AI response ---
-    const aiResponse = await this.generateAIResponse();
+    // --- Generate AI response (STREAMING) ---
+    // Stream LLM tokens and fire onDialogueResponseReady on the FIRST sentence
+    // so the controller can start TTS immediately — don't wait for full response.
+    let firstSentenceFired = false;
+    const aiResponse = await this.generateAIResponseStreaming((sentence) => {
+      // Fire TTS callback on first sentence — controller starts TTS in parallel
+      if (!firstSentenceFired && this.onDialogueResponseReady && sentence.trim()) {
+        firstSentenceFired = true;
+        this.onDialogueResponseReady([{ type: 'ai', text: sentence, nodeLabel }]);
+      }
+    });
 
     if (!aiResponse) {
       const fallback = this.getLanguageAwareFallback('error');
@@ -1301,8 +1310,9 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     // Debug: show transition decision context
     messages.push({ type: 'system', text: `[ROUTE] effective=${effectiveComplete}, transitions=${(dialogueNode.data?.transitions || []).length}, connected=${connectedTransitionNames.length}, fallback=${parsed.wantsFallback}` });
 
-    // Fire callback so controller can start TTS on dialogue response BEFORE transition analysis
-    if (this.onDialogueResponseReady) {
+    // Fire callback for remaining sentences if first was already fired during streaming.
+    // If first sentence wasn't fired (e.g., AI response was very short), fire all now.
+    if (this.onDialogueResponseReady && !firstSentenceFired) {
       const speakableSoFar = messages.filter(m => m.type === 'ai' || m.type === 'scripted');
       if (speakableSoFar.length > 0) {
         this.onDialogueResponseReady(speakableSoFar);
@@ -1616,7 +1626,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
             this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, lastCtx.text);
             this.state.dialogueTurnCount++;
 
-            const aiResponse = await this.generateAIResponse();
+            const aiResponse = await this.generateAIResponseStreaming(() => {});
 
             if (aiResponse) {
               const entryParsed = parseAIResponse(aiResponse);
@@ -1679,7 +1689,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
           // Build dialogue history with full call history as proper chat messages
           this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, trigger);
 
-          const openingResponse = await this.generateAIResponse();
+          const openingResponse = await this.generateAIResponseStreaming(() => {});
 
           if (openingResponse) {
             const openingParsed = parseAIResponse(openingResponse);
