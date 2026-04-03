@@ -1847,8 +1847,8 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     }
 
     // --- Server-side TTS generation ---
-    // Early TTS (dialogue response) is already in-flight from the callback.
-    // Now TTS remaining messages (from transition target / next nodes).
+    // Only await TTS for the FIRST speakable message (embedded in response).
+    // Remaining TTS runs in background → cached for deferred fetch by client.
     const ttsStartMs = Date.now();
     let ttsFirstAudioMs = 0;
     const allSpeakable = result.messages.filter(
@@ -1856,7 +1856,17 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     );
     const remainingSpeakable = allSpeakable.slice(earlyTTSCtx.msgCount);
 
-    // TTS remaining messages in parallel
+    // Await ONLY the early TTS (first message — already in-flight, likely done)
+    let firstAudio: string | null = null;
+    if (earlyTTSCtx.promises.length > 0) {
+      firstAudio = await earlyTTSCtx.promises[0];
+      ttsFirstAudioMs = Date.now() - ttsStartMs;
+    }
+    const ttsDoneMs = Date.now() - ttsStartMs;
+
+    // Remaining early TTS (if dialogue response had multiple sentences) + new node TTS
+    // Fire in background — DO NOT await. Results go to deferred cache.
+    const remainingEarlyPromises = earlyTTSCtx.promises.slice(1);
     const remainingTTSPromises: Promise<string | null>[] = remainingSpeakable.map(async (msg) => {
       try {
         const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
@@ -1869,57 +1879,38 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         return null;
       }
     });
+    const allDeferredPromises = [...remainingEarlyPromises, ...remainingTTSPromises];
 
-    // Await early TTS (already in-flight, likely done by now) + remaining TTS
-    let firstAudioTracked = false;
-    const earlyAudio = await Promise.all(earlyTTSCtx.promises.map(async (p: Promise<string | null>) => {
-      const r = await p;
-      if (!firstAudioTracked && r) {
-        ttsFirstAudioMs = Date.now() - ttsStartMs;
-        firstAudioTracked = true;
-      }
-      return r;
-    }));
-    const remainingAudio = await Promise.all(remainingTTSPromises.map(async (p: Promise<string | null>) => {
-      const r = await p;
-      if (!firstAudioTracked && r) {
-        ttsFirstAudioMs = Date.now() - ttsStartMs;
-        firstAudioTracked = true;
-      }
-      return r;
-    }));
-
-    const audioDataArray = [...earlyAudio, ...remainingAudio];
-    const ttsDoneMs = Date.now() - ttsStartMs;
-
-    // Attach audio to speakable messages:
-    // - FIRST speakable message gets audio embedded (small response, fast TTFB)
-    // - Remaining audio is cached and fetched separately by the client
-    let audioIdx = 0;
-    let firstAudioEmbedded = false;
+    // Build response with only first audio embedded
+    let speakableIdx = 0;
     let deferredAudioKey: string | null = null;
-    const deferredAudioList: (string | null)[] = [];
 
     const messagesWithAudio = result.messages.map((msg) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
-        const audio = audioDataArray[audioIdx] || null;
-        audioIdx++;
-        if (!firstAudioEmbedded) {
-          firstAudioEmbedded = true;
-          return { ...msg, audioBase64: audio };
+        if (speakableIdx === 0) {
+          speakableIdx++;
+          return { ...msg, audioBase64: firstAudio };
         }
-        // Defer remaining audio
-        deferredAudioList.push(audio);
+        speakableIdx++;
         return { ...msg, audioBase64: null };
       }
       return msg;
     });
 
-    // Cache deferred audio if any
-    if (deferredAudioList.length > 0 && deferredAudioList.some(Boolean)) {
+    // Cache deferred audio in background (resolves while client plays first message)
+    if (allDeferredPromises.length > 0) {
       deferredAudioKey = `${sessionId}-${Date.now()}`;
-      deferredAudioCache.set(deferredAudioKey, deferredAudioList);
-      setTimeout(() => deferredAudioCache.delete(deferredAudioKey!), 30000);
+      // Store a placeholder immediately so the key exists
+      deferredAudioCache.set(deferredAudioKey, []);
+      const capturedKey = deferredAudioKey;
+      // Resolve all deferred TTS in background, then update cache
+      Promise.all(allDeferredPromises).then((audio) => {
+        deferredAudioCache.set(capturedKey, audio);
+        // Auto-cleanup after 30s
+        setTimeout(() => deferredAudioCache.delete(capturedKey), 30000);
+      }).catch(() => {
+        deferredAudioCache.delete(capturedKey);
+      });
     }
 
     // Collect engine-level timing (LLM breakdown)
@@ -1934,7 +1925,8 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       aiProcessingMs,
       ttsDoneMs,
       ttsFirstAudioMs,
-      audioGenerated: audioDataArray.filter(Boolean).length,
+      audioEmbedded: firstAudio ? 1 : 0,
+      deferredCount: allDeferredPromises.length,
       engineTiming,
     });
 
@@ -1985,11 +1977,22 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
 export const getDeferredAudio = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { key } = req.params;
-    const audio = deferredAudioCache.get(key);
-    if (!audio) {
+    if (!deferredAudioCache.has(key)) {
       res.status(404).json({ success: false, error: 'Audio not found or expired' });
       return;
     }
+
+    // TTS might still be generating — poll until the cache entry is populated
+    // (background Promise.all resolves and updates the cache)
+    let audio = deferredAudioCache.get(key)!;
+    let waitMs = 0;
+    while (audio.length === 0 && waitMs < 10000) {
+      await new Promise(r => setTimeout(r, 100));
+      waitMs += 100;
+      audio = deferredAudioCache.get(key) || [];
+      if (!deferredAudioCache.has(key)) break;
+    }
+
     // Delete after fetch — one-time use
     deferredAudioCache.delete(key);
     res.status(200).json({ success: true, audio });
