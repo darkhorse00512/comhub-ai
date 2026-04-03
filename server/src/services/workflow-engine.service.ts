@@ -471,14 +471,15 @@ export class WorkflowEngine {
     return 'en';
   }
 
-  /** Replace {{fieldName}} placeholders with actual field values from state */
+  /** Replace {{fieldName}} placeholders with actual field values from state.
+   *  If a field has no value, the placeholder is removed entirely. */
   private substituteFieldVariables(text: string): string {
-    return text.replace(/\{\{(\w+)\}\}/g, (match, fieldName) => {
+    return text.replace(/\{\{(\w+)\}\}/g, (_match, fieldName) => {
       const value = this.state.fields[fieldName];
       if (value !== undefined && value !== null && value !== '') {
         return String(value);
       }
-      return match; // Keep placeholder if field not set
+      return ''; // Remove placeholder if field not set
     });
   }
 

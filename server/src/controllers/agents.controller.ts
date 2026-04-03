@@ -1846,33 +1846,44 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     const ttsStartMs = Date.now();
     let ttsFirstAudioMs = 0;
 
-    // Await ONLY the early TTS (first message — already in-flight, likely done)
-    let firstAudio: string | null = null;
-    if (earlyTTSCtx.promises.length > 0) {
-      firstAudio = await earlyTTSCtx.promises[0];
-      ttsFirstAudioMs = Date.now() - ttsStartMs;
-    }
+    // --- TTS ALL main response messages (not just the first) ---
+    // Early TTS has the first sentence already in-flight.
+    // Generate TTS for remaining main response messages in parallel.
+    const mainSpeakable = result.messages.filter(
+      (m: any) => m.type === 'ai' || m.type === 'scripted'
+    );
+    const remainingMainMessages = mainSpeakable.slice(earlyTTSCtx.msgCount);
+
+    // Start TTS for remaining main messages in parallel
+    const remainingMainTTSPromises = remainingMainMessages.map(async (msg: any) => {
+      try {
+        const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+        return buffer.toString('base64');
+      } catch { return null; }
+    });
+
+    // Await ALL main response TTS (early + remaining) — these are short sentences, fast
+    const earlyAudioResults = await Promise.all(earlyTTSCtx.promises);
+    const remainingAudioResults = await Promise.all(remainingMainTTSPromises);
+    const allMainAudio = [...earlyAudioResults, ...remainingAudioResults];
+
+    ttsFirstAudioMs = Date.now() - ttsStartMs;
     const ttsDoneMs = Date.now() - ttsStartMs;
 
-    // Build response with only first audio embedded
-    let speakableIdx = 0;
+    // Embed audio for ALL main response messages
+    let mainSpeakableIdx = 0;
     let deferredAudioKey: string | null = null;
 
     const messagesWithAudio = result.messages.map((msg: any) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
-        if (speakableIdx === 0) {
-          speakableIdx++;
-          return { ...msg, audioBase64: firstAudio };
-        }
-        speakableIdx++;
-        return { ...msg, audioBase64: null };
+        const audio = allMainAudio[mainSpeakableIdx] || null;
+        mainSpeakableIdx++;
+        return { ...msg, audioBase64: audio };
       }
       return msg;
     });
 
-    // --- Handle deferred content (remaining early TTS + transition phase 2) ---
-    // When transitionPending, run the ENTIRE transition + new node in background.
-    // The deferred cache will contain: transition messages + new node messages + their audio.
+    // --- Handle deferred content (transition phase 2 only) ---
     if (result.transitionPending) {
       deferredAudioKey = `${sessionId}-${Date.now()}`;
       deferredAudioCache.set(deferredAudioKey, []); // placeholder
@@ -1882,7 +1893,6 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       // Fire-and-forget: run transition + TTS in background
       (async () => {
         try {
-          // Phase 2: execute transition (analyzeTransition + new node opening)
           const transitionResult = await withSessionLock(sessionId, async () => {
             return await capturedSession.engine.executePendingTransition();
           });
@@ -1892,7 +1902,6 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
             return;
           }
 
-          // Persist updated state
           if (transitionResult.isComplete) {
             workflowSessions.delete(sessionId);
             deleteSessionFromDisk(sessionId);
@@ -1900,7 +1909,6 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
             persistSession(sessionId, capturedSession);
           }
 
-          // TTS all speakable messages from transition result
           const transitionSpeakable = transitionResult.messages.filter(
             (m: any) => m.type === 'ai' || m.type === 'scripted'
           );
@@ -1913,10 +1921,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
             })
           );
 
-          // Store transition result + audio in deferred cache
           deferredAudioCache.set(capturedKey, transitionAudio);
-
-          // Also store the transition messages so the client can display them
           deferredMessagesCache.set(capturedKey, transitionResult);
 
           setTimeout(() => {
@@ -1930,31 +1935,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         }
       })();
     } else {
-      // No transition — handle remaining TTS from current response normally
-      const allSpeakable = result.messages.filter(
-        (m: any) => m.type === 'ai' || m.type === 'scripted'
-      );
-      const remainingSpeakable = allSpeakable.slice(earlyTTSCtx.msgCount);
-      const remainingEarlyPromises = earlyTTSCtx.promises.slice(1);
-      const remainingTTSPromises: Promise<string | null>[] = remainingSpeakable.map(async (msg: any) => {
-        try {
-          const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
-          return buffer.toString('base64');
-        } catch { return null; }
-      });
-      const allDeferredPromises = [...remainingEarlyPromises, ...remainingTTSPromises];
-
-      if (allDeferredPromises.length > 0) {
-        deferredAudioKey = `${sessionId}-${Date.now()}`;
-        deferredAudioCache.set(deferredAudioKey, []);
-        const capturedKey = deferredAudioKey;
-        Promise.all(allDeferredPromises).then((audio) => {
-          deferredAudioCache.set(capturedKey, audio);
-          setTimeout(() => deferredAudioCache.delete(capturedKey), 30000);
-        }).catch(() => deferredAudioCache.delete(capturedKey));
-      }
-
-      // Clean up / persist
+      // No transition — persist state
       if (result.isComplete) {
         workflowSessions.delete(sessionId);
         deleteSessionFromDisk(sessionId);
@@ -1975,7 +1956,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       aiProcessingMs,
       ttsDoneMs,
       ttsFirstAudioMs,
-      audioEmbedded: firstAudio ? 1 : 0,
+      audioEmbedded: allMainAudio.filter(Boolean).length,
       transitionPending: result.transitionPending || false,
       deferredAudioKey,
       engineTiming,
