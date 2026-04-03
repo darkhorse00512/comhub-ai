@@ -898,18 +898,20 @@ const TestAgentModal = ({
       };
 
       // Finalize transcript and process
-      const finalizeTranscript = async (text: string) => {
+      const finalizeTranscript = async (text: string, trigger?: string) => {
         if (isProcessing || !text.trim()) return;
         isProcessing = true;
-        // Step 1: user_speech_end_detected (VAD/silence triggered finalization)
+        finalizedByRef.current = trigger || "unknown";
+
+        // Speech end detected
         userSpeechEndRef.current = Date.now();
         if (partialCommitTimer) clearTimeout(partialCommitTimer);
         if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
         if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
 
         const finalText = text.trim();
-        const fromSpeech = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
-        console.log(`[STT] Final: "${finalText}" (${fromSpeech}ms)`);
+        const speechDurationMs = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
+        console.log(`[STT] Final: "${finalText}" (speech: ${speechDurationMs}ms, trigger: ${finalizedByRef.current})`);
 
         // Update the live message to final text (remove "...")
         if (liveMessageId) {
@@ -920,7 +922,6 @@ const TestAgentModal = ({
 
         stopSTT();
         sttEndTimeRef.current = Date.now();
-        // Step 2: stt_final_received
         sttFinalRef.current = Date.now();
 
         if (!isCallActiveRef.current) return;
@@ -964,7 +965,7 @@ const TestAgentModal = ({
                 maxUtteranceTimer = setTimeout(() => {
                   console.log("[STT] Max utterance timeout — force finalizing");
                   const final = (fullTranscript + " " + currentPartial).trim();
-                  if (final) finalizeTranscript(final);
+                  if (final) finalizeTranscript(final, "max_utterance_30s");
                 }, MAX_UTTERANCE_MS);
               }
             }
@@ -974,7 +975,7 @@ const TestAgentModal = ({
             if (currentPartial.trim()) {
               partialCommitTimer = setTimeout(() => {
                 const final = (fullTranscript + " " + currentPartial).trim();
-                finalizeTranscript(final);
+                finalizeTranscript(final, "partial_silence_1.5s");
               }, PARTIAL_TIMEOUT_MS);
             }
 
@@ -996,7 +997,7 @@ const TestAgentModal = ({
 
               // Fallback timer — VAD will usually finalize before this
               partialCommitTimer = setTimeout(() => {
-                finalizeTranscript(fullTranscript);
+                finalizeTranscript(fullTranscript, "eleven_commit_wait_1.2s");
               }, COMMIT_WAIT_MS);
             }
 
@@ -1009,7 +1010,7 @@ const TestAgentModal = ({
               // Short delay to catch any final committed_transcript
               partialCommitTimer = setTimeout(() => {
                 const latestFinal = (fullTranscript + " " + currentPartial).trim();
-                finalizeTranscript(latestFinal || final);
+                finalizeTranscript(latestFinal || final, "eleven_vad_end_of_speech");
               }, 300);
             }
 
@@ -1109,7 +1110,7 @@ const TestAgentModal = ({
                 console.log(`[STT] VAD: silence ${silenceDuration}ms after speech — finalizing`);
                 vadFinalizeTimer = setTimeout(() => {
                   const final = (fullTranscript + " " + currentPartial).trim();
-                  if (final) finalizeTranscript(final);
+                  if (final) finalizeTranscript(final, "amplitude_vad_1s_silence");
                 }, 100);
               }
             }
@@ -1351,6 +1352,8 @@ const TestAgentModal = ({
   // Legacy refs (still used by STT internals)
   const sttStartTimeRef = useRef<number>(0);
   const sttEndTimeRef = useRef<number>(0);
+  /** Which VAD/timer mechanism triggered finalization */
+  const finalizedByRef = useRef<string>("");
 
   const handleUserMessage = useCallback(
     async (text: string) => {
@@ -1419,53 +1422,47 @@ const TestAgentModal = ({
         setIsLoading(false);
         isLoadingRef.current = false;
 
-        // --- 9-Step Pipeline Timing ---
+        // --- Detailed Pipeline Timing ---
+        // Shows every step from "I stopped speaking" to "agent starts speaking"
         if (!isSpeechNotRecognized) {
           const t = result.timing;
-          const t0 = userSpeechEndRef.current || sttFinalRef.current || sttDoneAt; // baseline: user stopped speaking
+          const t0 = userSpeechEndRef.current || sttFinalRef.current || sttDoneAt;
 
-          // Client-side steps (absolute timestamps → offsets from t0)
-          const step1 = userSpeechEndRef.current ? userSpeechEndRef.current - t0 : 0;
-          const step2 = sttFinalRef.current ? sttFinalRef.current - t0 : 0;
-          const step8 = audioPlaybackStartRef.current ? audioPlaybackStartRef.current - t0 : 0;
-          const step9 = audioPlaybackEndRef.current ? audioPlaybackEndRef.current - t0 : 0;
-
-          // Server-side steps (offsets from request received → add network one-way ~= networkMs/2)
+          // All offsets from t0 (user speech end = 0ms baseline)
+          const sttDone = sttFinalRef.current ? sttFinalRef.current - t0 : 0;
           const netOneWay = Math.round(Math.max(0, networkMs - (t?.serverTotalMs ?? 0)) / 2);
-          const serverBase = step2 + netOneWay; // approximate when server received request
-          const step3 = t?.llmRequestSentAt ? serverBase + t.llmRequestSentAt : 0;
-          const step4 = t?.llmFirstTokenAt ? serverBase + t.llmFirstTokenAt : 0;
-          const step5 = t?.llmFullResponseAt ? serverBase + t.llmFullResponseAt : 0;
-          const step6 = t?.ttsRequestSentAt ? serverBase + t.ttsRequestSentAt : 0;
-          const step7 = t?.ttsFirstAudioAt ? serverBase + t.ttsFirstAudioAt : 0;
+          const serverBase = sttDone + netOneWay;
+          const llmReq   = t?.llmRequestSentAt  ? serverBase + t.llmRequestSentAt  : 0;
+          const llm1st   = t?.llmFirstTokenAt    ? serverBase + t.llmFirstTokenAt   : 0;
+          const llmDone  = t?.llmFullResponseAt  ? serverBase + t.llmFullResponseAt : 0;
+          const ttsReq   = t?.ttsRequestSentAt   ? serverBase + t.ttsRequestSentAt  : 0;
+          const tts1st   = t?.ttsFirstAudioAt    ? serverBase + t.ttsFirstAudioAt   : 0;
+          const playStart = audioPlaybackStartRef.current ? audioPlaybackStartRef.current - t0 : 0;
+          const playEnd   = audioPlaybackEndRef.current   ? audioPlaybackEndRef.current - t0   : 0;
 
-          // Display as pipeline with delta between each step
-          const steps = [
-            { name: "speech_end", ms: step1 },
-            { name: "stt_final", ms: step2 },
-            { name: "llm_req", ms: step3 },
-            { name: "llm_1st_tok", ms: step4 },
-            { name: "llm_done", ms: step5 },
-            { name: "tts_req", ms: step6 },
-            { name: "tts_1st_byte", ms: step7 },
-            { name: "play_start", ms: step8 },
-            { name: "play_end", ms: step9 },
-          ];
-
-          // Line 1: step deltas (time between each step)
-          const deltas: string[] = [];
-          for (let i = 1; i < steps.length; i++) {
-            if (steps[i].ms > 0 && steps[i - 1].ms >= 0) {
-              const delta = steps[i].ms - steps[i - 1].ms;
-              deltas.push(`${steps[i].name}:+${delta}ms`);
-            }
-          }
-          addMessage("system", `⏱ ${deltas.join(" → ")}`);
-
-          // Line 2: key summary
-          const e2e = step9 > 0 ? step9 : 0;
-          const ttfb = step8 > 0 ? step8 : 0; // time to first audio byte from user speech end
-          addMessage("system", `TTFB: ${ttfb}ms | E2E: ${e2e}ms | Net: ${netOneWay}ms×2`);
+          // Build readable timeline:
+          //   0ms  You stopped speaking (trigger: amplitude_vad_1s_silence)
+          //  +12ms STT transcript ready
+          //  +45ms → Server received
+          //  +52ms → LLM request sent
+          // +1050ms → LLM first token
+          // +1052ms → LLM full response
+          // +1052ms → TTS started
+          // +1390ms → TTS first audio byte
+          // +1520ms → Audio playback started  ← TTFB
+          // +4700ms → Audio playback finished
+          const lines: string[] = [];
+          lines.push(`  0ms  You stopped speaking (${finalizedByRef.current})`);
+          if (sttDone > 0)   lines.push(`+${sttDone}ms  STT transcript ready`);
+          if (netOneWay > 0) lines.push(`+${sttDone + netOneWay}ms  Server received (net: ${netOneWay}ms)`);
+          if (llmReq > 0)    lines.push(`+${llmReq}ms  LLM request sent`);
+          if (llm1st > 0)    lines.push(`+${llm1st}ms  LLM first token (${llm1st - llmReq}ms wait)`);
+          if (llmDone > 0)   lines.push(`+${llmDone}ms  LLM full response (${llmDone - (llm1st || llmReq)}ms gen)`);
+          if (ttsReq > 0)    lines.push(`+${ttsReq}ms  TTS request sent`);
+          if (tts1st > 0)    lines.push(`+${tts1st}ms  TTS first audio byte (${tts1st - ttsReq}ms wait)`);
+          if (playStart > 0) lines.push(`+${playStart}ms  Audio playback started ← TTFB`);
+          if (playEnd > 0)   lines.push(`+${playEnd}ms  Audio playback finished`);
+          addMessage("system", lines.join("\n"));
 
           if (t?.ttsError) {
             addMessage("system", `⚠️ TTS Error: ${t.ttsError} (used ${t.ttsProvider || 'openai'} fallback)`);
@@ -2408,11 +2405,14 @@ const CallInterface = ({
                 <div key={message.id}>
                   {message.role === "system" ? (
                     <div className="flex justify-center">
-                      {message.content.includes("AI:") && message.content.includes("TTS:") ? (
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 px-3 py-0.5 rounded-full">
-                          <Clock className="w-3 h-3" />
+                      {message.content.includes("You stopped speaking") ? (
+                        <div className="w-full max-w-md bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 font-mono text-[10px] leading-relaxed text-slate-600 dark:text-slate-400 whitespace-pre-wrap">
+                          <div className="flex items-center gap-1.5 mb-1 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+                            <Clock className="w-3 h-3" />
+                            Pipeline Timing
+                          </div>
                           {message.content}
-                        </span>
+                        </div>
                       ) : message.content.startsWith("⚠️") || message.content.toLowerCase().includes("no fallback") ? (
                         <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full">
                           <AlertTriangle className="w-3 h-3" />
