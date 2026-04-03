@@ -1896,12 +1896,15 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         llmFirstTokenAt: engineTiming.llmFirstTokenAt,
         // Step 5: llm_full_response_received
         llmFullResponseAt: engineTiming.llmFullResponseAt,
-        // Step 6: tts_request_sent (= llmFullResponseAt, TTS starts right after LLM)
-        ttsRequestSentAt: engineTiming.llmFullResponseAt,
+        // Step 5.5: transition analysis (only on transition turns)
+        transitionAnalysisStartAt: engineTiming.transitionAnalysisStartAt || 0,
+        transitionAnalysisDoneAt: engineTiming.transitionAnalysisDoneAt || 0,
+        // Step 6: tts_request_sent (after transition analysis if any, otherwise right after LLM)
+        ttsRequestSentAt: engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt,
         // Step 7: tts_first_audio_byte_received
-        ttsFirstAudioAt: ttsFirstAudioMs > 0 ? engineTiming.llmFullResponseAt + ttsFirstAudioMs : 0,
+        ttsFirstAudioAt: ttsFirstAudioMs > 0 ? (engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt) + ttsFirstAudioMs : 0,
         // tts_all_audio_ready (all sentences done)
-        ttsAllAudioAt: engineTiming.llmFullResponseAt + ttsDoneMs,
+        ttsAllAudioAt: (engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt) + ttsDoneMs,
         // Total server processing
         serverTotalMs: aiProcessingMs + ttsDoneMs,
         // Metadata

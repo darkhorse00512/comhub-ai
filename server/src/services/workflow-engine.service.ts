@@ -219,6 +219,10 @@ export interface EngineTiming {
   llmFirstTokenAt: number;
   /** Step 5: offset (ms) when full LLM response was available */
   llmFullResponseAt: number;
+  /** Transition analysis: offset (ms) when analyzeTransition LLM call started */
+  transitionAnalysisStartAt: number;
+  /** Transition analysis: offset (ms) when analyzeTransition completed */
+  transitionAnalysisDoneAt: number;
   /** Legacy compat */
   promptReadyAt: number;
   proactiveCheckMs: number;
@@ -232,7 +236,7 @@ export class WorkflowEngine {
   /** Reference timestamp for per-turn timing measurements */
   private _processStartMs = 0;
   /** Timing data from the last processMessage call */
-  public lastTiming: EngineTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
+  public lastTiming: EngineTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, transitionAnalysisStartAt: 0, transitionAnalysisDoneAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
   /**
    * Optional callback to fetch full call message history from the database.
    * Set by VoiceConversationService to ensure end_call analysis gets ALL messages.
@@ -799,6 +803,15 @@ RULES:
   ): Promise<string | null> {
     if (connectedTransitionNames.length === 0) return null;
 
+    // Only 1 connected transition — no need for an LLM call, just take it
+    if (connectedTransitionNames.length === 1) {
+      logger.info('WorkflowEngine: Single transition — skipping LLM analysis', {
+        nodeLabel: node.data?.label,
+        transition: connectedTransitionNames[0],
+      });
+      return connectedTransitionNames[0];
+    }
+
     const stageMessage = this.substituteFieldVariables(node.data?.stageMessage || '');
     const transitionList = connectedTransitionNames.join(', ');
 
@@ -1097,7 +1110,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     const messages: WorkflowMessage[] = [];
     // Reset timing for this turn
     this._processStartMs = Date.now();
-    this.lastTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
+    this.lastTiming = { llmRequestSentAt: 0, llmFirstTokenAt: 0, llmFullResponseAt: 0, transitionAnalysisStartAt: 0, transitionAnalysisDoneAt: 0, promptReadyAt: 0, proactiveCheckMs: 0 };
 
     // Comprehensive state log at entry — helps diagnose routing issues
     const currentNode = this.state.currentNodeId ? this.nodes.find(n => n.id === this.state.currentNodeId) : null;
@@ -1270,7 +1283,9 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
     if (effectiveComplete && connectedTransitionNames.length > 0) {
       // AI signaled [NEXT] — determine WHICH connected transition to take
       shouldAdvance = true;
+      this.lastTiming.transitionAnalysisStartAt = Date.now() - this._processStartMs;
       transition = await this.analyzeTransition(dialogueNode, text, userMessage, connectedTransitionNames);
+      this.lastTiming.transitionAnalysisDoneAt = Date.now() - this._processStartMs;
       if (!transition) transition = connectedTransitionNames[0];
 
       const targetId = this.getDialogueNextNodeId(dialogueNode, transition);

@@ -90,6 +90,8 @@ interface WorkflowCallResult {
     llmRequestSentAt?: number;     // Step 3
     llmFirstTokenAt?: number;      // Step 4
     llmFullResponseAt?: number;    // Step 5
+    transitionAnalysisStartAt?: number; // Step 5.5a (transition turns only)
+    transitionAnalysisDoneAt?: number;  // Step 5.5b (transition turns only)
     ttsRequestSentAt?: number;     // Step 6
     ttsFirstAudioAt?: number;      // Step 7
     ttsAllAudioAt?: number;        // All TTS done
@@ -1435,6 +1437,8 @@ const TestAgentModal = ({
           const llmReq   = t?.llmRequestSentAt  ? serverBase + t.llmRequestSentAt  : 0;
           const llm1st   = t?.llmFirstTokenAt    ? serverBase + t.llmFirstTokenAt   : 0;
           const llmDone  = t?.llmFullResponseAt  ? serverBase + t.llmFullResponseAt : 0;
+          const transStart = t?.transitionAnalysisStartAt ? serverBase + t.transitionAnalysisStartAt : 0;
+          const transDone  = t?.transitionAnalysisDoneAt  ? serverBase + t.transitionAnalysisDoneAt  : 0;
           const ttsReq   = t?.ttsRequestSentAt   ? serverBase + t.ttsRequestSentAt  : 0;
           const tts1st   = t?.ttsFirstAudioAt    ? serverBase + t.ttsFirstAudioAt   : 0;
           const playStart = audioPlaybackStartRef.current ? audioPlaybackStartRef.current - t0 : 0;
@@ -1458,6 +1462,7 @@ const TestAgentModal = ({
           if (llmReq > 0)    lines.push(`+${llmReq}ms  LLM request sent`);
           if (llm1st > 0)    lines.push(`+${llm1st}ms  LLM first token (${llm1st - llmReq}ms wait)`);
           if (llmDone > 0)   lines.push(`+${llmDone}ms  LLM full response (${llmDone - (llm1st || llmReq)}ms gen)`);
+          if (transStart > 0 && transDone > 0) lines.push(`+${transDone}ms  Transition analysis (${transDone - transStart}ms)`);
           if (ttsReq > 0)    lines.push(`+${ttsReq}ms  TTS request sent`);
           if (tts1st > 0)    lines.push(`+${tts1st}ms  TTS first audio byte (${tts1st - ttsReq}ms wait)`);
           if (playStart > 0) lines.push(`+${playStart}ms  Audio playback started ← TTFB`);
