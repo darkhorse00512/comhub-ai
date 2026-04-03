@@ -83,6 +83,7 @@ interface WorkflowCallResult {
   transferTo?: string;
   transferType?: string;
   error?: string;
+  deferredAudioKey?: string;
   collectedFields?: Record<string, any>;
   callSettings?: CallSettings;
   timing?: {
@@ -1264,7 +1265,7 @@ const TestAgentModal = ({
         (m) => m.type === "scripted" || m.type === "ai"
       );
 
-      // Convert base64 audio → Blob lazily (on demand, not all at once)
+      // Convert base64 audio → Blob
       const base64ToBlob = (b64: string): Blob | null => {
         try {
           const binary = atob(b64);
@@ -1286,8 +1287,37 @@ const TestAgentModal = ({
         );
       }
 
-      // Play messages sequentially — convert each blob just-in-time
+      // Fetch deferred audio in background while first message plays.
+      // The server only embeds audio for the first speakable message (fast TTFB).
+      // Remaining audio is cached server-side and fetched here.
+      let deferredAudioBlobs: (Blob | null)[] = [];
+      let deferredAudioPromise: Promise<void> | null = null;
+      if (result.deferredAudioKey && callModeRef.current === "audio") {
+        deferredAudioPromise = (async () => {
+          try {
+            const token = localStorage.getItem("backend_token");
+            const resp = await fetch(
+              `${apiBaseUrl}/agents/${agentId}/workflow-call/deferred-audio/${result.deferredAudioKey}`,
+              { headers: { ...(token && { Authorization: `Bearer ${token}` }) } }
+            );
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data.audio) {
+                deferredAudioBlobs = (data.audio as (string | null)[]).map(
+                  (b64: string | null) => b64 ? base64ToBlob(b64) : null
+                );
+              }
+            }
+          } catch (err) {
+            console.warn('[deferred-audio] Fetch failed:', err);
+          }
+        })();
+      }
+
+      // Play messages sequentially — first message plays immediately,
+      // deferred audio arrives in background during first playback
       let speakableIdx = 0;
+      let deferredIdx = 0;
       console.log('[processWorkflowResult] Playing', result.messages.length, 'messages, isCallActive:', isCallActiveRef.current);
       for (const msg of result.messages) {
         if (!isCallActiveRef.current) {
@@ -1296,10 +1326,18 @@ const TestAgentModal = ({
         }
 
         if (msg.type === "scripted" || msg.type === "ai") {
-          // Convert THIS message's audio just-in-time (not all at once)
           let blob: Blob | null = null;
           if (hasServerAudio && msg.audioBase64) {
+            // First message — audio embedded in response
             blob = base64ToBlob(msg.audioBase64);
+          } else if (hasServerAudio && !msg.audioBase64) {
+            // Deferred message — wait for background fetch if needed
+            if (deferredAudioPromise) {
+              await deferredAudioPromise;
+              deferredAudioPromise = null; // only await once
+            }
+            blob = deferredAudioBlobs[deferredIdx] ?? null;
+            deferredIdx++;
           } else if (clientTTSBlobs) {
             blob = clientTTSBlobs[speakableIdx] ?? null;
           }

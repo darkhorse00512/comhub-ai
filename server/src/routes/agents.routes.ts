@@ -75,6 +75,7 @@ router.post('/:id/transcribe', upload.single('audio'), agentsController.transcri
 // Workflow-based test calls
 router.post('/:id/workflow-call/start', agentsController.startWorkflowCall);
 router.post('/:id/workflow-call/:sessionId/message', agentsController.sendWorkflowMessage);
+router.get('/:id/workflow-call/deferred-audio/:key', agentsController.getDeferredAudio);
 router.post('/:id/workflow-call/:sessionId/end', agentsController.endWorkflowCall);
 
 export default router;

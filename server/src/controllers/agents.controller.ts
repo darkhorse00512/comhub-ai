@@ -1405,6 +1405,11 @@ interface WorkflowSession {
 // In-memory cache for active workflow test calls
 const workflowSessions = new Map<string, WorkflowSession>();
 
+// Deferred audio cache — stores pre-generated TTS audio for messages beyond the first.
+// Key: unique token, Value: array of base64 audio strings.
+// Auto-cleaned after 30 seconds.
+const deferredAudioCache = new Map<string, (string | null)[]>();
+
 // Per-session lock to prevent concurrent processMessage calls from corrupting state.
 // If two requests arrive for the same session while one is processing, the second is queued.
 const sessionLocks = new Map<string, Promise<void>>();
@@ -1887,16 +1892,35 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     const audioDataArray = [...earlyAudio, ...remainingAudio];
     const ttsDoneMs = Date.now() - ttsStartMs;
 
-    // Attach audio to each speakable message
+    // Attach audio to speakable messages:
+    // - FIRST speakable message gets audio embedded (small response, fast TTFB)
+    // - Remaining audio is cached and fetched separately by the client
     let audioIdx = 0;
+    let firstAudioEmbedded = false;
+    let deferredAudioKey: string | null = null;
+    const deferredAudioList: (string | null)[] = [];
+
     const messagesWithAudio = result.messages.map((msg) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
         const audio = audioDataArray[audioIdx] || null;
         audioIdx++;
-        return { ...msg, audioBase64: audio };
+        if (!firstAudioEmbedded) {
+          firstAudioEmbedded = true;
+          return { ...msg, audioBase64: audio };
+        }
+        // Defer remaining audio
+        deferredAudioList.push(audio);
+        return { ...msg, audioBase64: null };
       }
       return msg;
     });
+
+    // Cache deferred audio if any
+    if (deferredAudioList.length > 0 && deferredAudioList.some(Boolean)) {
+      deferredAudioKey = `${sessionId}-${Date.now()}`;
+      deferredAudioCache.set(deferredAudioKey, deferredAudioList);
+      setTimeout(() => deferredAudioCache.delete(deferredAudioKey!), 30000);
+    }
 
     // Collect engine-level timing (LLM breakdown)
     const engineTiming = session.engine.lastTiming;
@@ -1918,6 +1942,7 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       success: true,
       ...result,
       messages: messagesWithAudio,
+      deferredAudioKey: deferredAudioKey || undefined,
       collectedFields: session.engine.getFields(),
       timing: {
         // Pipeline steps (offsets from request received):
@@ -1949,6 +1974,28 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+};
+
+/**
+ * Fetch deferred audio blobs. The main response only embeds the first
+ * speakable message's audio for fast TTFB. Remaining audio is cached
+ * here and fetched by the client while the first message plays.
+ */
+export const getDeferredAudio = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { key } = req.params;
+    const audio = deferredAudioCache.get(key);
+    if (!audio) {
+      res.status(404).json({ success: false, error: 'Audio not found or expired' });
+      return;
+    }
+    // Delete after fetch — one-time use
+    deferredAudioCache.delete(key);
+    res.status(200).json({ success: true, audio });
+  } catch (error) {
+    logger.error('Failed to fetch deferred audio', { error });
+    res.status(500).json({ success: false, error: 'Internal error' });
   }
 };
 
@@ -2225,6 +2272,7 @@ export default {
   restoreAgentVersion,
   startWorkflowCall,
   sendWorkflowMessage,
+  getDeferredAudio,
   endWorkflowCall,
   uploadAudio,
   getPublicVoiceModels,
