@@ -1782,6 +1782,13 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     // Process the message through the workflow engine.
     // Use session lock to prevent concurrent requests from corrupting state
     // (e.g., two speech recognitions arriving back-to-back).
+    // Early TTS context — shared between the callback (inside processMessage) and
+    // the TTS code that runs after processMessage returns.
+    const earlyTTSCtx: { msgCount: number; promises: Promise<string | null>[] } = {
+      msgCount: 0,
+      promises: [],
+    };
+
     const aiStartMs = Date.now();
     const result = await withSessionLock(sessionId, async () => {
       const preState = session.engine.getState();
@@ -1798,9 +1805,33 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         },
       });
 
+      // --- Early TTS pipeline: start TTS on dialogue response BEFORE transition analysis ---
+      // The callback fires inside processMessage when the AI dialogue response is ready
+      // but before analyzeTransition runs. This overlaps TTS with transition analysis.
+      // Resolve voice settings BEFORE processMessage so the callback can use them.
+      if (!session.voiceSettingsResolved) {
+        session.voiceSettings = await agentVoiceService.resolveVoiceSettings(session.agentId);
+        session.voiceSettingsResolved = true;
+      }
+
+      session.engine.onDialogueResponseReady = (earlyMsgs) => {
+        earlyTTSCtx.msgCount = earlyMsgs.length;
+        earlyTTSCtx.promises = earlyMsgs.map(async (msg) => {
+          try {
+            const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+            return buffer.toString('base64');
+          } catch {
+            return null;
+          }
+        });
+      };
+
       return await session.engine.processMessage(message);
     });
     const aiProcessingMs = Date.now() - aiStartMs;
+
+    // Clean up callback
+    session.engine.onDialogueResponseReady = undefined;
 
     // Clean up if workflow is complete, otherwise persist updated state
     if (result.isComplete) {
@@ -1810,50 +1841,50 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       persistSession(sessionId, session);
     }
 
-    // --- Server-side TTS generation (parallel for all sentences) ---
-    // Generate TTS audio on the server and return it with the response.
-    // This eliminates the client→server TTS round-trip entirely.
+    // --- Server-side TTS generation ---
+    // Early TTS (dialogue response) is already in-flight from the callback.
+    // Now TTS remaining messages (from transition target / next nodes).
     const ttsStartMs = Date.now();
-    let ttsFirstAudioMs = 0; // Time to first TTS result
-    const speakableMessages = result.messages.filter(
+    let ttsFirstAudioMs = 0;
+    const allSpeakable = result.messages.filter(
       (m) => m.type === 'ai' || m.type === 'scripted'
     );
-    let audioDataArray: (string | null)[] = [];
+    const remainingSpeakable = allSpeakable.slice(earlyTTSCtx.msgCount);
 
-    if (speakableMessages.length > 0) {
+    // TTS remaining messages in parallel
+    const remainingTTSPromises: Promise<string | null>[] = remainingSpeakable.map(async (msg) => {
       try {
-        // Resolve voice settings once per session (cached)
-        if (!session.voiceSettingsResolved) {
-          session.voiceSettings = await agentVoiceService.resolveVoiceSettings(session.agentId);
-          session.voiceSettingsResolved = true;
-        }
-
-        // Generate TTS for ALL sentences in parallel, track first completion
-        let firstAudioTracked = false;
-        audioDataArray = await Promise.all(
-          speakableMessages.map(async (msg) => {
-            try {
-              const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
-              if (!firstAudioTracked) {
-                ttsFirstAudioMs = Date.now() - ttsStartMs;
-                firstAudioTracked = true;
-              }
-              return buffer.toString('base64');
-            } catch (err) {
-              logger.warn('Server-side TTS failed for sentence, client will fallback', {
-                text: msg.text.substring(0, 50),
-                error: err instanceof Error ? err.message : err,
-              });
-              return null;
-            }
-          })
-        );
+        const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+        return buffer.toString('base64');
       } catch (err) {
-        logger.warn('Server-side TTS batch failed, client will fallback', {
+        logger.warn('Server-side TTS failed for sentence, client will fallback', {
+          text: msg.text.substring(0, 50),
           error: err instanceof Error ? err.message : err,
         });
+        return null;
       }
-    }
+    });
+
+    // Await early TTS (already in-flight, likely done by now) + remaining TTS
+    let firstAudioTracked = false;
+    const earlyAudio = await Promise.all(earlyTTSCtx.promises.map(async (p: Promise<string | null>) => {
+      const r = await p;
+      if (!firstAudioTracked && r) {
+        ttsFirstAudioMs = Date.now() - ttsStartMs;
+        firstAudioTracked = true;
+      }
+      return r;
+    }));
+    const remainingAudio = await Promise.all(remainingTTSPromises.map(async (p: Promise<string | null>) => {
+      const r = await p;
+      if (!firstAudioTracked && r) {
+        ttsFirstAudioMs = Date.now() - ttsStartMs;
+        firstAudioTracked = true;
+      }
+      return r;
+    }));
+
+    const audioDataArray = [...earlyAudio, ...remainingAudio];
     const ttsDoneMs = Date.now() - ttsStartMs;
 
     // Attach audio to each speakable message

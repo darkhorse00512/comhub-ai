@@ -1264,33 +1264,29 @@ const TestAgentModal = ({
         (m) => m.type === "scripted" || m.type === "ai"
       );
 
-      let audioBlobs: (Blob | null)[] = [];
-      if (callModeRef.current === "audio" && speakableMessages.length > 0) {
-        // Use server-provided audio (base64) if available
-        const hasServerAudio = speakableMessages.some((m) => m.audioBase64);
-        if (hasServerAudio) {
-          audioBlobs = speakableMessages.map((m) => {
-            if (m.audioBase64) {
-              try {
-                const binary = atob(m.audioBase64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                return new Blob([bytes], { type: "audio/mpeg" });
-              } catch {
-                return null;
-              }
-            }
-            return null;
-          });
-        } else {
-          // Fallback: client-side TTS pre-fetch (if server didn't provide audio)
-          audioBlobs = await Promise.all(
-            speakableMessages.map((m) => prefetchTTS(m.text).catch(() => null))
-          );
+      // Convert base64 audio → Blob lazily (on demand, not all at once)
+      const base64ToBlob = (b64: string): Blob | null => {
+        try {
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return new Blob([bytes], { type: "audio/mpeg" });
+        } catch {
+          return null;
         }
+      };
+
+      const hasServerAudio = callModeRef.current === "audio" && speakableMessages.some((m) => m.audioBase64);
+
+      // Pre-fetch client TTS only if server didn't provide audio
+      let clientTTSBlobs: (Blob | null)[] | null = null;
+      if (callModeRef.current === "audio" && !hasServerAudio && speakableMessages.length > 0) {
+        clientTTSBlobs = await Promise.all(
+          speakableMessages.map((m) => prefetchTTS(m.text).catch(() => null))
+        );
       }
 
-      // Play messages sequentially — audio is already generated, zero TTS wait
+      // Play messages sequentially — convert each blob just-in-time
       let speakableIdx = 0;
       console.log('[processWorkflowResult] Playing', result.messages.length, 'messages, isCallActive:', isCallActiveRef.current);
       for (const msg of result.messages) {
@@ -1300,7 +1296,13 @@ const TestAgentModal = ({
         }
 
         if (msg.type === "scripted" || msg.type === "ai") {
-          const blob = audioBlobs[speakableIdx] ?? null;
+          // Convert THIS message's audio just-in-time (not all at once)
+          let blob: Blob | null = null;
+          if (hasServerAudio && msg.audioBase64) {
+            blob = base64ToBlob(msg.audioBase64);
+          } else if (clientTTSBlobs) {
+            blob = clientTTSBlobs[speakableIdx] ?? null;
+          }
           speakableIdx++;
           const isLast = speakableIdx >= speakableMessages.length;
           await outputAndSpeak(msg.text, msg.nodeLabel, blob, isLast);

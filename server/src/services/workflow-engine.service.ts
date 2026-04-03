@@ -244,6 +244,14 @@ export class WorkflowEngine {
   public fetchFullHistory?: () => Promise<Array<{ role: string; content: string }>>;
 
   /**
+   * Optional callback fired when the AI dialogue response is ready but BEFORE
+   * transition analysis runs. Allows the controller to start TTS on the dialogue
+   * response in parallel with transition analysis — saving ~400-600ms.
+   * The callback receives the speakable messages generated so far.
+   */
+  public onDialogueResponseReady?: (messages: WorkflowMessage[]) => void;
+
+  /**
    * Optional callback to persist state to disk.
    * Called frequently during processMessage to ensure server restarts
    * don't revert to stale dialogue state.
@@ -1279,6 +1287,14 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
 
     // Debug: show transition decision context
     messages.push({ type: 'system', text: `[ROUTE] effective=${effectiveComplete}, transitions=${(dialogueNode.data?.transitions || []).length}, connected=${connectedTransitionNames.length}, fallback=${parsed.wantsFallback}` });
+
+    // Fire callback so controller can start TTS on dialogue response BEFORE transition analysis
+    if (this.onDialogueResponseReady) {
+      const speakableSoFar = messages.filter(m => m.type === 'ai' || m.type === 'scripted');
+      if (speakableSoFar.length > 0) {
+        this.onDialogueResponseReady(speakableSoFar);
+      }
+    }
 
     if (effectiveComplete && connectedTransitionNames.length > 0) {
       // AI signaled [NEXT] — determine WHICH connected transition to take
