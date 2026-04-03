@@ -625,7 +625,7 @@ const AgentStudioPage = () => {
           )}
 
           {/* Test Buttons */}
-          <div className="absolute right-4 top-[68px] z-20 flex flex-col gap-2">
+          <div className="absolute left-4 top-[68px] z-20 flex flex-col gap-2">
             <button
               onClick={() => { setTestMode("text"); setShowTestModal(true); }}
               className="w-11 h-11 rounded-xl bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-lg transition-colors"
