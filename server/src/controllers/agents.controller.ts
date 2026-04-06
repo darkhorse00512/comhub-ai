@@ -1872,8 +1872,6 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
 
     // Embed audio for ALL main response messages
     let mainSpeakableIdx = 0;
-    let deferredAudioKey: string | null = null;
-
     const messagesWithAudio = result.messages.map((msg: any) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
         const audio = allMainAudio[mainSpeakableIdx] || null;
@@ -1883,119 +1881,100 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return msg;
     });
 
-    // --- Handle deferred content (transition phase 2 only) ---
+    // --- Handle transition (phase 2) inline ---
+    // Run transition + TTS synchronously before sending response.
+    // This ensures the client always gets the transition result (e.g., next node opening)
+    // and isComplete reflects the final state (including end_call if reached).
+    let transitionMessages: any[] = [];
+    let finalResult = result;
     if (result.transitionPending) {
-      deferredAudioKey = `${sessionId}-${Date.now()}`;
-      deferredAudioCache.set(deferredAudioKey, []); // placeholder
-      const capturedKey = deferredAudioKey;
-      const capturedSession = session;
+      try {
+        const transitionResult = await withSessionLock(sessionId, async () => {
+          return await session.engine.executePendingTransition();
+        });
 
-      // Fire-and-forget: run transition + TTS in background
-      (async () => {
-        try {
-          const transitionResult = await withSessionLock(sessionId, async () => {
-            return await capturedSession.engine.executePendingTransition();
-          });
-
-          if (!transitionResult) {
-            deferredAudioCache.delete(capturedKey);
-            return;
-          }
-
-          if (transitionResult.isComplete) {
-            workflowSessions.delete(sessionId);
-            deleteSessionFromDisk(sessionId);
-          } else {
-            persistSession(sessionId, capturedSession);
-          }
-
+        if (transitionResult) {
+          // Generate TTS for transition messages
           const transitionSpeakable = transitionResult.messages.filter(
             (m: any) => m.type === 'ai' || m.type === 'scripted'
           );
           const transitionAudio = await Promise.all(
             transitionSpeakable.map(async (msg: any) => {
               try {
-                const buffer = await agentVoiceService.generateTTS(msg.text, capturedSession.voiceSettings ?? null);
+                const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
                 return buffer.toString('base64');
               } catch { return null; }
             })
           );
 
-          deferredAudioCache.set(capturedKey, transitionAudio);
-          deferredMessagesCache.set(capturedKey, transitionResult);
+          // Embed audio in transition messages
+          let trSpeakableIdx = 0;
+          transitionMessages = transitionResult.messages.map((msg: any) => {
+            if (msg.type === 'ai' || msg.type === 'scripted') {
+              const audio = transitionAudio[trSpeakableIdx] || null;
+              trSpeakableIdx++;
+              return { ...msg, audioBase64: audio };
+            }
+            return msg;
+          });
 
-          setTimeout(() => {
-            deferredAudioCache.delete(capturedKey);
-            deferredMessagesCache.delete(capturedKey);
-          }, 30000);
-        } catch (err) {
-          logger.error('Background transition failed', { error: err });
-          deferredAudioCache.delete(capturedKey);
-          deferredMessagesCache.delete(capturedKey);
+          // Use transition result for final state (isComplete, currentStage, etc.)
+          finalResult = transitionResult;
         }
-      })();
-    } else {
-      // No transition — persist state.
-      // When isComplete, keep session alive so endWorkflowCall can run post-call analysis.
-      // Session cleanup happens in endWorkflowCall. Add a safety timeout to avoid leaks.
-      if (result.isComplete) {
-        persistSession(sessionId, session);
-        setTimeout(() => {
-          if (workflowSessions.has(sessionId)) {
-            workflowSessions.delete(sessionId);
-            deleteSessionFromDisk(sessionId);
-            logger.info('Workflow session auto-cleaned after timeout', { sessionId });
-          }
-        }, 60000);
-      } else {
-        persistSession(sessionId, session);
+      } catch (err) {
+        logger.error('Inline transition failed', { error: err, sessionId });
       }
     }
+
+    // Persist session state (keeps it alive for endWorkflowCall to run post-call analysis)
+    persistSession(sessionId, session);
+    if (finalResult.isComplete) {
+      // Safety timeout — cleanup if endWorkflowCall is never called
+      setTimeout(() => {
+        if (workflowSessions.has(sessionId)) {
+          workflowSessions.delete(sessionId);
+          deleteSessionFromDisk(sessionId);
+          logger.info('Workflow session auto-cleaned after timeout', { sessionId });
+        }
+      }, 60000);
+    }
+
+    // Merge all messages: processMessage response + transition messages
+    const allMessages = [...messagesWithAudio, ...transitionMessages];
 
     // Collect engine-level timing (LLM breakdown)
     const engineTiming = session.engine.lastTiming;
 
     logger.info('Workflow message processed', {
       sessionId,
-      messageCount: result.messages.length,
-      waitingForInput: result.waitingForInput,
-      isComplete: result.isComplete,
-      currentStage: result.currentStage,
+      messageCount: allMessages.length,
+      waitingForInput: finalResult.waitingForInput,
+      isComplete: finalResult.isComplete,
+      currentStage: finalResult.currentStage,
       aiProcessingMs,
       ttsDoneMs,
       ttsFirstAudioMs,
       audioEmbedded: allMainAudio.filter(Boolean).length,
-      transitionPending: result.transitionPending || false,
-      deferredAudioKey,
+      hasTransition: transitionMessages.length > 0,
       engineTiming,
     });
 
     res.status(200).json({
       success: true,
-      ...result,
-      messages: messagesWithAudio,
-      deferredAudioKey: deferredAudioKey || undefined,
+      ...finalResult,
+      messages: allMessages,
+      transitionPending: false, // Transition already executed inline
       collectedFields: session.engine.getFields(),
       timing: {
-        // Pipeline steps (offsets from request received):
-        // Step 3: llm_request_sent
         llmRequestSentAt: engineTiming.llmRequestSentAt,
-        // Step 4: llm_first_token_received
         llmFirstTokenAt: engineTiming.llmFirstTokenAt,
-        // Step 5: llm_full_response_received
         llmFullResponseAt: engineTiming.llmFullResponseAt,
-        // Step 5.5: transition analysis (only on transition turns)
         transitionAnalysisStartAt: engineTiming.transitionAnalysisStartAt || 0,
         transitionAnalysisDoneAt: engineTiming.transitionAnalysisDoneAt || 0,
-        // Step 6: tts_request_sent (after transition analysis if any, otherwise right after LLM)
         ttsRequestSentAt: engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt,
-        // Step 7: tts_first_audio_byte_received
         ttsFirstAudioAt: ttsFirstAudioMs > 0 ? (engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt) + ttsFirstAudioMs : 0,
-        // tts_all_audio_ready (all sentences done)
         ttsAllAudioAt: (engineTiming.transitionAnalysisDoneAt || engineTiming.llmFullResponseAt) + ttsDoneMs,
-        // Total server processing
         serverTotalMs: aiProcessingMs + ttsDoneMs,
-        // Metadata
         ttsProvider: agentVoiceService.lastTTSProvider,
         ttsError: agentVoiceService.lastTTSError,
       },
