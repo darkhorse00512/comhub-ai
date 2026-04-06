@@ -1846,7 +1846,7 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
           // No prior caller response — generate an opening AI message
           const hasContext = this.state.conversationContext.length > 0;
           const trigger = hasContext
-            ? 'Continue from where the call left off. The caller is waiting. Do NOT greet again, do NOT introduce yourself again, do NOT repeat anything from the transcript above. Just continue with the next thing according to your stage instructions.'
+            ? 'You are now entering a NEW stage of the call. Start this stage from the VERY BEGINNING of your stage instructions (Step 1). The caller is already on the line from a previous stage — do NOT greet or introduce yourself again. Follow your stage instructions exactly, starting from the first step.'
             : 'The caller just connected. Follow your stage instructions to begin the conversation.';
 
           // Build dialogue history with full call history as proper chat messages
