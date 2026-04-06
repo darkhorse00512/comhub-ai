@@ -72,6 +72,7 @@ async function emitResultMessages(
   socket: Socket,
   messages: WorkflowMessage[],
   voiceSettings: ResolvedVoiceSettings | null,
+  startIndex: number = 0,
 ): Promise<void> {
   // Emit system messages immediately
   for (const msg of messages) {
@@ -85,11 +86,11 @@ async function emitResultMessages(
   if (speakable.length === 0) return;
 
   // Tell client how many audio messages to expect (for ordering)
-  socket.emit('workflow:audio-start', { count: speakable.length });
+  socket.emit('workflow:audio-start', { count: startIndex + speakable.length });
 
   // Fire ALL TTS generations in parallel — each emits as soon as ready
   await Promise.all(
-    speakable.map((msg, idx) => generateAndEmitAudio(socket, msg, voiceSettings, idx))
+    speakable.map((msg, idx) => generateAndEmitAudio(socket, msg, voiceSettings, startIndex + idx))
   );
 }
 
@@ -120,19 +121,35 @@ export async function handleStreamingMessage(
     // Process through workflow engine (LLM + transition logic)
     const result = await session.engine.processMessage(message);
 
-    // Pipeline: emit system messages + generate TTS for audio messages in parallel
-    await emitResultMessages(socket, result.messages, session.voiceSettings);
+    // Emit dialogue response immediately — client starts playing
+    await emitResultMessages(socket, result.messages, session.voiceSettings, 0);
+
+    let finalResult = result;
+
+    // If transition is pending, execute it and emit those messages too
+    if (result.transitionPending) {
+      const mainSpeakableCount = result.messages.filter(
+        m => m.type === 'ai' || m.type === 'scripted'
+      ).length;
+
+      const transitionResult = await session.engine.executePendingTransition();
+      if (transitionResult) {
+        // Emit transition messages with indices continuing from main messages
+        await emitResultMessages(socket, transitionResult.messages, session.voiceSettings, mainSpeakableCount);
+        finalResult = transitionResult;
+      }
+    }
 
     // Emit completion signal
     socket.emit('workflow:done', {
-      isComplete: result.isComplete,
-      waitingForInput: result.waitingForInput,
-      currentStage: result.currentStage,
+      isComplete: finalResult.isComplete,
+      waitingForInput: finalResult.waitingForInput,
+      currentStage: finalResult.currentStage,
       collectedFields: session.engine.getFields(),
       processingMs: Date.now() - startMs,
     });
 
-    if (result.isComplete) {
+    if (finalResult.isComplete) {
       streamingSessions.delete(sessionId);
     }
 

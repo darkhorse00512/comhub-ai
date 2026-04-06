@@ -99,12 +99,43 @@ class SocketService {
           }
           const nodes = agent.config.flow.nodes;
           const edges = agent.config.flow.edges || [];
-          const aiModel = agent.config?.settings?.aiModel || '';
+          const settings = agent.config?.settings || {};
+          const aiModel = settings.aiModel || '';
+
+          // Resolve STT config (ElevenLabs API key for realtime STT)
+          let sttApiKey = settings.elevenlabsApiKey || '';
+          if (settings.ttsProvider === 'comhubai' && settings.comhubaiVoiceModelId) {
+            const { data: voiceModel } = await supabase
+              .from('voice_models')
+              .select('elevenlabs_api_key')
+              .eq('id', settings.comhubaiVoiceModelId)
+              .eq('is_active', true)
+              .single();
+            if (voiceModel?.elevenlabs_api_key) {
+              sttApiKey = voiceModel.elevenlabs_api_key;
+            }
+          }
+
           const sessionId = await streamingWorkflow.startStreamingSession(
             socket, data.agentId, userId, nodes, edges, data.direction, aiModel,
           );
           if (sessionId) {
             socket.data.workflowSessionId = sessionId;
+
+            // Emit additional config that the client needs for STT and call behavior
+            socket.emit('workflow:config', {
+              sttConfig: {
+                apiKey: sttApiKey,
+                language: settings.language || 'en',
+              },
+              callSettings: {
+                onIdleMessage: settings.onIdleMessage || '',
+                onIdleTimeout: settings.onIdleTimeout || 10,
+                onIdleThreshold: settings.onIdleThreshold || 3,
+                onIdleTerminationMessage: settings.onIdleTerminationMessage || '',
+                maxCallDuration: settings.maxCallDuration || 300,
+              },
+            });
           }
         } catch (err) {
           logger.error('workflow:start error', { error: err });

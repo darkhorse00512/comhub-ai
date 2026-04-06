@@ -48,6 +48,10 @@ interface UseWorkflowStreamOptions {
     currentStage: string | null;
     voiceInfo?: Record<string, string>;
   }) => void;
+  onConfig?: (data: {
+    sttConfig: { apiKey: string; language: string };
+    callSettings: Record<string, any>;
+  }) => void;
 }
 
 export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
@@ -103,6 +107,10 @@ export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
 
     socket.on("workflow:error", (data) => {
       optsRef.current.onError?.(data.error);
+    });
+
+    socket.on("workflow:config", (data) => {
+      optsRef.current.onConfig?.(data);
     });
 
     socket.on("workflow:ended", (data) => {

@@ -280,9 +280,18 @@ const TestAgentModal = ({
         setCollectedFields((prev) => ({ ...prev, ...data.collectedFields }));
         collectedFieldsRef.current = { ...collectedFieldsRef.current, ...data.collectedFields };
       }
-      if (data.processingMs) {
-        addMessage("system", `Server: ${data.processingMs}ms`);
-      }
+      // WS pipeline timing
+      const t0 = userSpeechEndRef.current;
+      const playStart = audioPlaybackStartRef.current;
+      const ttfb = t0 && playStart ? playStart - t0 : 0;
+      const serverMs = data.processingMs || 0;
+      const parts: string[] = [];
+      if (serverMs > 0) parts.push(`Server: ${serverMs}ms`);
+      if (ttfb > 0) parts.push(`TTFB: ${ttfb}ms`);
+      if (parts.length > 0) addMessage("system", parts.join(" | "));
+      userSpeechEndRef.current = 0;
+      audioPlaybackStartRef.current = 0;
+      audioPlaybackEndRef.current = 0;
       // Wait for all audio to finish playing, then start recording
       const waitForAudioDone = () => {
         if (isPlayingQueueRef.current || audioBufferRef.current.size > 0) {
@@ -306,6 +315,17 @@ const TestAgentModal = ({
       isLoadingRef.current = false;
       if (callModeRef.current === "audio" && isCallActiveRef.current) {
         startAutoRecordingRef.current();
+      }
+    },
+    onConfig: (data) => {
+      // Store STT config and call settings from WS session
+      if (data.sttConfig?.apiKey) {
+        sttApiKeyRef.current = data.sttConfig.apiKey;
+        sttLanguageRef.current = data.sttConfig.language || "en";
+      }
+      if (data.callSettings) {
+        setCallSettings(data.callSettings as any);
+        callSettingsRef.current = data.callSettings as any;
       }
     },
     onStarted: (data) => {
@@ -855,10 +875,11 @@ const TestAgentModal = ({
       //   → user finishes → amplitude drops for 1s → VAD finalizes
       //   → OR: no new transcript for 1.5s → timer finalizes (fallback)
       const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech (sensitive)
-      const VAD_SILENCE_DURATION_MS = 1000;  // 1s of amplitude silence after speech = done
+      const VAD_SILENCE_SHORT_MS = 500;     // For short utterances (≤3 words): 500ms silence = done
+      const VAD_SILENCE_LONG_MS = 700;      // For longer utterances: 700ms silence = done
       const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
-      const PARTIAL_TIMEOUT_MS = 1500;       // 1.5s without new partial = done (fallback)
-      const COMMIT_WAIT_MS = 1200;           // 1.2s after last committed chunk (fallback)
+      const PARTIAL_TIMEOUT_MS = 1000;       // 1s without new partial = done (fallback)
+      const COMMIT_WAIT_MS = 800;            // 800ms after last committed chunk (fallback)
 
       let vadSpeechActive = false;
       let vadSilenceStartMs = 0;
@@ -1015,7 +1036,7 @@ const TestAgentModal = ({
               partialCommitTimer = setTimeout(() => {
                 const latestFinal = (fullTranscript + " " + currentPartial).trim();
                 finalizeTranscript(latestFinal || final, "eleven_vad_end_of_speech");
-              }, 300);
+              }, 150);
             }
 
           } else if (msg.message_type === "error") {
@@ -1107,15 +1128,18 @@ const TestAgentModal = ({
 
           if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
             const silenceDuration = Date.now() - vadSilenceStartMs;
-            if (silenceDuration >= VAD_SILENCE_DURATION_MS) {
-              const pendingText = (fullTranscript + " " + currentPartial).trim();
+            // Adaptive silence threshold: short answers ("yes") need less silence
+            const pendingText = (fullTranscript + " " + currentPartial).trim();
+            const wordCount = pendingText.split(/\s+/).filter(Boolean).length;
+            const silenceThreshold = wordCount <= 3 ? VAD_SILENCE_SHORT_MS : VAD_SILENCE_LONG_MS;
+            if (silenceDuration >= silenceThreshold) {
               if (pendingText && !isProcessing) {
                 vadFinalizeScheduled = true;
-                console.log(`[STT] VAD: silence ${silenceDuration}ms after speech — finalizing`);
+                console.log(`[STT] VAD: silence ${silenceDuration}ms (threshold=${silenceThreshold}ms, words=${wordCount}) — finalizing`);
                 vadFinalizeTimer = setTimeout(() => {
                   const final = (fullTranscript + " " + currentPartial).trim();
-                  if (final) finalizeTranscript(final, "amplitude_vad_1s_silence");
-                }, 100);
+                  if (final) finalizeTranscript(final, `amplitude_vad_${silenceThreshold}ms`);
+                }, 50);
               }
             }
           }
@@ -1470,6 +1494,8 @@ const TestAgentModal = ({
         // Reset audio index for new turn
         nextPlayIndexRef.current = 0;
         audioBufferRef.current.clear();
+        audioPlaybackStartRef.current = 0;
+        audioPlaybackEndRef.current = 0;
         const sent = wsSendMessage(text);
         if (sent) {
           // Don't await — the onDone callback handles recording restart and loading state
@@ -1661,59 +1687,69 @@ const TestAgentModal = ({
         }, maxDur * 1000);
       }
 
-      // Start workflow via HTTP
-      const result = await startWorkflowCallAPI(activeTab);
+      // --- Start workflow ---
+      // Audio mode: use WebSocket for low-latency streaming (no HTTP round-trip)
+      // Text mode: use HTTP (simpler, no audio needed)
+      if (callMode === "audio" && wsConnected) {
+        // WebSocket mode — initial messages + config arrive via events
+        // (onStarted, onConfig, onAudio, onDone callbacks handle everything)
+        startWorkflow(agentId, activeTab);
 
-      if (!result || !result.success) {
         toast({
-          title: "Workflow Error",
-          description:
-            result?.error ||
-            `Failed to start workflow. Check if the workflow has a valid ${activeTab} call direction node.`,
-          variant: "destructive",
+          title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
+          description: "Audio mode active (WebSocket).",
         });
-        setIsCallActive(false);
-        isCallActiveRef.current = false;
-        setIsLoading(false);
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
+        // Don't setIsLoading(false) here — onStarted/onDone will do it
+      } else {
+        // HTTP mode (text calls or WS not connected)
+        const result = await startWorkflowCallAPI(activeTab);
+
+        if (!result || !result.success) {
+          toast({
+            title: "Workflow Error",
+            description:
+              result?.error ||
+              `Failed to start workflow. Check if the workflow has a valid ${activeTab} call direction node.`,
+            variant: "destructive",
+          });
+          setIsCallActive(false);
+          isCallActiveRef.current = false;
+          setIsLoading(false);
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          return;
         }
-        return;
-      }
 
-      workflowSessionIdRef.current = result.sessionId || null;
+        workflowSessionIdRef.current = result.sessionId || null;
 
-      // Store STT config for realtime streaming
-      if (result.sttConfig?.apiKey) {
-        sttApiKeyRef.current = result.sttConfig.apiKey;
-        sttLanguageRef.current = result.sttConfig.language || "en";
-      }
+        if (result.sttConfig?.apiKey) {
+          sttApiKeyRef.current = result.sttConfig.apiKey;
+          sttLanguageRef.current = result.sttConfig.language || "en";
+        }
 
-      if (result.callSettings) {
-        setCallSettings(result.callSettings);
-        callSettingsRef.current = result.callSettings;
-      }
+        if (result.callSettings) {
+          setCallSettings(result.callSettings);
+          callSettingsRef.current = result.callSettings;
+        }
 
-      setIsLoading(false);
+        setIsLoading(false);
 
-      toast({
-        title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
-        description: callMode === "audio"
-          ? "Audio mode active."
-          : "Text mode active.",
-      });
+        toast({
+          title: `${activeTab === "inbound" ? "Inbound" : "Outbound"} Test Call Started`,
+          description: "Text mode active.",
+        });
 
-      // Play initial messages
-      await processWorkflowResult(result);
+        await processWorkflowResult(result);
 
-      // Start recording after initial messages play (audio mode)
-      if (
-        !result.isComplete &&
-        callModeRef.current === "audio" &&
-        isCallActiveRef.current
-      ) {
-        startAutoRecording();
+        if (
+          !result.isComplete &&
+          callModeRef.current === "audio" &&
+          isCallActiveRef.current
+        ) {
+          startAutoRecording();
+        }
       }
     } catch (error) {
       console.error("Error starting call:", error);
@@ -1732,6 +1768,8 @@ const TestAgentModal = ({
     startWorkflowCallAPI,
     processWorkflowResult,
     startAutoRecording,
+    wsConnected,
+    startWorkflow,
   ]);
 
   // --- End call ---
