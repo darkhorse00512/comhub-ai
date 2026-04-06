@@ -882,16 +882,18 @@ const TestAgentModal = ({
       // Flow: user speaks → partials arrive → user pauses between words (timers reset)
       //   → user finishes → amplitude drops for 400ms → VAD finalizes
       //   → OR: no new transcript for 0.8s → timer finalizes (fallback)
-      const VAD_SPEECH_THRESHOLD = 0.006;    // RMS above this = speech (more sensitive)
-      const VAD_SILENCE_MS = 400;            // 400ms of amplitude silence after speech = done
+      const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech
+      const VAD_SILENCE_MS = 400;            // 400ms of smoothed silence after speech = done
       const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
       const PARTIAL_TIMEOUT_MS = 800;        // 0.8s without new partial = done (fallback)
       const COMMIT_WAIT_MS = 700;            // 0.7s after last committed chunk (fallback)
+      const VAD_SMOOTHING = 3;               // Require N consecutive silent chunks to start silence timer
 
       let vadSpeechActive = false;
       let vadSilenceStartMs = 0;
       let vadFinalizeScheduled = false;
       let vadFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+      let vadSilentChunkCount = 0;           // Consecutive chunks below threshold
 
       // Start the idle timer only after speaking stops (not when WebSocket opens)
       const startIdleTimer = () => {
@@ -997,10 +999,11 @@ const TestAgentModal = ({
             currentPartial = msg.text || "";
             if (currentPartial.trim()) {
               updateLiveTranscript(currentPartial);
-              // User IS speaking — cancel ALL finalization signals
+              // User IS speaking — cancel idle timer and finalize timer
               resetIdleTimer();
               if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-              vadSilenceStartMs = 0;    // Reset silence counter
+              // NOTE: Do NOT reset vadSilenceStartMs here — amplitude VAD owns that.
+              // Transcript events arrive with delay and would keep resetting the timer.
 
               // Start max utterance safety timer on first speech
               if (!maxUtteranceTimer) {
@@ -1036,10 +1039,10 @@ const TestAgentModal = ({
 
             // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            // User spoke — cancel ALL finalization signals
+            // User spoke — cancel idle and finalize timers
             resetIdleTimer();
             if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-            vadSilenceStartMs = 0;
+            // NOTE: Do NOT reset vadSilenceStartMs — amplitude VAD owns silence timing.
 
             const chunk = (msg.text || "").trim();
             if (chunk) {
@@ -1055,19 +1058,17 @@ const TestAgentModal = ({
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
-            // IGNORE while agent is speaking or if no real speech detected
-            if (isSpeakingRef.current || isLoadingRef.current || !vadSpeechActive) return;
+            // IGNORE while agent is speaking
+            if (isSpeakingRef.current || isLoadingRef.current) return;
 
-            // ElevenLabs VAD detected speech ended — finalize almost immediately
-            console.log("[STT] ElevenLabs end_of_speech detected");
-            if (partialCommitTimer) clearTimeout(partialCommitTimer);
+            // ElevenLabs neural VAD detected speech ended — this is the BEST
+            // signal we have. Trust it even without amplitude confirmation.
+            // Finalize immediately if we have any transcript text.
             const final = (fullTranscript + " " + currentPartial).trim();
             if (final) {
-              // Minimal delay to catch any in-flight committed_transcript
-              partialCommitTimer = setTimeout(() => {
-                const latestFinal = (fullTranscript + " " + currentPartial).trim();
-                finalizeTranscript(latestFinal || final, "eleven_vad_end_of_speech");
-              }, 50);
+              console.log("[STT] ElevenLabs end_of_speech — finalizing immediately");
+              if (partialCommitTimer) clearTimeout(partialCommitTimer);
+              finalizeTranscript(final, "eleven_vad_end_of_speech");
             }
 
           } else if (msg.message_type === "error") {
@@ -1134,6 +1135,7 @@ const TestAgentModal = ({
           // Reset VAD state while speaking — don't detect silence from echo
           vadSpeechActive = false;
           vadSilenceStartMs = 0;
+          vadSilentChunkCount = 0;
           vadFinalizeScheduled = false;
           if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeTimer = null; }
           if (partialCommitTimer) { clearTimeout(partialCommitTimer); partialCommitTimer = null; }
@@ -1163,6 +1165,9 @@ const TestAgentModal = ({
         }
 
         // --- Amplitude VAD (only when agent is NOT speaking) ---
+        // Uses smoothed energy: require VAD_SMOOTHING consecutive silent chunks
+        // before starting the silence timer. This prevents brief noise spikes
+        // (fan hum, keyboard clicks) from resetting the entire silence counter.
         if (!isSpeaking) {
           let sumSquares = 0;
           for (let i = 0; i < pcmFloat.length; i++) {
@@ -1172,10 +1177,20 @@ const TestAgentModal = ({
 
           if (rms > VAD_SPEECH_THRESHOLD) {
             vadSpeechActive = true;
-            vadSilenceStartMs = 0;
+            vadSilentChunkCount = 0;
+            // Only reset silence timer if user is genuinely still speaking
+            // (not just a brief noise spike) — require speech in this chunk
+            if (vadSilenceStartMs > 0) {
+              vadSilenceStartMs = 0; // Reset — user spoke again
+            }
             if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-          } else if (vadSpeechActive && vadSilenceStartMs === 0) {
-            vadSilenceStartMs = Date.now();
+          } else {
+            vadSilentChunkCount++;
+            // Start silence timer only after N consecutive silent chunks
+            // (~32ms per chunk × 3 = ~96ms of confirmed silence before timer starts)
+            if (vadSpeechActive && vadSilenceStartMs === 0 && vadSilentChunkCount >= VAD_SMOOTHING) {
+              vadSilenceStartMs = Date.now();
+            }
           }
 
           if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
@@ -1185,7 +1200,6 @@ const TestAgentModal = ({
               if (pendingText && !isProcessing) {
                 vadFinalizeScheduled = true;
                 console.log(`[STT] VAD: silence ${silenceDuration}ms — finalizing`);
-                // Finalize immediately — VAD already waited VAD_SILENCE_MS
                 const final = (fullTranscript + " " + currentPartial).trim();
                 if (final) finalizeTranscript(final, `amplitude_vad_${VAD_SILENCE_MS}ms`);
               }
