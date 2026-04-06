@@ -129,10 +129,10 @@ const DEFAULT_CALL_SETTINGS: CallSettings = {
   silenceTimeout: 2,
   interruptionSensitivity: "low",
   interruptionWordCountThreshold: 1,
-  onIdleMessage: "",
-  onIdleTimeout: 10,
+  onIdleMessage: "Are you still there?",
+  onIdleTimeout: 3,
   onIdleThreshold: 3,
-  onIdleTerminationMessage: "",
+  onIdleTerminationMessage: "It seems you're no longer available. Goodbye!",
 };
 
 interface AgentVoiceConfig {
@@ -896,10 +896,10 @@ const TestAgentModal = ({
       // Start the idle timer only after speaking stops (not when WebSocket opens)
       const startIdleTimer = () => {
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 10) * 1000;
+        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 3) * 1000;
         silenceTimerRef.current = setTimeout(() => {
           if (sttWsRef.current && !isProcessing) {
-            console.log("[STT] Idle timeout — closing");
+            console.log("[STT] Idle timeout — closing STT after", onIdleTimeoutMs, "ms");
             stopSTT();
           }
         }, onIdleTimeoutMs);
@@ -1389,10 +1389,6 @@ const TestAgentModal = ({
       if (result.transitionPending && deferredFetchPromise) {
         await deferredFetchPromise;
         deferredFetchPromise = null;
-
-        if (!deferredTransitionResult) {
-          console.warn('[processWorkflowResult] Transition pending but no deferred result received — transition may have failed on server');
-        }
 
         if (deferredTransitionResult) {
           // Display system messages and play audio from transition result

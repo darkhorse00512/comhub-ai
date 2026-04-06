@@ -129,10 +129,10 @@ class SocketService {
                 language: settings.language || 'en',
               },
               callSettings: {
-                onIdleMessage: settings.onIdleMessage || '',
-                onIdleTimeout: settings.onIdleTimeout || 10,
+                onIdleMessage: settings.onIdleMessage || 'Are you still there?',
+                onIdleTimeout: settings.onIdleTimeout || 3,
                 onIdleThreshold: settings.onIdleThreshold || 3,
-                onIdleTerminationMessage: settings.onIdleTerminationMessage || '',
+                onIdleTerminationMessage: settings.onIdleTerminationMessage || 'It seems you are no longer available. Goodbye!',
                 maxCallDuration: settings.maxCallDuration || 300,
               },
             });

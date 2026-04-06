@@ -1687,10 +1687,10 @@ export const startWorkflowCall = async (req: AuthRequest, res: Response): Promis
       silenceTimeout: Number(s.silenceTimeout) || 2,
       interruptionSensitivity: s.interruptionSensitivity || 'low',
       interruptionWordCountThreshold: Number(s.interruptionWordCountThreshold) || 1,
-      onIdleMessage: s.onIdleMessage || '',
-      onIdleTimeout: Number(s.onIdleTimeout) || 10,
+      onIdleMessage: s.onIdleMessage || 'Are you still there?',
+      onIdleTimeout: Number(s.onIdleTimeout) || 3,
       onIdleThreshold: Number(s.onIdleThreshold) || 3,
-      onIdleTerminationMessage: s.onIdleTerminationMessage || '',
+      onIdleTerminationMessage: s.onIdleTerminationMessage || 'It seems you are no longer available. Goodbye!',
     };
 
     // Build voice info for display (mask sensitive keys)
@@ -1883,63 +1883,57 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       return msg;
     });
 
-    // --- Handle transition (phase 2) inline ---
-    // Run transition + TTS synchronously before sending response.
-    // This ensures the client always gets the transition result (e.g., Survey opening)
-    // instead of relying on a fragile background task + deferred audio fetch.
-    let transitionResultForResponse: any = null;
+    // --- Handle deferred content (transition phase 2 only) ---
     if (result.transitionPending) {
-      try {
-        const transitionResult = await withSessionLock(sessionId, async () => {
-          return await session.engine.executePendingTransition();
-        });
+      deferredAudioKey = `${sessionId}-${Date.now()}`;
+      deferredAudioCache.set(deferredAudioKey, []); // placeholder
+      const capturedKey = deferredAudioKey;
+      const capturedSession = session;
 
-        if (transitionResult) {
-          // Generate TTS for transition messages
+      // Fire-and-forget: run transition + TTS in background
+      (async () => {
+        try {
+          const transitionResult = await withSessionLock(sessionId, async () => {
+            return await capturedSession.engine.executePendingTransition();
+          });
+
+          if (!transitionResult) {
+            deferredAudioCache.delete(capturedKey);
+            return;
+          }
+
+          if (transitionResult.isComplete) {
+            workflowSessions.delete(sessionId);
+            deleteSessionFromDisk(sessionId);
+          } else {
+            persistSession(sessionId, capturedSession);
+          }
+
           const transitionSpeakable = transitionResult.messages.filter(
             (m: any) => m.type === 'ai' || m.type === 'scripted'
           );
           const transitionAudio = await Promise.all(
             transitionSpeakable.map(async (msg: any) => {
               try {
-                const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
+                const buffer = await agentVoiceService.generateTTS(msg.text, capturedSession.voiceSettings ?? null);
                 return buffer.toString('base64');
               } catch { return null; }
             })
           );
 
-          // Embed audio in transition messages
-          let trSpeakableIdx = 0;
-          const transitionMessagesWithAudio = transitionResult.messages.map((msg: any) => {
-            if (msg.type === 'ai' || msg.type === 'scripted') {
-              const audio = transitionAudio[trSpeakableIdx] || null;
-              trSpeakableIdx++;
-              return { ...msg, audioBase64: audio };
-            }
-            return msg;
-          });
+          deferredAudioCache.set(capturedKey, transitionAudio);
+          deferredMessagesCache.set(capturedKey, transitionResult);
 
-          transitionResultForResponse = {
-            ...transitionResult,
-            messages: transitionMessagesWithAudio,
-            collectedFields: session.engine.getFields(),
-          };
-
-          if (transitionResult.isComplete) {
-            persistSession(sessionId, session);
-            setTimeout(() => {
-              if (workflowSessions.has(sessionId)) {
-                workflowSessions.delete(sessionId);
-                deleteSessionFromDisk(sessionId);
-              }
-            }, 60000);
-          } else {
-            persistSession(sessionId, session);
-          }
+          setTimeout(() => {
+            deferredAudioCache.delete(capturedKey);
+            deferredMessagesCache.delete(capturedKey);
+          }, 30000);
+        } catch (err) {
+          logger.error('Background transition failed', { error: err });
+          deferredAudioCache.delete(capturedKey);
+          deferredMessagesCache.delete(capturedKey);
         }
-      } catch (err) {
-        logger.error('Inline transition failed', { error: err, sessionId });
-      }
+      })();
     } else {
       // No transition — persist state.
       // When isComplete, keep session alive so endWorkflowCall can run post-call analysis.
@@ -1972,23 +1966,15 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       ttsFirstAudioMs,
       audioEmbedded: allMainAudio.filter(Boolean).length,
       transitionPending: result.transitionPending || false,
-      hasTransitionResult: !!transitionResultForResponse,
+      deferredAudioKey,
       engineTiming,
     });
 
-    // If transition was executed inline, merge its messages into the response
-    // so the client gets everything in one response (no deferred fetch needed).
-    const finalMessages = transitionResultForResponse
-      ? [...messagesWithAudio, ...transitionResultForResponse.messages]
-      : messagesWithAudio;
-    const finalResult = transitionResultForResponse || result;
-
     res.status(200).json({
       success: true,
-      ...finalResult,
-      messages: finalMessages,
-      // Include original processMessage messages count so client knows which are phase 1 vs phase 2
-      transitionPending: false, // Transition already executed — no deferred fetch needed
+      ...result,
+      messages: messagesWithAudio,
+      deferredAudioKey: deferredAudioKey || undefined,
       collectedFields: session.engine.getFields(),
       timing: {
         // Pipeline steps (offsets from request received):

@@ -50,7 +50,7 @@ async function startServer(): Promise<void> {
       }
 
       // Connect to ElevenLabs with API key header
-      // Aggressive VAD settings — optimized for low-latency speech-end detection.
+      // Aggressive VAD settings for low-latency speech-end detection.
       // The client-side amplitude VAD (400ms silence) is the primary finalization signal.
       // ElevenLabs VAD commits chunks which the client accumulates.
       const elParams = new URLSearchParams({

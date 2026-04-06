@@ -29,10 +29,10 @@ const DEFAULT_CALL_SETTINGS: CallSettings = {
   silenceTimeout: 2,
   interruptionSensitivity: 'low',
   interruptionWordCountThreshold: 1,
-  onIdleMessage: '',
-  onIdleTimeout: 10,
+  onIdleMessage: 'Are you still there?',
+  onIdleTimeout: 3,
   onIdleThreshold: 3,
-  onIdleTerminationMessage: '',
+  onIdleTerminationMessage: 'It seems you are no longer available. Goodbye!',
 };
 
 interface ActiveConversation {
