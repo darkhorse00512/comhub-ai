@@ -742,7 +742,8 @@ ${substituted}`;
 - Do NOT repeat questions already asked above.
 - [NEXT] means this stage is complete. Only append it when ALL tasks are done.
 - NEVER append [NEXT] if you just asked a question — wait for the answer.
-- If caller is unintelligible, append [FALLBACK].`;
+- If caller is unintelligible, append [FALLBACK].
+- IMPORTANT: Always start this stage from the VERY FIRST step of your instructions. Do NOT skip any steps.`;
 
     return prompt;
   }
@@ -757,7 +758,8 @@ ${substituted}`;
    */
   private async buildInitialDialogueHistory(
     node: WorkflowNode,
-    firstUserMessage?: string
+    firstUserMessage?: string,
+    isStageTransition?: boolean
   ): Promise<ChatMessage[]> {
     let fullHistoryMessages: ChatMessage[] | null = null;
 
@@ -779,11 +781,25 @@ ${substituted}`;
     // Full history from ALL stages confuses the AI about its current role.
     // Instead, buildDialogueSystemPrompt includes only THIS stage's conversation
     // from conversationContext, which is sufficient and stage-scoped.
-    const stagePrompt = this.buildDialogueSystemPrompt(node);
+    let stagePrompt = this.buildDialogueSystemPrompt(node);
+
+    // When transitioning from a previous stage, add explicit instruction to the
+    // system prompt so the AI knows this is a new stage and must start from Step 1.
+    // This MUST be in the system prompt (not a user message) because user-role
+    // messages are interpreted as actual caller speech by the model.
+    if (isStageTransition) {
+      stagePrompt += `\n\n## STAGE ENTRY:
+You are entering this stage NOW for the first time. The caller is already on the line from a previous stage.
+- Do NOT greet or introduce yourself again.
+- Start from the VERY FIRST step of your task instructions above. Do NOT skip any steps.
+- Say ONLY the first step's text. Wait for the caller's response before proceeding to the next step.`;
+    }
 
     const history: ChatMessage[] = [{ role: 'system', content: stagePrompt }];
 
     if (firstUserMessage) {
+      // For stage transitions, the trigger is a minimal system-like prompt,
+      // not actual caller speech. Keep it short to avoid confusing the model.
       history.push({ role: 'user', content: firstUserMessage });
     }
 
@@ -806,7 +822,7 @@ ${substituted}`;
         const agentText = allMessages[i].content;
         const userText = allMessages[i + 1].content.trim();
         if (!userText || userText === '[SPEECH_NOT_RECOGNIZED]') continue;
-        if (userText.startsWith('Continue from where')) continue;
+        if (userText.startsWith('Continue from where') || userText.startsWith('[The caller is on the line')) continue;
 
         const key = agentText.substring(0, 60);
         if (!seen.has(key)) {
@@ -1786,7 +1802,8 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
             });
 
             // Build dialogue history with full call history as proper chat messages
-            this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, lastCtx.text);
+            const hasContext = this.state.conversationContext.length > 1;
+            this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, lastCtx.text, hasContext);
             this.state.dialogueTurnCount++;
 
             const aiResponse = await this.generateAIResponseStreaming(() => {});
@@ -1845,12 +1862,16 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
 
           // No prior caller response — generate an opening AI message
           const hasContext = this.state.conversationContext.length > 0;
+          // For stage transitions: use a minimal user message. The detailed
+          // "start from Step 1" instructions are in the system prompt (via isStageTransition).
+          // Using a short user message prevents the model from interpreting long
+          // instruction text as actual caller speech.
           const trigger = hasContext
-            ? 'You are now entering a NEW stage of the call. Start this stage from the VERY BEGINNING of your stage instructions (Step 1). The caller is already on the line from a previous stage — do NOT greet or introduce yourself again. Follow your stage instructions exactly, starting from the first step.'
+            ? '[The caller is on the line. Begin.]'
             : 'The caller just connected. Follow your stage instructions to begin the conversation.';
 
           // Build dialogue history with full call history as proper chat messages
-          this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, trigger);
+          this.state.dialogueHistory = await this.buildInitialDialogueHistory(node, trigger, hasContext);
 
           const openingResponse = await this.generateAIResponseStreaming(() => {});
 
