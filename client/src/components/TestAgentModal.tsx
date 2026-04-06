@@ -273,6 +273,14 @@ const TestAgentModal = ({
       audioBufferRef.current.set(msg.index, msg);
       playAudioQueue();
     },
+    onAnalysis: (data) => {
+      // Post-call analysis results arrived (summary + AI extraction)
+      // This fires AFTER the call has ended and the server completed analysis
+      if (data.collectedFields && Object.keys(data.collectedFields).length > 0) {
+        setCollectedFields((prev) => ({ ...prev, ...data.collectedFields }));
+        collectedFieldsRef.current = { ...collectedFieldsRef.current, ...data.collectedFields };
+      }
+    },
     onDone: (data) => {
       // Called after ALL messages for a turn are emitted
       setCurrentWorkflowStep(data.currentStage || (data.isComplete ? "Workflow completed" : null));

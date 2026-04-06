@@ -1935,10 +1935,18 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
         }
       })();
     } else {
-      // No transition — persist state
+      // No transition — persist state.
+      // When isComplete, keep session alive so endWorkflowCall can run post-call analysis.
+      // Session cleanup happens in endWorkflowCall. Add a safety timeout to avoid leaks.
       if (result.isComplete) {
-        workflowSessions.delete(sessionId);
-        deleteSessionFromDisk(sessionId);
+        persistSession(sessionId, session);
+        setTimeout(() => {
+          if (workflowSessions.has(sessionId)) {
+            workflowSessions.delete(sessionId);
+            deleteSessionFromDisk(sessionId);
+            logger.info('Workflow session auto-cleaned after timeout', { sessionId });
+          }
+        }, 60000);
       } else {
         persistSession(sessionId, session);
       }
@@ -2051,11 +2059,17 @@ export const endWorkflowCall = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    // Get session from memory or disk to extract collected fields before cleanup
+    // Get session from memory or disk, run post-call analysis, then cleanup
     let collectedFields: Record<string, any> = {};
     const session = workflowSessions.get(sessionId) || loadSessionFromDisk(sessionId);
     if (session) {
-      collectedFields = session.engine.getFields();
+      // Perform post-call analysis (summary + AI extraction) now that call has ended
+      try {
+        collectedFields = await session.engine.performPostCallAnalysis();
+      } catch (err) {
+        logger.error('Post-call analysis failed in endWorkflowCall', { sessionId, error: err });
+        collectedFields = session.engine.getFields();
+      }
       workflowSessions.delete(sessionId);
     }
     deleteSessionFromDisk(sessionId);

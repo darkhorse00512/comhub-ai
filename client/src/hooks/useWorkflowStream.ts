@@ -40,6 +40,10 @@ interface UseWorkflowStreamOptions {
     collectedFields?: Record<string, any>;
     processingMs?: number;
   }) => void;
+  /** Fired after post-call analysis completes (summary + AI extraction), after the call has ended */
+  onAnalysis?: (data: {
+    collectedFields: Record<string, any>;
+  }) => void;
   onError?: (error: string) => void;
   onStarted?: (data: {
     sessionId: string;
@@ -103,6 +107,10 @@ export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
 
     socket.on("workflow:done", (data) => {
       optsRef.current.onDone?.(data);
+    });
+
+    socket.on("workflow:analysis", (data) => {
+      optsRef.current.onAnalysis?.(data);
     });
 
     socket.on("workflow:error", (data) => {

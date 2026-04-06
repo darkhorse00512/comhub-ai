@@ -594,6 +594,28 @@ class VoiceConversationService {
           await this.saveMessage(conversation.callSessionId, 'ai', responseText, aiAudioUrl);
           conversation.history.push({ role: 'assistant', content: responseText });
 
+          // Fire-and-forget: post-call analysis (summary + AI extraction) runs
+          // AFTER the TwiML is returned, so the caller hears goodbye immediately.
+          const engine = conversation.workflowEngine;
+          const callSessionId = conversation.callSessionId;
+          if (engine) {
+            engine.performPostCallAnalysis().then(async (fields) => {
+              if (Object.keys(fields).length > 0) {
+                try {
+                  await this.supabase
+                    .from('call_sessions')
+                    .update({ collected_data: fields })
+                    .eq('id', callSessionId);
+                  logger.info('Post-call analysis saved to DB', { callSessionId, fieldCount: Object.keys(fields).length });
+                } catch (dbErr) {
+                  logger.error('Failed to save post-call analysis to DB', { callSessionId, error: dbErr });
+                }
+              }
+            }).catch((err) => {
+              logger.error('Post-call analysis failed for voice call', { callSessionId, error: err });
+            });
+          }
+
           if (result.transferTo) {
             const response = new VoiceResponse();
             response.play(aiAudioUrl);

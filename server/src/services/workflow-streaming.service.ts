@@ -140,16 +140,32 @@ export async function handleStreamingMessage(
       }
     }
 
-    // Emit completion signal
+    // Emit completion signal — send immediately so client can end the call
     socket.emit('workflow:done', {
       isComplete: finalResult.isComplete,
       waitingForInput: finalResult.waitingForInput,
       currentStage: finalResult.currentStage,
-      collectedFields: session.engine.getFields(),
+      collectedFields: finalResult.isComplete ? undefined : session.engine.getFields(),
       processingMs: Date.now() - startMs,
     });
 
     if (finalResult.isComplete) {
+      // Perform post-call analysis AFTER emitting done (call ends first, then analysis)
+      try {
+        const analysisFields = await session.engine.performPostCallAnalysis();
+        socket.emit('workflow:analysis', {
+          collectedFields: analysisFields,
+        });
+      } catch (err) {
+        logger.error('Post-call analysis failed in streaming session', {
+          sessionId,
+          error: err instanceof Error ? err.message : err,
+        });
+        // Still emit analysis with whatever fields we have
+        socket.emit('workflow:analysis', {
+          collectedFields: session.engine.getFields(),
+        });
+      }
       streamingSessions.delete(sessionId);
     }
 

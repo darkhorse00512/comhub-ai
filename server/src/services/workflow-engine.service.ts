@@ -58,6 +58,11 @@ export interface WorkflowEngineState {
   completedDialogueNodeIds: string[];
   /** Agent-level AI model override (e.g. "gpt-4o"). Empty = server default. */
   agentAiModel?: string;
+  /** Stored end_call node config for deferred post-call analysis */
+  pendingAnalysis?: {
+    summaryPrompt: string | null;
+    resultDefs: Array<{ name: string; type: string; description?: string; enumValues?: string }>;
+  };
 }
 
 // --- Condition evaluator ---
@@ -306,6 +311,161 @@ export class WorkflowEngine {
 
   getFields(): Record<string, any> {
     return { ...this.state.fields };
+  }
+
+  /**
+   * Perform post-call analysis: summary generation + AI data extraction.
+   * This should be called AFTER the call has ended (hangup / session closed)
+   * so the caller doesn't wait on LLM calls while the call is still active.
+   * Returns the extracted/merged fields.
+   */
+  async performPostCallAnalysis(): Promise<Record<string, any>> {
+    const analysis = this.state.pendingAnalysis;
+    if (!analysis) {
+      logger.info('WorkflowEngine: No pending analysis to perform');
+      return this.getFields();
+    }
+
+    // Clear pending so it's not run twice
+    this.state.pendingAnalysis = undefined;
+
+    // --- Build full conversation transcript ---
+    let conversationText: string;
+    if (this.fetchFullHistory) {
+      try {
+        const fullHistory = await this.fetchFullHistory();
+        conversationText = fullHistory
+          .map((m) => `${m.role}: ${m.content}`)
+          .join('\n');
+        logger.info('WorkflowEngine: Using full DB history for post-call analysis', { messageCount: fullHistory.length });
+      } catch (historyErr) {
+        logger.warn('WorkflowEngine: Failed to fetch full history, falling back to conversationContext', { error: historyErr });
+        conversationText = this.state.conversationContext
+          .map((e) => `${e.role}: ${e.text}`)
+          .join('\n');
+      }
+    } else {
+      conversationText = this.state.conversationContext
+        .map((e) => `${e.role}: ${e.text}`)
+        .join('\n');
+    }
+
+    // --- Generate summary if summaryPrompt is configured ---
+    if (analysis.summaryPrompt) {
+      try {
+        const summaryResult = await gptService.generateWithCustomPrompt(
+          `Here is the full conversation:\n${conversationText}\n\nPlease provide the summary.`,
+          analysis.summaryPrompt,
+        );
+        if (summaryResult.text) {
+          this.state.fields['_summary'] = summaryResult.text;
+          logger.info('WorkflowEngine: Post-call analysis generated summary', { summary: summaryResult.text.substring(0, 200) });
+        }
+      } catch (err) {
+        logger.error('WorkflowEngine: Failed to generate summary in post-call analysis', { error: err });
+      }
+    }
+
+    // --- AI-powered result extraction ---
+    const { resultDefs } = analysis;
+    if (resultDefs.length > 0) {
+      let aiExtracted: Record<string, any> = {};
+      try {
+        const fieldDescriptions = resultDefs
+          .filter(d => d.name)
+          .map(def => {
+            let desc = `- "${def.name}" (type: ${def.type || 'text'})`;
+            if (def.description) desc += `: ${def.description}`;
+            if (def.type === 'enum' && def.enumValues) {
+              desc += ` [allowed values: ${def.enumValues}]`;
+            }
+            if (def.type === 'boolean') {
+              desc += ` [true or false]`;
+            }
+            return desc;
+          })
+          .join('\n');
+
+        const extractionPrompt = `You are a data extraction engine. Analyze the conversation below and extract the requested fields.
+
+CONVERSATION:
+${conversationText}
+
+FIELDS TO EXTRACT:
+${fieldDescriptions}
+
+RULES:
+- Extract values ONLY from what was explicitly said in the conversation.
+- If a field was not discussed or the caller did not provide the information, set it to null.
+- For boolean fields: output true or false.
+- For integer/real fields: output the number only (no units, no text).
+- For enum fields: output one of the allowed values, or null if no match.
+- For text fields: output the exact value mentioned by the caller.
+- If the caller corrected a value, use the LATEST corrected value.
+- Output ONLY valid JSON, no explanation.
+
+Output a JSON object with the field names as keys. Example: {"field1": "value1", "field2": 42, "field3": null}`;
+
+        const extractionResult = await gptService.generateWithCustomPrompt(
+          extractionPrompt,
+          'You are a precise data extraction engine. Output ONLY valid JSON, nothing else.',
+          { maxTokens: 500, temperature: 0.1 }
+        );
+
+        if (extractionResult.text) {
+          let jsonText = extractionResult.text.trim();
+          const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch) jsonText = jsonMatch[1].trim();
+
+          try {
+            aiExtracted = JSON.parse(jsonText);
+            logger.info('WorkflowEngine: Post-call AI extracted results', {
+              extracted: aiExtracted,
+            });
+          } catch (parseErr) {
+            logger.error('WorkflowEngine: Failed to parse AI extraction JSON in post-call analysis', {
+              rawText: extractionResult.text.substring(0, 300),
+              error: parseErr,
+            });
+          }
+        }
+      } catch (err) {
+        logger.error('WorkflowEngine: AI extraction failed in post-call analysis', { error: err });
+      }
+
+      // Merge: workflow fields take precedence, AI fills gaps
+      for (const def of resultDefs) {
+        if (!def.name) continue;
+        let value = this.state.fields[def.name] ?? aiExtracted[def.name] ?? null;
+
+        // Type coercion
+        if (value !== null && value !== undefined && def.type) {
+          switch (def.type) {
+            case 'integer':
+              value = parseInt(String(value), 10) || 0;
+              break;
+            case 'real':
+              value = parseFloat(String(value)) || 0;
+              break;
+            case 'boolean':
+              value = value === true || value === 'true' || value === '1' || value === 1;
+              break;
+            case 'enum': {
+              const allowed = (def.enumValues || '').split(',').map((v: string) => v.trim()).filter(Boolean);
+              if (allowed.length > 0 && !allowed.includes(String(value))) {
+                value = null;
+              }
+              break;
+            }
+          }
+        }
+        this.state.fields[def.name] = value;
+      }
+
+      logger.info('WorkflowEngine: Post-call analysis complete', { fields: this.getFields() });
+    }
+
+    return this.getFields();
   }
 
   isWaitingForInput(): boolean {
@@ -1901,154 +2061,18 @@ Which transition condition is met? Output ONLY the transition name, or NONE if n
         }
 
         case 'end_call': {
-          // --- Build full conversation transcript ---
-          let conversationText: string;
-          if (this.fetchFullHistory) {
-            try {
-              const fullHistory = await this.fetchFullHistory();
-              conversationText = fullHistory
-                .map((m) => `${m.role}: ${m.content}`)
-                .join('\n');
-              logger.info('WorkflowEngine: Using full DB history for end_call analysis', { messageCount: fullHistory.length });
-            } catch (historyErr) {
-              logger.warn('WorkflowEngine: Failed to fetch full history, falling back to conversationContext', { error: historyErr });
-              conversationText = this.state.conversationContext
-                .map((e) => `${e.role}: ${e.text}`)
-                .join('\n');
-            }
-          } else {
-            conversationText = this.state.conversationContext
-              .map((e) => `${e.role}: ${e.text}`)
-              .join('\n');
-          }
-
-          // --- Generate summary if summaryPrompt is configured ---
+          // Store analysis config for deferred post-call analysis.
+          // The actual summary generation and AI extraction happen AFTER the call
+          // ends (via performPostCallAnalysis()), so the caller isn't left waiting
+          // on LLM calls while the call is still active.
           const summaryPrompt = node.data?.summaryPrompt ? this.substituteFieldVariables(node.data.summaryPrompt) : null;
-          if (summaryPrompt) {
-            try {
-              const summaryResult = await gptService.generateWithCustomPrompt(
-                `Here is the full conversation:\n${conversationText}\n\nPlease provide the summary.`,
-                summaryPrompt,
-              );
-              if (summaryResult.text) {
-                this.state.fields['_summary'] = summaryResult.text;
-                logger.info('WorkflowEngine: End node generated summary', { summary: summaryResult.text.substring(0, 200) });
-              }
-            } catch (err) {
-              logger.error('WorkflowEngine: Failed to generate summary', { error: err });
-            }
-          }
-
-          // --- AI-powered result extraction ---
-          // Analyze the full conversation with AI to extract all required data fields.
-          // This extracts data mentioned in conversation (e.g. customer name, property type,
-          // roof area) even if it was never explicitly stored in workflow fields.
           const resultDefs: Array<{ name: string; type: string; description?: string; enumValues?: string }> = node.data?.results || [];
-          if (resultDefs.length > 0) {
-            // First, try AI extraction from the conversation
-            let aiExtracted: Record<string, any> = {};
-            try {
-              const fieldDescriptions = resultDefs
-                .filter(d => d.name)
-                .map(def => {
-                  let desc = `- "${def.name}" (type: ${def.type || 'text'})`;
-                  if (def.description) desc += `: ${def.description}`;
-                  if (def.type === 'enum' && def.enumValues) {
-                    desc += ` [allowed values: ${def.enumValues}]`;
-                  }
-                  if (def.type === 'boolean') {
-                    desc += ` [true or false]`;
-                  }
-                  return desc;
-                })
-                .join('\n');
 
-              const extractionPrompt = `You are a data extraction engine. Analyze the conversation below and extract the requested fields.
-
-CONVERSATION:
-${conversationText}
-
-FIELDS TO EXTRACT:
-${fieldDescriptions}
-
-RULES:
-- Extract values ONLY from what was explicitly said in the conversation.
-- If a field was not discussed or the caller did not provide the information, set it to null.
-- For boolean fields: output true or false.
-- For integer/real fields: output the number only (no units, no text).
-- For enum fields: output one of the allowed values, or null if no match.
-- For text fields: output the exact value mentioned by the caller.
-- If the caller corrected a value, use the LATEST corrected value.
-- Output ONLY valid JSON, no explanation.
-
-Output a JSON object with the field names as keys. Example: {"field1": "value1", "field2": 42, "field3": null}`;
-
-              const extractionResult = await gptService.generateWithCustomPrompt(
-                extractionPrompt,
-                'You are a precise data extraction engine. Output ONLY valid JSON, nothing else.',
-                { maxTokens: 500, temperature: 0.1 }
-              );
-
-              if (extractionResult.text) {
-                // Parse JSON — handle markdown code blocks if AI wraps output
-                let jsonText = extractionResult.text.trim();
-                const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
-                if (jsonMatch) jsonText = jsonMatch[1].trim();
-
-                try {
-                  aiExtracted = JSON.parse(jsonText);
-                  logger.info('WorkflowEngine: AI extracted results from conversation', {
-                    extracted: aiExtracted,
-                  });
-                } catch (parseErr) {
-                  logger.error('WorkflowEngine: Failed to parse AI extraction JSON', {
-                    rawText: extractionResult.text.substring(0, 300),
-                    error: parseErr,
-                  });
-                }
-              }
-            } catch (err) {
-              logger.error('WorkflowEngine: AI extraction failed', { error: err });
-            }
-
-            // Merge: AI-extracted values fill in gaps, workflow fields take precedence
-            const extracted: Record<string, any> = {};
-            for (const def of resultDefs) {
-              if (!def.name) continue;
-              // Workflow fields (set by field_setter nodes) take precedence
-              // AI-extracted values fill in anything not already in fields
-              let value = this.state.fields[def.name] ?? aiExtracted[def.name] ?? null;
-
-              // Type coercion
-              if (value !== null && value !== undefined && def.type) {
-                switch (def.type) {
-                  case 'integer':
-                    value = parseInt(String(value), 10) || 0;
-                    break;
-                  case 'real':
-                    value = parseFloat(String(value)) || 0;
-                    break;
-                  case 'boolean':
-                    value = value === true || value === 'true' || value === '1' || value === 1;
-                    break;
-                  case 'enum': {
-                    const allowed = (def.enumValues || '').split(',').map((v: string) => v.trim()).filter(Boolean);
-                    if (allowed.length > 0 && !allowed.includes(String(value))) {
-                      value = null;
-                    }
-                    break;
-                  }
-                }
-              }
-              extracted[def.name] = value;
-              // Also store in fields so they're accessible via getFields()
-              this.state.fields[def.name] = value;
-            }
-
-            logger.info('WorkflowEngine: End node final extracted results', { extracted });
-            messages.push({
-              type: 'system',
-              text: `Results: ${Object.entries(extracted).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ')}`,
+          if (summaryPrompt || resultDefs.length > 0) {
+            this.state.pendingAnalysis = { summaryPrompt, resultDefs };
+            logger.info('WorkflowEngine: End node stored analysis config for post-call processing', {
+              hasSummaryPrompt: !!summaryPrompt,
+              resultFieldCount: resultDefs.length,
             });
           }
 
