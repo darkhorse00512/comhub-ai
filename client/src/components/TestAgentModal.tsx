@@ -981,6 +981,11 @@ const TestAgentModal = ({
             console.log("[STT] Session started:", msg.session_id);
 
           } else if (msg.message_type === "partial_transcript") {
+            // IGNORE transcripts while agent is speaking — echo cancellation
+            // isn't reliable enough and agent TTS leaks into the mic, producing
+            // garbage transcripts (e.g., "The American Pronunciation Guide...").
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+
             // Real-time partial — show in chat as user types
             if (!speechDetectedMs && msg.text?.trim()) speechDetectedMs = Date.now();
             currentPartial = msg.text || "";
@@ -1012,6 +1017,12 @@ const TestAgentModal = ({
             }
 
           } else if (msg.message_type === "committed_transcript") {
+            // IGNORE transcripts while agent is speaking — echo audio
+            if (isSpeakingRef.current || isLoadingRef.current) {
+              console.log("[STT] Ignoring committed_transcript during agent speech:", (msg.text || "").substring(0, 50));
+              return;
+            }
+
             // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             // User spoke — cancel ALL finalization signals, reset VAD
@@ -1034,6 +1045,9 @@ const TestAgentModal = ({
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
+            // IGNORE while agent is speaking
+            if (isSpeakingRef.current || isLoadingRef.current) return;
+
             // ElevenLabs VAD detected speech ended — finalize almost immediately
             console.log("[STT] ElevenLabs end_of_speech detected");
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
@@ -1097,6 +1111,7 @@ const TestAgentModal = ({
       // agent playback, the transcript captures it. VAD only runs when agent
       // is NOT speaking (to avoid false triggers from residual echo).
       let idleTimerStarted = false;
+      let wasAgentSpeaking = false;
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -1105,10 +1120,30 @@ const TestAgentModal = ({
 
         if (isSpeaking) {
           idleTimerStarted = false;
+          wasAgentSpeaking = true;
           // Reset VAD state while speaking — don't detect silence from echo
           vadSpeechActive = false;
           vadSilenceStartMs = 0;
-          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+          vadFinalizeScheduled = false;
+          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeTimer = null; }
+          if (partialCommitTimer) { clearTimeout(partialCommitTimer); partialCommitTimer = null; }
+          if (maxUtteranceTimer) { clearTimeout(maxUtteranceTimer); maxUtteranceTimer = null; }
+        }
+
+        // Agent just stopped speaking — clear any echo garbage accumulated during speech
+        if (!isSpeaking && wasAgentSpeaking) {
+          wasAgentSpeaking = false;
+          if (fullTranscript || currentPartial) {
+            console.log("[STT] Agent stopped speaking — clearing echo transcript:", (fullTranscript + " " + currentPartial).trim().substring(0, 80));
+          }
+          fullTranscript = "";
+          currentPartial = "";
+          speechDetectedMs = 0;
+          // Remove any live transcript message showing echo garbage
+          if (liveMessageId) {
+            setMessages((prev) => prev.filter((m) => m.id !== liveMessageId));
+            liveMessageId = null;
+          }
         }
 
         // Start idle timer the first time agent is NOT speaking
