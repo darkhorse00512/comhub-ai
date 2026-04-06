@@ -1846,15 +1846,12 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
     const ttsStartMs = Date.now();
     let ttsFirstAudioMs = 0;
 
-    // --- TTS ALL main response messages (not just the first) ---
-    // Early TTS has the first sentence already in-flight.
-    // Generate TTS for remaining main response messages in parallel.
     const mainSpeakable = result.messages.filter(
       (m: any) => m.type === 'ai' || m.type === 'scripted'
     );
     const remainingMainMessages = mainSpeakable.slice(earlyTTSCtx.msgCount);
 
-    // Start TTS for remaining main messages in parallel
+    // Start TTS for remaining main messages in parallel (fires immediately, don't await yet)
     const remainingMainTTSPromises = remainingMainMessages.map(async (msg: any) => {
       try {
         const buffer = await agentVoiceService.generateTTS(msg.text, session.voiceSettings ?? null);
@@ -1862,15 +1859,43 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       } catch { return null; }
     });
 
-    // Await ALL main response TTS (early + remaining) — these are short sentences, fast
-    const earlyAudioResults = await Promise.all(earlyTTSCtx.promises);
-    const remainingAudioResults = await Promise.all(remainingMainTTSPromises);
-    const allMainAudio = [...earlyAudioResults, ...remainingAudioResults];
+    // All TTS promises in order: early (first sentence, already in-flight) + remaining
+    const allTTSPromises: Promise<string | null>[] = [...earlyTTSCtx.promises, ...remainingMainTTSPromises];
 
-    ttsFirstAudioMs = Date.now() - ttsStartMs;
+    // --- Fast-path: for non-transition turns with 2+ sentences, await ONLY the
+    // first sentence's TTS and send the response immediately. Remaining audio is
+    // stored in the deferred cache — client fetches it while playing sentence 1.
+    // For transition turns or single-sentence: await all (typically 1-2 sentences, fast).
+    let allMainAudio: (string | null)[];
+    let mainDeferredAudioKey: string | null = null;
+
+    if (!result.transitionPending && allTTSPromises.length > 1) {
+      // Await ONLY the first sentence
+      const firstAudio = await allTTSPromises[0];
+      allMainAudio = [firstAudio];
+      ttsFirstAudioMs = Date.now() - ttsStartMs;
+
+      // Background: finish remaining TTS, store in deferred cache
+      mainDeferredAudioKey = `${sessionId}-main-${Date.now()}`;
+      deferredAudioCache.set(mainDeferredAudioKey, []); // placeholder signals "in progress"
+      const capturedDeferKey = mainDeferredAudioKey;
+      (async () => {
+        try {
+          const restAudio = await Promise.all(allTTSPromises.slice(1));
+          deferredAudioCache.set(capturedDeferKey, restAudio);
+          setTimeout(() => deferredAudioCache.delete(capturedDeferKey), 30000);
+        } catch {
+          deferredAudioCache.delete(capturedDeferKey);
+        }
+      })();
+    } else {
+      // Single sentence or transition turn: await all TTS (fast — typically 1-2 sentences)
+      allMainAudio = await Promise.all(allTTSPromises);
+      ttsFirstAudioMs = Date.now() - ttsStartMs;
+    }
     const ttsDoneMs = Date.now() - ttsStartMs;
 
-    // Embed audio for ALL main response messages
+    // Embed audio: first sentence gets audio, remaining get null (client fetches via deferred)
     let mainSpeakableIdx = 0;
     const messagesWithAudio = result.messages.map((msg: any) => {
       if (msg.type === 'ai' || msg.type === 'scripted') {
@@ -1966,16 +1991,17 @@ export const sendWorkflowMessage = async (req: AuthRequest, res: Response): Prom
       ttsFirstAudioMs,
       audioEmbedded: allMainAudio.filter(Boolean).length,
       transitionPending: result.transitionPending || false,
-      deferredAudioKey,
+      deferredAudioKey: deferredAudioKey || mainDeferredAudioKey,
       engineTiming,
     });
 
-    // Send dialogue response immediately — transition runs in background
+    // Send response immediately — first sentence audio is embedded,
+    // remaining audio + transition results arrive via deferred fetch.
     res.status(200).json({
       success: true,
       ...result,
       messages: messagesWithAudio,
-      deferredAudioKey: deferredAudioKey || undefined,
+      deferredAudioKey: deferredAudioKey || mainDeferredAudioKey || undefined,
       collectedFields: session.engine.getFields(),
       timing: {
         llmRequestSentAt: engineTiming.llmRequestSentAt,
