@@ -880,13 +880,13 @@ const TestAgentModal = ({
       // are FALLBACKS only — they use longer timeouts so they don't cut off speech.
       //
       // Flow: user speaks → partials arrive → user pauses between words (timers reset)
-      //   → user finishes → amplitude drops for 1s → VAD finalizes
-      //   → OR: no new transcript for 1.5s → timer finalizes (fallback)
-      const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech (sensitive)
-      const VAD_SILENCE_MS = 800;            // 800ms of amplitude silence after speech = done
+      //   → user finishes → amplitude drops for 400ms → VAD finalizes
+      //   → OR: no new transcript for 0.8s → timer finalizes (fallback)
+      const VAD_SPEECH_THRESHOLD = 0.006;    // RMS above this = speech (more sensitive)
+      const VAD_SILENCE_MS = 400;            // 400ms of amplitude silence after speech = done
       const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
-      const PARTIAL_TIMEOUT_MS = 1200;       // 1.2s without new partial = done (fallback)
-      const COMMIT_WAIT_MS = 1000;           // 1s after last committed chunk (fallback)
+      const PARTIAL_TIMEOUT_MS = 800;        // 0.8s without new partial = done (fallback)
+      const COMMIT_WAIT_MS = 700;            // 0.7s after last committed chunk (fallback)
 
       let vadSpeechActive = false;
       let vadSilenceStartMs = 0;
@@ -1007,7 +1007,7 @@ const TestAgentModal = ({
             if (currentPartial.trim()) {
               partialCommitTimer = setTimeout(() => {
                 const final = (fullTranscript + " " + currentPartial).trim();
-                finalizeTranscript(final, "partial_silence_1.5s");
+                finalizeTranscript(final, "partial_silence_0.8s");
               }, PARTIAL_TIMEOUT_MS);
             }
 
@@ -1029,21 +1029,21 @@ const TestAgentModal = ({
 
               // Fallback timer — VAD will usually finalize before this
               partialCommitTimer = setTimeout(() => {
-                finalizeTranscript(fullTranscript, "eleven_commit_wait_1.2s");
+                finalizeTranscript(fullTranscript, "eleven_commit_wait_0.7s");
               }, COMMIT_WAIT_MS);
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
-            // ElevenLabs VAD detected speech ended — finalize after short grace period
+            // ElevenLabs VAD detected speech ended — finalize almost immediately
             console.log("[STT] ElevenLabs end_of_speech detected");
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
             const final = (fullTranscript + " " + currentPartial).trim();
             if (final) {
-              // Short delay to catch any final committed_transcript
+              // Minimal delay to catch any in-flight committed_transcript
               partialCommitTimer = setTimeout(() => {
                 const latestFinal = (fullTranscript + " " + currentPartial).trim();
                 finalizeTranscript(latestFinal || final, "eleven_vad_end_of_speech");
-              }, 150);
+              }, 50);
             }
 
           } else if (msg.message_type === "error") {
@@ -1140,10 +1140,9 @@ const TestAgentModal = ({
               if (pendingText && !isProcessing) {
                 vadFinalizeScheduled = true;
                 console.log(`[STT] VAD: silence ${silenceDuration}ms — finalizing`);
-                vadFinalizeTimer = setTimeout(() => {
-                  const final = (fullTranscript + " " + currentPartial).trim();
-                  if (final) finalizeTranscript(final, `amplitude_vad_${VAD_SILENCE_MS}ms`);
-                }, 50);
+                // Finalize immediately — VAD already waited VAD_SILENCE_MS
+                const final = (fullTranscript + " " + currentPartial).trim();
+                if (final) finalizeTranscript(final, `amplitude_vad_${VAD_SILENCE_MS}ms`);
               }
             }
           }
