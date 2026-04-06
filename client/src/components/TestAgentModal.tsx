@@ -875,11 +875,10 @@ const TestAgentModal = ({
       //   → user finishes → amplitude drops for 1s → VAD finalizes
       //   → OR: no new transcript for 1.5s → timer finalizes (fallback)
       const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech (sensitive)
-      const VAD_SILENCE_SHORT_MS = 500;     // For short utterances (≤3 words): 500ms silence = done
-      const VAD_SILENCE_LONG_MS = 700;      // For longer utterances: 700ms silence = done
+      const VAD_SILENCE_MS = 800;            // 800ms of amplitude silence after speech = done
       const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
-      const PARTIAL_TIMEOUT_MS = 1000;       // 1s without new partial = done (fallback)
-      const COMMIT_WAIT_MS = 800;            // 800ms after last committed chunk (fallback)
+      const PARTIAL_TIMEOUT_MS = 1200;       // 1.2s without new partial = done (fallback)
+      const COMMIT_WAIT_MS = 1000;           // 1s after last committed chunk (fallback)
 
       let vadSpeechActive = false;
       let vadSilenceStartMs = 0;
@@ -1128,17 +1127,14 @@ const TestAgentModal = ({
 
           if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
             const silenceDuration = Date.now() - vadSilenceStartMs;
-            // Adaptive silence threshold: short answers ("yes") need less silence
             const pendingText = (fullTranscript + " " + currentPartial).trim();
-            const wordCount = pendingText.split(/\s+/).filter(Boolean).length;
-            const silenceThreshold = wordCount <= 3 ? VAD_SILENCE_SHORT_MS : VAD_SILENCE_LONG_MS;
-            if (silenceDuration >= silenceThreshold) {
+            if (silenceDuration >= VAD_SILENCE_MS) {
               if (pendingText && !isProcessing) {
                 vadFinalizeScheduled = true;
-                console.log(`[STT] VAD: silence ${silenceDuration}ms (threshold=${silenceThreshold}ms, words=${wordCount}) — finalizing`);
+                console.log(`[STT] VAD: silence ${silenceDuration}ms — finalizing`);
                 vadFinalizeTimer = setTimeout(() => {
                   const final = (fullTranscript + " " + currentPartial).trim();
-                  if (final) finalizeTranscript(final, `amplitude_vad_${silenceThreshold}ms`);
+                  if (final) finalizeTranscript(final, `amplitude_vad_${VAD_SILENCE_MS}ms`);
                 }, 50);
               }
             }
