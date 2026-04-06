@@ -1536,7 +1536,8 @@ const TestAgentModal = ({
         audioPlaybackStartRef.current = 0;
         audioPlaybackEndRef.current = 0;
 
-        await processWorkflowResult(result);
+        // processWorkflowResult may merge transition data (including isComplete from end_call)
+        const finalResult = await processWorkflowResult(result);
 
         setIsLoading(false);
         isLoadingRef.current = false;
@@ -1597,7 +1598,7 @@ const TestAgentModal = ({
         audioPlaybackStartRef.current = 0;
         audioPlaybackEndRef.current = 0;
         if (callModeRef.current === "audio" && isCallActiveRef.current) {
-          if (result.isComplete) {
+          if (finalResult.isComplete) {
             addMessage("system", "Workflow complete — ending call");
             setTimeout(() => { if (isCallActiveRef.current) endCallRef.current(); }, 2000);
           } else {
