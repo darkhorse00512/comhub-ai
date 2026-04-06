@@ -981,10 +981,16 @@ const TestAgentModal = ({
             console.log("[STT] Session started:", msg.session_id);
 
           } else if (msg.message_type === "partial_transcript") {
-            // IGNORE transcripts while agent is speaking — echo cancellation
-            // isn't reliable enough and agent TTS leaks into the mic, producing
-            // garbage transcripts (e.g., "The American Pronunciation Guide...").
+            // IGNORE transcripts while agent is speaking or loading
             if (isSpeakingRef.current || isLoadingRef.current) return;
+
+            // IGNORE phantom transcripts from noise — ElevenLabs can hallucinate
+            // text (e.g., "The American Pronunciation Guide...") from ambient noise.
+            // Only accept transcripts when the amplitude VAD has confirmed real speech.
+            if (!vadSpeechActive && msg.text?.trim()) {
+              console.log("[STT] Ignoring partial (no amplitude speech detected):", (msg.text || "").substring(0, 60));
+              return;
+            }
 
             // Real-time partial — show in chat as user types
             if (!speechDetectedMs && msg.text?.trim()) speechDetectedMs = Date.now();
@@ -994,7 +1000,6 @@ const TestAgentModal = ({
               // User IS speaking — cancel ALL finalization signals
               resetIdleTimer();
               if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-              vadSpeechActive = true;   // Mark speech active from transcript
               vadSilenceStartMs = 0;    // Reset silence counter
 
               // Start max utterance safety timer on first speech
@@ -1017,18 +1022,23 @@ const TestAgentModal = ({
             }
 
           } else if (msg.message_type === "committed_transcript") {
-            // IGNORE transcripts while agent is speaking — echo audio
+            // IGNORE while agent is speaking or loading
             if (isSpeakingRef.current || isLoadingRef.current) {
               console.log("[STT] Ignoring committed_transcript during agent speech:", (msg.text || "").substring(0, 50));
               return;
             }
 
+            // IGNORE phantom commits from noise — require amplitude-confirmed speech
+            if (!vadSpeechActive) {
+              console.log("[STT] Ignoring committed_transcript (no amplitude speech detected):", (msg.text || "").substring(0, 60));
+              return;
+            }
+
             // ElevenLabs committed a chunk — accumulate it
             if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            // User spoke — cancel ALL finalization signals, reset VAD
+            // User spoke — cancel ALL finalization signals
             resetIdleTimer();
             if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-            vadSpeechActive = true;
             vadSilenceStartMs = 0;
 
             const chunk = (msg.text || "").trim();
@@ -1045,8 +1055,8 @@ const TestAgentModal = ({
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
-            // IGNORE while agent is speaking
-            if (isSpeakingRef.current || isLoadingRef.current) return;
+            // IGNORE while agent is speaking or if no real speech detected
+            if (isSpeakingRef.current || isLoadingRef.current || !vadSpeechActive) return;
 
             // ElevenLabs VAD detected speech ended — finalize almost immediately
             console.log("[STT] ElevenLabs end_of_speech detected");
@@ -1183,8 +1193,10 @@ const TestAgentModal = ({
           }
         }
 
-        // ALWAYS send audio to ElevenLabs — echo cancellation handles agent audio.
-        // This enables barge-in: user speech during agent playback is captured.
+        // Only send audio to ElevenLabs when agent is NOT speaking.
+        // Sending echo audio causes hallucinated transcripts from noise.
+        if (isSpeaking) return;
+
         // Convert Float32 [-1,1] to Int16 PCM
         const pcm16 = new Int16Array(pcmFloat.length);
         for (let i = 0; i < pcmFloat.length; i++) {
