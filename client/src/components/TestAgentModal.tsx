@@ -1390,6 +1390,10 @@ const TestAgentModal = ({
         await deferredFetchPromise;
         deferredFetchPromise = null;
 
+        if (!deferredTransitionResult) {
+          console.warn('[processWorkflowResult] Transition pending but no deferred result received — transition may have failed on server');
+        }
+
         if (deferredTransitionResult) {
           // Display system messages and play audio from transition result
           const trSpeakable = deferredTransitionResult.messages.filter(
