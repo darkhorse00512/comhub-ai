@@ -207,6 +207,43 @@ const TestAgentModal = ({
   const audioWorkletRef = useRef<ScriptProcessorNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
 
+  // Per-utterance STT state — kept in a ref so the persistent audio processor
+  // closure and external code (startAutoRecording / finalizeTranscript) can both
+  // read/write it without recreating the WebSocket/AudioContext on every turn.
+  const sttStateRef = useRef<{
+    armed: boolean;                     // gate: process transcripts only when armed
+    fullTranscript: string;
+    currentPartial: string;
+    isProcessing: boolean;
+    speechDetectedMs: number;
+    liveMessageId: string | null;
+    vadSpeechActive: boolean;
+    vadSilenceStartMs: number;
+    vadSilentChunkCount: number;
+    vadFinalizeScheduled: boolean;
+    vadFinalizeTimer: ReturnType<typeof setTimeout> | null;
+    partialCommitTimer: ReturnType<typeof setTimeout> | null;
+    maxUtteranceTimer: ReturnType<typeof setTimeout> | null;
+    wasAgentSpeaking: boolean;
+    idleTimerStarted: boolean;
+  }>({
+    armed: false,
+    fullTranscript: "",
+    currentPartial: "",
+    isProcessing: false,
+    speechDetectedMs: 0,
+    liveMessageId: null,
+    vadSpeechActive: false,
+    vadSilenceStartMs: 0,
+    vadSilentChunkCount: 0,
+    vadFinalizeScheduled: false,
+    vadFinalizeTimer: null,
+    partialCommitTimer: null,
+    maxUtteranceTimer: null,
+    wasAgentSpeaking: false,
+    idleTimerStarted: false,
+  });
+
   // Workflow state refs
   const isCallActiveRef = useRef(false);
   const callModeRef = useRef<CallMode>("text");
@@ -804,8 +841,39 @@ const TestAgentModal = ({
   // → ElevenLabs handles endpointing (speech-end detection) → committed_transcript fires
   // No silence timer, no batch upload. Transcription is ready the moment user stops.
 
-  /** Stop streaming STT — close WebSocket and mic */
+  // VAD / timing constants — defined at module scope for reuse
+  const VAD_SPEECH_THRESHOLD = 0.008;
+  const VAD_SILENCE_MS = 400;
+  const MAX_UTTERANCE_MS = 30000;
+  const PARTIAL_TIMEOUT_MS = 800;
+  const COMMIT_WAIT_MS = 700;
+  const VAD_SMOOTHING = 3;
+
+  // Reset per-utterance STT state. Called between utterances WITHOUT closing
+  // the WebSocket / AudioContext / mic stream. Keeps the session warm.
+  const resetSTTState = useCallback(() => {
+    const s = sttStateRef.current;
+    if (s.partialCommitTimer) { clearTimeout(s.partialCommitTimer); s.partialCommitTimer = null; }
+    if (s.maxUtteranceTimer) { clearTimeout(s.maxUtteranceTimer); s.maxUtteranceTimer = null; }
+    if (s.vadFinalizeTimer) { clearTimeout(s.vadFinalizeTimer); s.vadFinalizeTimer = null; }
+    s.fullTranscript = "";
+    s.currentPartial = "";
+    s.isProcessing = false;
+    s.speechDetectedMs = 0;
+    s.liveMessageId = null;
+    s.vadSpeechActive = false;
+    s.vadSilenceStartMs = 0;
+    s.vadSilentChunkCount = 0;
+    s.vadFinalizeScheduled = false;
+  }, []);
+
+  /** Fully close STT — only used when ending the call. */
   const stopSTT = useCallback(() => {
+    const s = sttStateRef.current;
+    s.armed = false;
+    if (s.partialCommitTimer) { clearTimeout(s.partialCommitTimer); s.partialCommitTimer = null; }
+    if (s.maxUtteranceTimer) { clearTimeout(s.maxUtteranceTimer); s.maxUtteranceTimer = null; }
+    if (s.vadFinalizeTimer) { clearTimeout(s.vadFinalizeTimer); s.vadFinalizeTimer = null; }
     if (sttWsRef.current) {
       try { sttWsRef.current.close(); } catch {}
       sttWsRef.current = null;
@@ -825,11 +893,107 @@ const TestAgentModal = ({
     setIsRecording(false);
   }, []);
 
+  // Update or create the live transcript message in chat
+  const updateLiveTranscript = useCallback((text: string) => {
+    if (!text.trim()) return;
+    const s = sttStateRef.current;
+    const displayText = (s.fullTranscript + " " + text).trim();
+    if (!s.liveMessageId) {
+      const newId = crypto.randomUUID();
+      s.liveMessageId = newId;
+      setMessages((prev) => [...prev, {
+        id: newId,
+        role: "user" as const,
+        content: displayText + " ...",
+        timestamp: new Date(),
+      }]);
+    } else {
+      const id = s.liveMessageId;
+      setMessages((prev) => prev.map((m) =>
+        m.id === id ? { ...m, content: displayText + " ..." } : m
+      ));
+    }
+  }, []);
+
+  // Finalize the current utterance and forward to handleUserMessage.
+  // Does NOT close the WebSocket — just resets per-utterance state so the
+  // next utterance can start immediately on the same session.
+  const finalizeTranscript = useCallback(async (text: string, trigger?: string) => {
+    const s = sttStateRef.current;
+    if (s.isProcessing || !text.trim()) return;
+    s.isProcessing = true;
+    s.armed = false; // disarm gate until next startAutoRecording
+    finalizedByRef.current = trigger || "unknown";
+
+    userSpeechEndRef.current = Date.now();
+    if (s.partialCommitTimer) { clearTimeout(s.partialCommitTimer); s.partialCommitTimer = null; }
+    if (s.maxUtteranceTimer) { clearTimeout(s.maxUtteranceTimer); s.maxUtteranceTimer = null; }
+    if (s.vadFinalizeTimer) { clearTimeout(s.vadFinalizeTimer); s.vadFinalizeTimer = null; }
+
+    const finalText = text.trim();
+    const speechDurationMs = s.speechDetectedMs ? Date.now() - s.speechDetectedMs : 0;
+    console.log(`[STT] Final: "${finalText}" (speech: ${speechDurationMs}ms, trigger: ${finalizedByRef.current})`);
+
+    if (s.liveMessageId) {
+      const id = s.liveMessageId;
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      s.liveMessageId = null;
+    }
+
+    sttEndTimeRef.current = Date.now();
+    sttFinalRef.current = Date.now();
+
+    if (!isCallActiveRef.current) return;
+
+    noSpeechCountRef.current = 0;
+    idleCountRef.current = 0;
+
+    // Reset transcript buffers so the next utterance starts clean.
+    // (isProcessing remains true until startAutoRecording rearms.)
+    s.fullTranscript = "";
+    s.currentPartial = "";
+    s.speechDetectedMs = 0;
+    s.vadSpeechActive = false;
+    s.vadSilenceStartMs = 0;
+    s.vadSilentChunkCount = 0;
+    s.vadFinalizeScheduled = false;
+
+    await handleUserMessageRef.current(finalText);
+  }, []);
+
+  // Idle handling — fired by a timer instead of relying on ws.onclose.
+  // Speaks idle message or terminates call when threshold reached.
+  const handleIdleTimeout = useCallback(() => {
+    if (!isCallActiveRef.current || isSpeakingRef.current || isLoadingRef.current || sttStateRef.current.isProcessing) return;
+    const cs = callSettingsRef.current;
+    idleCountRef.current++;
+    console.log(`[STT] Idle count: ${idleCountRef.current}/${cs.onIdleThreshold}`);
+
+    if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
+      if (cs.onIdleTerminationMessage) {
+        outputAndSpeakRef.current(cs.onIdleTerminationMessage).then(() => {
+          endCallRef.current();
+        });
+      } else {
+        endCallRef.current();
+      }
+    } else if (cs.onIdleMessage) {
+      outputAndSpeakRef.current(cs.onIdleMessage).then(() => {
+        if (isCallActiveRef.current) startAutoRecordingRef.current();
+      });
+    }
+  }, []);
+
+  /**
+   * Arm STT for the next utterance.
+   * - First call (after startCall): opens WebSocket / AudioContext / mic stream
+   * - Subsequent calls (between utterances): just resets state and rearms gate
+   *
+   * The same WebSocket session and audio processor stay alive for the entire call,
+   * which dramatically improves transcription quality after the first minute.
+   */
   const startAutoRecording = useCallback(async () => {
     if (!isCallActiveRef.current || callModeRef.current !== "audio") return;
-    // Don't check isSpeakingRef — we WANT to open the WebSocket early
-    // (while agent is still speaking). Audio chunks are filtered in onaudioprocess.
-    if (sttWsRef.current) return; // Already streaming
 
     const apiKey = sttApiKeyRef.current;
     if (!apiKey) {
@@ -837,237 +1001,137 @@ const TestAgentModal = ({
       return;
     }
 
+    // Already running — just reset state and rearm
+    if (sttWsRef.current && sttWsRef.current.readyState === WebSocket.OPEN) {
+      resetSTTState();
+      sttStateRef.current.armed = true;
+      // Restart idle timer for this utterance
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 3) * 1000;
+      silenceTimerRef.current = setTimeout(handleIdleTimeout, onIdleTimeoutMs);
+      return;
+    }
+
+    // First-time setup: open mic, AudioContext, processor, WebSocket
     try {
-      // 1. Open mic with echo cancellation
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       micStreamRef.current = stream;
 
-      // 2. Set up AudioContext to get raw PCM at 16kHz
       const audioContext = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
       const source = audioContext.createMediaStreamSource(stream);
 
-      // Capture raw PCM chunks — tiny buffer = minimum latency (32ms per chunk)
       const processor = audioContext.createScriptProcessor(512, 1, 1);
       audioWorkletRef.current = processor;
 
-      // 3. Connect WebSocket to server's STT proxy (server connects to ElevenLabs with API key header)
       const lang = sttLanguageRef.current.split("-")[0] || "en";
       const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsHost = window.location.host; // Same host as the page
-      const wsParams = new URLSearchParams({
-        apiKey: apiKey,
-        language_code: lang,
-      });
+      const wsHost = window.location.host;
+      const wsParams = new URLSearchParams({ apiKey: apiKey, language_code: lang });
       const wsUrl = `${wsProtocol}//${wsHost}/stt-realtime?${wsParams}`;
 
       const ws = new WebSocket(wsUrl);
       sttWsRef.current = ws;
 
-      let isProcessing = false;
-      let speechDetectedMs = 0;
-      let fullTranscript = ""; // Accumulated from all committed chunks
-      let currentPartial = ""; // Current partial (not yet committed)
-      let partialCommitTimer: ReturnType<typeof setTimeout> | null = null;
-      let liveMessageId: string | null = null; // ID of the live transcript message in chat
-      let maxUtteranceTimer: ReturnType<typeof setTimeout> | null = null;
+      // Arm immediately — gate will open on first user speech
+      const s = sttStateRef.current;
+      s.armed = true;
+      s.fullTranscript = "";
+      s.currentPartial = "";
+      s.isProcessing = false;
+      s.speechDetectedMs = 0;
+      s.liveMessageId = null;
+      s.vadSpeechActive = false;
+      s.vadSilenceStartMs = 0;
+      s.vadSilentChunkCount = 0;
+      s.vadFinalizeScheduled = false;
+      s.wasAgentSpeaking = false;
+      s.idleTimerStarted = false;
 
-      // --- Client-side amplitude VAD ---
-      // Tracks RMS energy of mic audio to detect when user truly stops speaking.
-      // The amplitude VAD is the PRIMARY finalization signal. Transcript timers
-      // are FALLBACKS only — they use longer timeouts so they don't cut off speech.
-      //
-      // Flow: user speaks → partials arrive → user pauses between words (timers reset)
-      //   → user finishes → amplitude drops for 400ms → VAD finalizes
-      //   → OR: no new transcript for 0.8s → timer finalizes (fallback)
-      const VAD_SPEECH_THRESHOLD = 0.008;    // RMS above this = speech
-      const VAD_SILENCE_MS = 400;            // 400ms of smoothed silence after speech = done
-      const MAX_UTTERANCE_MS = 30000;        // Force-finalize after 30s (safety net)
-      const PARTIAL_TIMEOUT_MS = 800;        // 0.8s without new partial = done (fallback)
-      const COMMIT_WAIT_MS = 700;            // 0.7s after last committed chunk (fallback)
-      const VAD_SMOOTHING = 3;               // Require N consecutive silent chunks to start silence timer
-
-      let vadSpeechActive = false;
-      let vadSilenceStartMs = 0;
-      let vadFinalizeScheduled = false;
-      let vadFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
-      let vadSilentChunkCount = 0;           // Consecutive chunks below threshold
-
-      // Start the idle timer only after speaking stops (not when WebSocket opens)
-      const startIdleTimer = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 3) * 1000;
-        silenceTimerRef.current = setTimeout(() => {
-          if (sttWsRef.current && !isProcessing) {
-            console.log("[STT] Idle timeout — closing STT after", onIdleTimeoutMs, "ms");
-            stopSTT();
-          }
-        }, onIdleTimeoutMs);
-      };
-
-      // Reset the idle timer when user starts speaking
-      const resetIdleTimer = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      };
-
-      // Update or create the live transcript message in chat
-      const updateLiveTranscript = (text: string) => {
-        if (!text.trim()) return;
-        const displayText = (fullTranscript + " " + text).trim();
-        if (!liveMessageId) {
-          liveMessageId = crypto.randomUUID();
-          setMessages((prev) => [...prev, {
-            id: liveMessageId!,
-            role: "user" as const,
-            content: displayText + " ...",
-            timestamp: new Date(),
-          }]);
-        } else {
-          setMessages((prev) => prev.map((m) =>
-            m.id === liveMessageId ? { ...m, content: displayText + " ..." } : m
-          ));
-        }
-      };
-
-      // Finalize transcript and process
-      const finalizeTranscript = async (text: string, trigger?: string) => {
-        if (isProcessing || !text.trim()) return;
-        isProcessing = true;
-        finalizedByRef.current = trigger || "unknown";
-
-        // Speech end detected
-        userSpeechEndRef.current = Date.now();
-        if (partialCommitTimer) clearTimeout(partialCommitTimer);
-        if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
-        if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
-
-        const finalText = text.trim();
-        const speechDurationMs = speechDetectedMs ? Date.now() - speechDetectedMs : 0;
-        console.log(`[STT] Final: "${finalText}" (speech: ${speechDurationMs}ms, trigger: ${finalizedByRef.current})`);
-
-        // Update the live message to final text (remove "...")
-        if (liveMessageId) {
-          setMessages((prev) => prev.map((m) =>
-            m.id === liveMessageId ? { ...m, content: finalText } : m
-          ));
-        }
-
-        stopSTT();
-        sttEndTimeRef.current = Date.now();
-        sttFinalRef.current = Date.now();
-
-        if (!isCallActiveRef.current) return;
-
-        noSpeechCountRef.current = 0;
-        idleCountRef.current = 0;
-        // Remove the live message — handleUserMessage will add the final one
-        if (liveMessageId) {
-          setMessages((prev) => prev.filter((m) => m.id !== liveMessageId));
-        }
-        await handleUserMessageRef.current(finalText);
-      };
+      // Reusable PCM/base64 scratch buffers (avoid per-chunk allocations & GC)
+      const pcm16 = new Int16Array(512);
+      const bytes = new Uint8Array(pcm16.buffer);
 
       ws.onopen = () => {
-        console.log("[STT] WebSocket connected...");
+        console.log("[STT] WebSocket connected");
         sttStartTimeRef.current = Date.now();
       };
 
       ws.onmessage = async (event) => {
         try {
           const msg = JSON.parse(event.data);
+          const st = sttStateRef.current;
 
           if (msg.message_type === "session_started") {
             setIsRecording(true);
             console.log("[STT] Session started:", msg.session_id);
 
           } else if (msg.message_type === "partial_transcript") {
-            // IGNORE transcripts while agent is speaking or loading
-            if (isSpeakingRef.current || isLoadingRef.current) return;
-
-            // IGNORE phantom transcripts from noise — ElevenLabs can hallucinate
-            // text (e.g., "The American Pronunciation Guide...") from ambient noise.
-            // Only accept transcripts when the amplitude VAD has confirmed real speech.
-            if (!vadSpeechActive && msg.text?.trim()) {
+            // Gate: ignore if not armed, agent speaking, or loading
+            if (!st.armed || isSpeakingRef.current || isLoadingRef.current) return;
+            if (!st.vadSpeechActive && msg.text?.trim()) {
               console.log("[STT] Ignoring partial (no amplitude speech detected):", (msg.text || "").substring(0, 60));
               return;
             }
 
-            // Real-time partial — show in chat as user types
-            if (!speechDetectedMs && msg.text?.trim()) speechDetectedMs = Date.now();
-            currentPartial = msg.text || "";
-            if (currentPartial.trim()) {
-              updateLiveTranscript(currentPartial);
-              // User IS speaking — cancel idle timer and finalize timer
-              resetIdleTimer();
-              if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-              // NOTE: Do NOT reset vadSilenceStartMs here — amplitude VAD owns that.
-              // Transcript events arrive with delay and would keep resetting the timer.
+            if (!st.speechDetectedMs && msg.text?.trim()) st.speechDetectedMs = Date.now();
+            st.currentPartial = msg.text || "";
+            if (st.currentPartial.trim()) {
+              updateLiveTranscript(st.currentPartial);
+              if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+              if (st.vadFinalizeTimer) { clearTimeout(st.vadFinalizeTimer); st.vadFinalizeScheduled = false; }
 
-              // Start max utterance safety timer on first speech
-              if (!maxUtteranceTimer) {
-                maxUtteranceTimer = setTimeout(() => {
+              if (!st.maxUtteranceTimer) {
+                st.maxUtteranceTimer = setTimeout(() => {
                   console.log("[STT] Max utterance timeout — force finalizing");
-                  const final = (fullTranscript + " " + currentPartial).trim();
+                  const final = (st.fullTranscript + " " + st.currentPartial).trim();
                   if (final) finalizeTranscript(final, "max_utterance_30s");
                 }, MAX_UTTERANCE_MS);
               }
             }
 
-            // Reset fallback timer — user is still speaking
-            if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            if (currentPartial.trim()) {
-              partialCommitTimer = setTimeout(() => {
-                const final = (fullTranscript + " " + currentPartial).trim();
+            if (st.partialCommitTimer) clearTimeout(st.partialCommitTimer);
+            if (st.currentPartial.trim()) {
+              st.partialCommitTimer = setTimeout(() => {
+                const final = (st.fullTranscript + " " + st.currentPartial).trim();
                 finalizeTranscript(final, "partial_silence_0.8s");
               }, PARTIAL_TIMEOUT_MS);
             }
 
           } else if (msg.message_type === "committed_transcript") {
-            // IGNORE while agent is speaking or loading
-            if (isSpeakingRef.current || isLoadingRef.current) {
-              console.log("[STT] Ignoring committed_transcript during agent speech:", (msg.text || "").substring(0, 50));
+            if (!st.armed || isSpeakingRef.current || isLoadingRef.current) {
+              console.log("[STT] Ignoring committed_transcript (gated):", (msg.text || "").substring(0, 50));
+              return;
+            }
+            if (!st.vadSpeechActive) {
+              console.log("[STT] Ignoring committed_transcript (no amplitude speech):", (msg.text || "").substring(0, 60));
               return;
             }
 
-            // IGNORE phantom commits from noise — require amplitude-confirmed speech
-            if (!vadSpeechActive) {
-              console.log("[STT] Ignoring committed_transcript (no amplitude speech detected):", (msg.text || "").substring(0, 60));
-              return;
-            }
-
-            // ElevenLabs committed a chunk — accumulate it
-            if (partialCommitTimer) clearTimeout(partialCommitTimer);
-            // User spoke — cancel idle and finalize timers
-            resetIdleTimer();
-            if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
-            // NOTE: Do NOT reset vadSilenceStartMs — amplitude VAD owns silence timing.
+            if (st.partialCommitTimer) clearTimeout(st.partialCommitTimer);
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            if (st.vadFinalizeTimer) { clearTimeout(st.vadFinalizeTimer); st.vadFinalizeScheduled = false; }
 
             const chunk = (msg.text || "").trim();
             if (chunk) {
-              fullTranscript = (fullTranscript + " " + chunk).trim();
-              currentPartial = "";
-              console.log(`[STT] Chunk committed: "${chunk}" | Full: "${fullTranscript}"`);
+              st.fullTranscript = (st.fullTranscript + " " + chunk).trim();
+              st.currentPartial = "";
+              console.log(`[STT] Chunk committed: "${chunk}" | Full: "${st.fullTranscript}"`);
               updateLiveTranscript("");
 
-              // Fallback timer — VAD will usually finalize before this
-              partialCommitTimer = setTimeout(() => {
-                finalizeTranscript(fullTranscript, "eleven_commit_wait_0.7s");
+              st.partialCommitTimer = setTimeout(() => {
+                finalizeTranscript(st.fullTranscript, "eleven_commit_wait_0.7s");
               }, COMMIT_WAIT_MS);
             }
 
           } else if (msg.message_type === "end_of_speech" || msg.message_type === "speech_end") {
-            // IGNORE while agent is speaking
-            if (isSpeakingRef.current || isLoadingRef.current) return;
-
-            // ElevenLabs neural VAD detected speech ended — this is the BEST
-            // signal we have. Trust it even without amplitude confirmation.
-            // Finalize immediately if we have any transcript text.
-            const final = (fullTranscript + " " + currentPartial).trim();
+            if (!st.armed || isSpeakingRef.current || isLoadingRef.current) return;
+            const final = (st.fullTranscript + " " + st.currentPartial).trim();
             if (final) {
               console.log("[STT] ElevenLabs end_of_speech — finalizing immediately");
-              if (partialCommitTimer) clearTimeout(partialCommitTimer);
+              if (st.partialCommitTimer) clearTimeout(st.partialCommitTimer);
               finalizeTranscript(final, "eleven_vad_end_of_speech");
             }
 
@@ -1079,96 +1143,67 @@ const TestAgentModal = ({
 
       ws.onerror = (err) => {
         console.error("[STT] WebSocket error:", err);
-        stopSTT();
-        if (isCallActiveRef.current && !isSpeakingRef.current) {
-          setTimeout(() => startAutoRecording(), 500);
-        }
       };
 
       ws.onclose = (event) => {
         console.log("[STT] WebSocket closed, code:", event.code, "reason:", event.reason);
-        if (maxUtteranceTimer) clearTimeout(maxUtteranceTimer);
-        if (vadFinalizeTimer) clearTimeout(vadFinalizeTimer);
-        if (!isProcessing && isCallActiveRef.current && !isSpeakingRef.current && !isLoadingRef.current) {
-          const cs = callSettingsRef.current;
-          idleCountRef.current++;
-          console.log(`[STT] Idle count: ${idleCountRef.current}/${cs.onIdleThreshold}`);
-
-          if (cs.onIdleThreshold > 0 && idleCountRef.current >= cs.onIdleThreshold) {
-            // Max idle reached — speak termination message and end call
-            if (cs.onIdleTerminationMessage) {
-              outputAndSpeakRef.current(cs.onIdleTerminationMessage).then(() => {
-                endCallRef.current();
-              });
-            } else {
-              endCallRef.current();
-            }
-          } else if (cs.onIdleMessage) {
-            // Speak idle prompt and restart listening
-            outputAndSpeakRef.current(cs.onIdleMessage).then(() => {
-              if (isCallActiveRef.current) startAutoRecording();
-            });
-          } else if (isCallActiveRef.current) {
-            startAutoRecording();
-          }
+        // If the call is still active, try to reopen — the session should
+        // stay alive for the entire call.
+        if (isCallActiveRef.current && sttWsRef.current === ws) {
+          sttWsRef.current = null;
+          setTimeout(() => {
+            if (isCallActiveRef.current) startAutoRecordingRef.current();
+          }, 200);
         }
       };
 
-      // 4. Send audio chunks as PCM Int16 via WebSocket
-      // Also performs client-side amplitude VAD to detect speech end faster.
-      // Barge-in support: audio is ALWAYS sent to ElevenLabs, even while agent
-      // is speaking. The browser's echo cancellation removes agent audio from
-      // the mic feed, so ElevenLabs only hears the user. If user speaks during
-      // agent playback, the transcript captures it. VAD only runs when agent
-      // is NOT speaking (to avoid false triggers from residual echo).
-      let idleTimerStarted = false;
-      let wasAgentSpeaking = false;
+      // 4. Audio processor — runs continuously for the entire call.
+      // Reads/writes per-utterance state via sttStateRef.
       processor.onaudioprocess = (e) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
         const pcmFloat = e.inputBuffer.getChannelData(0);
         const isSpeaking = isSpeakingRef.current;
+        const st = sttStateRef.current;
 
         if (isSpeaking) {
-          idleTimerStarted = false;
-          wasAgentSpeaking = true;
-          // Reset VAD state while speaking — don't detect silence from echo
-          vadSpeechActive = false;
-          vadSilenceStartMs = 0;
-          vadSilentChunkCount = 0;
-          vadFinalizeScheduled = false;
-          if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeTimer = null; }
-          if (partialCommitTimer) { clearTimeout(partialCommitTimer); partialCommitTimer = null; }
-          if (maxUtteranceTimer) { clearTimeout(maxUtteranceTimer); maxUtteranceTimer = null; }
+          st.idleTimerStarted = false;
+          st.wasAgentSpeaking = true;
+          st.vadSpeechActive = false;
+          st.vadSilenceStartMs = 0;
+          st.vadSilentChunkCount = 0;
+          st.vadFinalizeScheduled = false;
+          if (st.vadFinalizeTimer) { clearTimeout(st.vadFinalizeTimer); st.vadFinalizeTimer = null; }
+          if (st.partialCommitTimer) { clearTimeout(st.partialCommitTimer); st.partialCommitTimer = null; }
+          if (st.maxUtteranceTimer) { clearTimeout(st.maxUtteranceTimer); st.maxUtteranceTimer = null; }
         }
 
-        // Agent just stopped speaking — clear any echo garbage accumulated during speech
-        if (!isSpeaking && wasAgentSpeaking) {
-          wasAgentSpeaking = false;
-          if (fullTranscript || currentPartial) {
-            console.log("[STT] Agent stopped speaking — clearing echo transcript:", (fullTranscript + " " + currentPartial).trim().substring(0, 80));
+        // Agent just stopped speaking — clear any echo garbage
+        if (!isSpeaking && st.wasAgentSpeaking) {
+          st.wasAgentSpeaking = false;
+          if (st.fullTranscript || st.currentPartial) {
+            console.log("[STT] Agent stopped speaking — clearing echo transcript:", (st.fullTranscript + " " + st.currentPartial).trim().substring(0, 80));
           }
-          fullTranscript = "";
-          currentPartial = "";
-          speechDetectedMs = 0;
-          // Remove any live transcript message showing echo garbage
-          if (liveMessageId) {
-            setMessages((prev) => prev.filter((m) => m.id !== liveMessageId));
-            liveMessageId = null;
+          st.fullTranscript = "";
+          st.currentPartial = "";
+          st.speechDetectedMs = 0;
+          if (st.liveMessageId) {
+            const id = st.liveMessageId;
+            setMessages((prev) => prev.filter((m) => m.id !== id));
+            st.liveMessageId = null;
           }
         }
 
-        // Start idle timer the first time agent is NOT speaking
-        if (!isSpeaking && !idleTimerStarted) {
-          idleTimerStarted = true;
-          startIdleTimer();
+        // Start idle timer when agent stops speaking
+        if (!isSpeaking && !st.idleTimerStarted) {
+          st.idleTimerStarted = true;
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          const onIdleTimeoutMs = (callSettingsRef.current.onIdleTimeout || 3) * 1000;
+          silenceTimerRef.current = setTimeout(handleIdleTimeout, onIdleTimeoutMs);
         }
 
-        // --- Amplitude VAD (only when agent is NOT speaking) ---
-        // Uses smoothed energy: require VAD_SMOOTHING consecutive silent chunks
-        // before starting the silence timer. This prevents brief noise spikes
-        // (fan hum, keyboard clicks) from resetting the entire silence counter.
-        if (!isSpeaking) {
+        // --- Amplitude VAD (only when agent is NOT speaking AND gate is armed) ---
+        if (!isSpeaking && st.armed) {
           let sumSquares = 0;
           for (let i = 0; i < pcmFloat.length; i++) {
             sumSquares += pcmFloat[i] * pcmFloat[i];
@@ -1176,55 +1211,54 @@ const TestAgentModal = ({
           const rms = Math.sqrt(sumSquares / pcmFloat.length);
 
           if (rms > VAD_SPEECH_THRESHOLD) {
-            vadSpeechActive = true;
-            vadSilentChunkCount = 0;
-            // Only reset silence timer if user is genuinely still speaking
-            // (not just a brief noise spike) — require speech in this chunk
-            if (vadSilenceStartMs > 0) {
-              vadSilenceStartMs = 0; // Reset — user spoke again
-            }
-            if (vadFinalizeTimer) { clearTimeout(vadFinalizeTimer); vadFinalizeScheduled = false; }
+            st.vadSpeechActive = true;
+            st.vadSilentChunkCount = 0;
+            if (st.vadSilenceStartMs > 0) st.vadSilenceStartMs = 0;
+            if (st.vadFinalizeTimer) { clearTimeout(st.vadFinalizeTimer); st.vadFinalizeScheduled = false; }
           } else {
-            vadSilentChunkCount++;
-            // Start silence timer only after N consecutive silent chunks
-            // (~32ms per chunk × 3 = ~96ms of confirmed silence before timer starts)
-            if (vadSpeechActive && vadSilenceStartMs === 0 && vadSilentChunkCount >= VAD_SMOOTHING) {
-              vadSilenceStartMs = Date.now();
+            st.vadSilentChunkCount++;
+            if (st.vadSpeechActive && st.vadSilenceStartMs === 0 && st.vadSilentChunkCount >= VAD_SMOOTHING) {
+              st.vadSilenceStartMs = Date.now();
             }
           }
 
-          if (vadSpeechActive && vadSilenceStartMs > 0 && !vadFinalizeScheduled) {
-            const silenceDuration = Date.now() - vadSilenceStartMs;
-            const pendingText = (fullTranscript + " " + currentPartial).trim();
+          if (st.vadSpeechActive && st.vadSilenceStartMs > 0 && !st.vadFinalizeScheduled) {
+            const silenceDuration = Date.now() - st.vadSilenceStartMs;
+            const pendingText = (st.fullTranscript + " " + st.currentPartial).trim();
             if (silenceDuration >= VAD_SILENCE_MS) {
-              if (pendingText && !isProcessing) {
-                vadFinalizeScheduled = true;
+              if (pendingText && !st.isProcessing) {
+                st.vadFinalizeScheduled = true;
                 console.log(`[STT] VAD: silence ${silenceDuration}ms — finalizing`);
-                const final = (fullTranscript + " " + currentPartial).trim();
+                const final = (st.fullTranscript + " " + st.currentPartial).trim();
                 if (final) finalizeTranscript(final, `amplitude_vad_${VAD_SILENCE_MS}ms`);
               }
             }
           }
         }
 
-        // Only send audio to ElevenLabs when agent is NOT speaking.
-        // Sending echo audio causes hallucinated transcripts from noise.
+        // Don't send audio while agent is speaking (avoid echo hallucinations)
         if (isSpeaking) return;
 
-        // Convert Float32 [-1,1] to Int16 PCM
-        const pcm16 = new Int16Array(pcmFloat.length);
-        for (let i = 0; i < pcmFloat.length; i++) {
-          const s = Math.max(-1, Math.min(1, pcmFloat[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        // --- Convert Float32 → Int16 PCM (reuses scratch buffer, no GC) ---
+        const len = pcmFloat.length;
+        for (let i = 0; i < len; i++) {
+          const x = pcmFloat[i];
+          const s2 = x < -1 ? -1 : x > 1 ? 1 : x;
+          pcm16[i] = s2 < 0 ? s2 * 0x8000 : s2 * 0x7FFF;
         }
 
-        // Convert to base64
-        const bytes = new Uint8Array(pcm16.buffer);
+        // --- Convert to base64 in chunks (avoid huge string concat for V8 GC) ---
+        // 4096-byte chunks keep the temporary string small.
         let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const CHUNK = 4096;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          binary += String.fromCharCode.apply(
+            null,
+            Array.prototype.slice.call(bytes, i, i + CHUNK) as any
+          );
+        }
         const b64 = btoa(binary);
 
-        // Send with correct message format
         ws.send(JSON.stringify({
           message_type: "input_audio_chunk",
           audio_base_64: b64,
@@ -1238,7 +1272,7 @@ const TestAgentModal = ({
       console.error("[STT] Failed to start:", error);
       stopSTT();
     }
-  }, [stopSTT, addMessage, speakText]);
+  }, [stopSTT, resetSTTState, updateLiveTranscript, finalizeTranscript, handleIdleTimeout]);
 
   // --- Server-side workflow API calls ---
   const getAuthHeaders = useCallback((): HeadersInit => {
