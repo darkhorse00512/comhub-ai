@@ -123,6 +123,14 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     comhubaiVoiceModelId: existingSettings.comhubaiVoiceModelId || "",
     // AI Model
     aiModel: existingSettings.aiModel || "",
+    // OpenAI voice tuning
+    openaiSpeed: existingSettings.openaiSpeed ?? 1.0,
+    // ElevenLabs / ComhubAI voice tuning
+    elevenlabsStability: existingSettings.elevenlabsStability ?? 0.5,
+    elevenlabsSimilarityBoost: existingSettings.elevenlabsSimilarityBoost ?? 0.75,
+    elevenlabsStyle: existingSettings.elevenlabsStyle ?? 0.0,
+    elevenlabsUseSpeakerBoost: existingSettings.elevenlabsUseSpeakerBoost ?? true,
+    elevenlabsSpeed: existingSettings.elevenlabsSpeed ?? 1.0,
   });
 
   const [showApiKey, setShowApiKey] = useState(false);
@@ -214,6 +222,12 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
         onIdleTimeout: parseInt(settings.onIdleTimeout) || 10,
         onIdleThreshold: parseInt(settings.onIdleThreshold) || 3,
         interruptionWordCountThreshold: parseInt(settings.interruptionWordCountThreshold) || 1,
+        openaiSpeed: Number(settings.openaiSpeed) || 1.0,
+        elevenlabsStability: Number(settings.elevenlabsStability),
+        elevenlabsSimilarityBoost: Number(settings.elevenlabsSimilarityBoost),
+        elevenlabsStyle: Number(settings.elevenlabsStyle),
+        elevenlabsUseSpeakerBoost: !!settings.elevenlabsUseSpeakerBoost,
+        elevenlabsSpeed: Number(settings.elevenlabsSpeed) || 1.0,
       },
     };
 
@@ -669,24 +683,187 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
                   )}
 
                   {settings.ttsProvider === "openai" && (
-                    <div className="space-y-2">
-                      <Label>Voice</Label>
-                      <Select
-                        value={settings.openaiVoice}
-                        onValueChange={(value) => setSettings({ ...settings, openaiVoice: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
-                          <SelectItem value="echo">Echo (Male)</SelectItem>
-                          <SelectItem value="fable">Fable (British)</SelectItem>
-                          <SelectItem value="onyx">Onyx (Deep Male)</SelectItem>
-                          <SelectItem value="nova">Nova (Female)</SelectItem>
-                          <SelectItem value="shimmer">Shimmer (Soft Female)</SelectItem>
-                        </SelectContent>
-                      </Select>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Voice</Label>
+                        <Select
+                          value={settings.openaiVoice}
+                          onValueChange={(value) => setSettings({ ...settings, openaiVoice: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="alloy">Alloy (Neutral)</SelectItem>
+                            <SelectItem value="echo">Echo (Male)</SelectItem>
+                            <SelectItem value="fable">Fable (British)</SelectItem>
+                            <SelectItem value="onyx">Onyx (Deep Male)</SelectItem>
+                            <SelectItem value="nova">Nova (Female)</SelectItem>
+                            <SelectItem value="shimmer">Shimmer (Soft Female)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2 p-4 rounded-lg bg-secondary/30 border border-border">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            Speed
+                            <InfoTooltip text="How fast the voice speaks. 1.0 is normal pace. Lower = slower, higher = faster. Range 0.25–4.0." />
+                          </Label>
+                          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                            {Number(settings.openaiSpeed).toFixed(2)}x
+                          </span>
+                        </div>
+                        <Slider
+                          value={[Number(settings.openaiSpeed)]}
+                          min={0.25}
+                          max={4.0}
+                          step={0.05}
+                          onValueChange={([v]) => setSettings({ ...settings, openaiSpeed: v })}
+                        />
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>0.25x</span>
+                          <span>1.0x</span>
+                          <span>4.0x</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {(settings.ttsProvider === "elevenlabs" || settings.ttsProvider === "comhubai") && (
+                    <div className="space-y-5 p-4 rounded-lg bg-secondary/30 border border-border">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                          <Volume2 className="w-3.5 h-3.5 text-primary" />
+                          Voice Tuning
+                        </h4>
+                        <button
+                          type="button"
+                          className="text-[11px] text-muted-foreground hover:text-primary transition-colors"
+                          onClick={() => setSettings({
+                            ...settings,
+                            elevenlabsStability: 0.5,
+                            elevenlabsSimilarityBoost: 0.75,
+                            elevenlabsStyle: 0.0,
+                            elevenlabsUseSpeakerBoost: true,
+                            elevenlabsSpeed: 1.0,
+                          })}
+                        >
+                          Reset to defaults
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            Stability
+                            <InfoTooltip text="Lower values give more emotion and variability; higher values make the voice more monotone and consistent. Default 0.5." />
+                          </Label>
+                          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                            {Number(settings.elevenlabsStability).toFixed(2)}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[Number(settings.elevenlabsStability)]}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          onValueChange={([v]) => setSettings({ ...settings, elevenlabsStability: v })}
+                        />
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>More variable</span>
+                          <span>More stable</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            Similarity
+                            <InfoTooltip text="How closely the output matches the original voice. Higher values stay closer to the source recording. Default 0.75." />
+                          </Label>
+                          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                            {Number(settings.elevenlabsSimilarityBoost).toFixed(2)}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[Number(settings.elevenlabsSimilarityBoost)]}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          onValueChange={([v]) => setSettings({ ...settings, elevenlabsSimilarityBoost: v })}
+                        />
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>Low</span>
+                          <span>High</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            Style Exaggeration
+                            <InfoTooltip text="Amplifies the speaker's style. Setting above 0 may increase latency. Default 0." />
+                          </Label>
+                          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                            {Number(settings.elevenlabsStyle).toFixed(2)}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[Number(settings.elevenlabsStyle)]}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          onValueChange={([v]) => setSettings({ ...settings, elevenlabsStyle: v })}
+                        />
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>None</span>
+                          <span>Exaggerated</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="flex items-center gap-1.5">
+                            Speed
+                            <InfoTooltip text="How fast the voice speaks. 1.0 is normal. Range 0.7–1.2 (eleven_turbo_v2_5)." />
+                          </Label>
+                          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                            {Number(settings.elevenlabsSpeed).toFixed(2)}x
+                          </span>
+                        </div>
+                        <Slider
+                          value={[Number(settings.elevenlabsSpeed)]}
+                          min={0.7}
+                          max={1.2}
+                          step={0.05}
+                          onValueChange={([v]) => setSettings({ ...settings, elevenlabsSpeed: v })}
+                        />
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>0.7x</span>
+                          <span>1.0x</span>
+                          <span>1.2x</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3 pt-1">
+                        <Checkbox
+                          id="speakerBoost"
+                          checked={!!settings.elevenlabsUseSpeakerBoost}
+                          onCheckedChange={(checked) =>
+                            setSettings({ ...settings, elevenlabsUseSpeakerBoost: !!checked })
+                          }
+                        />
+                        <div className="flex-1 -mt-0.5">
+                          <Label htmlFor="speakerBoost" className="flex items-center gap-1.5 cursor-pointer">
+                            Speaker Boost
+                            <InfoTooltip text="Boosts similarity to the original speaker at the cost of slightly higher latency." />
+                          </Label>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Enhance resemblance to the source voice
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   )}
 

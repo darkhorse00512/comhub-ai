@@ -13,6 +13,22 @@ export interface ElevenLabsTTSOptions {
   apiKey: string;
   voiceId: string;
   model?: string;
+  stability?: number;
+  similarityBoost?: number;
+  style?: number;
+  useSpeakerBoost?: boolean;
+  speed?: number;
+}
+
+function buildElevenLabsVoiceSettings(options: ElevenLabsTTSOptions) {
+  const vs: Record<string, unknown> = {
+    stability: typeof options.stability === 'number' ? options.stability : 0.5,
+    similarity_boost: typeof options.similarityBoost === 'number' ? options.similarityBoost : 0.75,
+  };
+  if (typeof options.style === 'number') vs.style = options.style;
+  if (typeof options.useSpeakerBoost === 'boolean') vs.use_speaker_boost = options.useSpeakerBoost;
+  if (typeof options.speed === 'number') vs.speed = options.speed;
+  return vs;
 }
 
 class TTSService {
@@ -26,12 +42,14 @@ class TTSService {
 
   async textToSpeech(
     text: string,
-    voice: TTSVoice = config.openai.ttsVoice as TTSVoice
+    voice: TTSVoice = config.openai.ttsVoice as TTSVoice,
+    speed?: number,
   ): Promise<Buffer> {
     try {
       logger.info('Converting text to speech', {
         textLength: text.length,
         voice,
+        speed,
       });
 
       const mp3 = await this.openai.audio.speech.create({
@@ -39,6 +57,7 @@ class TTSService {
         voice,
         input: text,
         response_format: 'mp3',
+        ...(typeof speed === 'number' ? { speed } : {}),
       });
 
       const buffer = Buffer.from(await mp3.arrayBuffer());
@@ -56,12 +75,14 @@ class TTSService {
 
   async textToSpeechStream(
     text: string,
-    voice: TTSVoice = config.openai.ttsVoice as TTSVoice
+    voice: TTSVoice = config.openai.ttsVoice as TTSVoice,
+    speed?: number,
   ): Promise<Readable> {
     try {
       logger.info('Converting text to speech (streaming)', {
         textLength: text.length,
         voice,
+        speed,
       });
 
       const mp3 = await this.openai.audio.speech.create({
@@ -69,6 +90,7 @@ class TTSService {
         voice,
         input: text,
         response_format: 'mp3',
+        ...(typeof speed === 'number' ? { speed } : {}),
       });
 
       const stream = Readable.from(mp3.body as any);
@@ -141,10 +163,7 @@ class TTSService {
         {
           text,
           model_id: options.model || 'eleven_turbo_v2_5',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
+          voice_settings: buildElevenLabsVoiceSettings(options),
         },
         {
           headers: {
@@ -192,10 +211,7 @@ class TTSService {
         {
           text,
           model_id: options.model || 'eleven_turbo_v2_5',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
+          voice_settings: buildElevenLabsVoiceSettings(options),
         },
         {
           headers: {
@@ -249,10 +265,7 @@ class TTSService {
         {
           text,
           model_id: options.model || 'eleven_turbo_v2_5',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
+          voice_settings: buildElevenLabsVoiceSettings(options),
         },
         {
           headers: {

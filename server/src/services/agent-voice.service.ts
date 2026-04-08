@@ -7,9 +7,15 @@ import storageService from './storage.service';
 export interface ResolvedVoiceSettings {
   ttsProvider: 'openai' | 'elevenlabs' | 'comhubai';
   openaiVoice?: string;
+  openaiSpeed?: number;
   elevenlabsApiKey?: string;
   elevenlabsVoiceId?: string;
   elevenlabsModel?: string;
+  elevenlabsStability?: number;
+  elevenlabsSimilarityBoost?: number;
+  elevenlabsStyle?: number;
+  elevenlabsUseSpeakerBoost?: boolean;
+  elevenlabsSpeed?: number;
   language?: string;
 }
 
@@ -51,8 +57,14 @@ class AgentVoiceService {
       const resolved: ResolvedVoiceSettings = {
         ttsProvider: settings.ttsProvider || 'openai',
         openaiVoice: settings.openaiVoice,
+        openaiSpeed: typeof settings.openaiSpeed === 'number' ? settings.openaiSpeed : undefined,
         elevenlabsApiKey: settings.elevenlabsApiKey,
         elevenlabsVoiceId: settings.elevenlabsVoiceId,
+        elevenlabsStability: typeof settings.elevenlabsStability === 'number' ? settings.elevenlabsStability : undefined,
+        elevenlabsSimilarityBoost: typeof settings.elevenlabsSimilarityBoost === 'number' ? settings.elevenlabsSimilarityBoost : undefined,
+        elevenlabsStyle: typeof settings.elevenlabsStyle === 'number' ? settings.elevenlabsStyle : undefined,
+        elevenlabsUseSpeakerBoost: typeof settings.elevenlabsUseSpeakerBoost === 'boolean' ? settings.elevenlabsUseSpeakerBoost : undefined,
+        elevenlabsSpeed: typeof settings.elevenlabsSpeed === 'number' ? settings.elevenlabsSpeed : undefined,
         language: settings.language,
       };
 
@@ -140,7 +152,12 @@ class AgentVoiceService {
           {
             apiKey: voiceSettings.elevenlabsApiKey,
             voiceId: voiceSettings.elevenlabsVoiceId,
-            model: 'eleven_turbo_v2_5',
+            model: voiceSettings.elevenlabsModel || 'eleven_turbo_v2_5',
+            stability: voiceSettings.elevenlabsStability,
+            similarityBoost: voiceSettings.elevenlabsSimilarityBoost,
+            style: voiceSettings.elevenlabsStyle,
+            useSpeakerBoost: voiceSettings.elevenlabsUseSpeakerBoost,
+            speed: voiceSettings.elevenlabsSpeed,
           },
           onFirstChunk,
         );
@@ -159,7 +176,7 @@ class AgentVoiceService {
     // Default / Fallback: OpenAI TTS
     this.lastTTSProvider = 'openai-fallback';
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
-    return ttsService.textToSpeech(text, voice);
+    return ttsService.textToSpeech(text, voice, voiceSettings?.openaiSpeed);
   }
 
   /**
@@ -175,7 +192,12 @@ class AgentVoiceService {
         return await ttsService.elevenlabsTextToSpeechStream(text, {
           apiKey: voiceSettings.elevenlabsApiKey,
           voiceId: voiceSettings.elevenlabsVoiceId,
-          model: 'eleven_turbo_v2_5',
+          model: voiceSettings.elevenlabsModel || 'eleven_turbo_v2_5',
+          stability: voiceSettings.elevenlabsStability,
+          similarityBoost: voiceSettings.elevenlabsSimilarityBoost,
+          style: voiceSettings.elevenlabsStyle,
+          useSpeakerBoost: voiceSettings.elevenlabsUseSpeakerBoost,
+          speed: voiceSettings.elevenlabsSpeed,
         });
       } catch (err) {
         logger.error('ElevenLabs TTS stream failed, falling back to OpenAI stream', {
@@ -187,7 +209,7 @@ class AgentVoiceService {
     }
 
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
-    return ttsService.textToSpeechStream(text, voice);
+    return ttsService.textToSpeechStream(text, voice, voiceSettings?.openaiSpeed);
   }
 
   /**
