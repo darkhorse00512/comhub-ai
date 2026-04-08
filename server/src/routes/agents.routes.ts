@@ -69,6 +69,9 @@ router.post('/:id/versions/:versionId/restore', agentsController.restoreAgentVer
 // Generate TTS audio using agent's configured voice
 router.post('/:id/generate-tts', agentsController.generateTTS);
 
+// Validate voice credentials (used by Configure page before save)
+router.post('/validate-voice', agentsController.validateVoice);
+
 // Speech-to-text using agent's configured voice provider (accepts multipart audio file)
 router.post('/:id/transcribe', upload.single('audio'), agentsController.transcribeAudio);
 

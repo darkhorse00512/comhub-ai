@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation, Outlet, useOutletContext } from "react-router-dom";
 import {
   Bot,
@@ -21,9 +21,18 @@ export interface Agent {
   config: any;
 }
 
+/**
+ * A child route can register a navigation guard that returns:
+ *  - true  → allow navigation
+ *  - false → block navigation (the guard already handled prompting the user)
+ * It may be async (e.g. show a confirm dialog and await the user's choice).
+ */
+export type NavGuard = () => boolean | Promise<boolean>;
+
 export interface AgentContextType {
   agent: Agent;
   setAgent: (agent: Agent) => void;
+  registerNavGuard: (guard: NavGuard | null) => void;
 }
 
 export function useAgentContext() {
@@ -48,6 +57,24 @@ const AgentLayout = () => {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+
+  // Navigation guard registered by child routes (e.g. Configure page).
+  // When set, intercepts in-app navigation to prompt the user about unsaved changes.
+  const navGuardRef = useRef<NavGuard | null>(null);
+  const registerNavGuard = (guard: NavGuard | null) => {
+    navGuardRef.current = guard;
+  };
+
+  /** Run the active nav guard (if any) and return whether navigation should proceed. */
+  const runNavGuard = async (): Promise<boolean> => {
+    const guard = navGuardRef.current;
+    if (!guard) return true;
+    try {
+      return await guard();
+    } catch {
+      return true;
+    }
+  };
 
   // Determine active menu item from URL
   const pathSegments = location.pathname.split("/");
@@ -78,8 +105,19 @@ const AgentLayout = () => {
     setLoading(false);
   };
 
-  const handleMenuItemClick = (itemPath: string) => {
+  const handleMenuItemClick = async (itemPath: string) => {
+    if (!(await runNavGuard())) return;
     navigate(`/agents/${agentId}/${itemPath}`);
+  };
+
+  const handleBackClick = async () => {
+    if (!(await runNavGuard())) return;
+    navigate("/dashboard");
+  };
+
+  const handleFeedbackClick = async () => {
+    if (!(await runNavGuard())) return;
+    setFeedbackOpen(true);
   };
 
   if (loading) {
@@ -118,7 +156,7 @@ const AgentLayout = () => {
         })}
         {/* Feedback - opens modal instead of navigating */}
         <button
-          onClick={() => setFeedbackOpen(true)}
+          onClick={handleFeedbackClick}
           className="w-10 h-10 rounded-lg flex items-center justify-center transition-colors text-muted-foreground hover:bg-secondary-foreground/10"
           title="Feedback"
         >
@@ -135,7 +173,7 @@ const AgentLayout = () => {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => navigate("/dashboard")}
+                onClick={handleBackClick}
                 className="mr-2"
               >
                 <svg width="24" height="20" viewBox="0 0 24 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -161,7 +199,7 @@ const AgentLayout = () => {
 
         {/* Page Content - Outlet renders the matched child route */}
         <div className="flex-1 flex overflow-auto">
-          <Outlet context={{ agent, setAgent } satisfies AgentContextType} />
+          <Outlet context={{ agent, setAgent, registerNavGuard } satisfies AgentContextType} />
         </div>
       </div>
 

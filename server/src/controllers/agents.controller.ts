@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -2328,6 +2329,168 @@ export const transcribeAudio = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+/**
+ * Validate voice credentials before save.
+ * - openai: always valid (server-side OpenAI key is configured globally)
+ * - elevenlabs: GET /v1/voices/{voice_id} with provided API key
+ * - comhubai: look up voice_models row by id; verify it's active and credentials work
+ */
+export const validateVoice = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    const {
+      ttsProvider,
+      openaiVoice,
+      elevenlabsApiKey,
+      elevenlabsVoiceId,
+      comhubaiVoiceModelId,
+    } = req.body || {};
+
+    if (!ttsProvider) {
+      res.status(400).json({ success: false, valid: false, error: 'ttsProvider is required' });
+      return;
+    }
+
+    if (ttsProvider === 'openai') {
+      const allowed = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+      if (openaiVoice && !allowed.includes(openaiVoice)) {
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: 'openai',
+          error: `Unknown OpenAI voice "${openaiVoice}".`,
+        });
+        return;
+      }
+      res.status(200).json({ success: true, valid: true, provider: 'openai' });
+      return;
+    }
+
+    // Resolve credentials for ComhubAI from the voice_models table
+    let apiKey: string | undefined = elevenlabsApiKey;
+    let voiceId: string | undefined = elevenlabsVoiceId;
+    let voiceName: string | undefined;
+
+    if (ttsProvider === 'comhubai') {
+      if (!comhubaiVoiceModelId) {
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: 'comhubai',
+          error: 'Please select a ComhubAI voice from the library.',
+        });
+        return;
+      }
+      const supabase = getSupabaseClient();
+      const { data: vm, error: vmErr } = await supabase
+        .from('voice_models')
+        .select('elevenlabs_api_key, elevenlabs_voice_id, name, is_active')
+        .eq('id', comhubaiVoiceModelId)
+        .single();
+      if (vmErr || !vm) {
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: 'comhubai',
+          error: 'The selected ComhubAI voice no longer exists.',
+        });
+        return;
+      }
+      if (!vm.is_active) {
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: 'comhubai',
+          error: `The voice "${vm.name}" is currently inactive.`,
+        });
+        return;
+      }
+      apiKey = vm.elevenlabs_api_key;
+      voiceId = vm.elevenlabs_voice_id;
+      voiceName = vm.name;
+    }
+
+    if (ttsProvider === 'elevenlabs' || ttsProvider === 'comhubai') {
+      if (!apiKey || !voiceId) {
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: ttsProvider,
+          error: 'Both API key and Voice ID are required.',
+        });
+        return;
+      }
+
+      try {
+        const response = await axios.get(
+          `https://api.elevenlabs.io/v1/voices/${voiceId}`,
+          {
+            headers: { 'xi-api-key': apiKey },
+            timeout: 10_000,
+            validateStatus: () => true,
+          }
+        );
+
+        if (response.status === 200 && response.data?.voice_id) {
+          res.status(200).json({
+            success: true,
+            valid: true,
+            provider: ttsProvider,
+            voice: {
+              voice_id: response.data.voice_id,
+              name: voiceName || response.data.name,
+              category: response.data.category,
+            },
+          });
+          return;
+        }
+
+        const status = response.status;
+        const apiMsg = response.data?.detail?.message || response.data?.detail || response.data?.message;
+        const friendly =
+          status === 401 ? 'Authentication failed — the ElevenLabs API key is invalid or has been revoked.'
+          : status === 404 ? `Voice not found — the voice ID "${voiceId}" does not exist on this ElevenLabs account.`
+          : status === 429 ? 'ElevenLabs quota exceeded or rate limited — try again later.'
+          : `ElevenLabs returned HTTP ${status}${apiMsg ? `: ${apiMsg}` : ''}`;
+
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: ttsProvider,
+          status,
+          error: friendly,
+        });
+        return;
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        res.status(200).json({
+          success: true,
+          valid: false,
+          provider: ttsProvider,
+          error: `Could not reach ElevenLabs: ${errMsg}`,
+        });
+        return;
+      }
+    }
+
+    res.status(400).json({ success: false, valid: false, error: `Unknown provider "${ttsProvider}"` });
+  } catch (error) {
+    logger.error('Voice validation failed', {
+      error: error instanceof Error ? error.message : error,
+    });
+    res.status(500).json({
+      success: false,
+      valid: false,
+      error: error instanceof Error ? error.message : 'Validation failed',
+    });
+  }
+};
+
 export default {
   getAgents,
   getAgent,
@@ -2348,4 +2511,5 @@ export default {
   getPublicVoiceModels,
   generateTTS,
   transcribeAudio,
+  validateVoice,
 };

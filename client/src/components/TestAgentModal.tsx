@@ -354,7 +354,30 @@ const TestAgentModal = ({
       };
       waitForAudioDone();
     },
-    onError: (error) => {
+    onError: (error, details) => {
+      // Fatal voice provider errors (bad ElevenLabs/ComhubAI key or voice ID):
+      // do NOT keep the call running. Surface a clear message and hang up.
+      if (details?.fatal) {
+        const providerLabel =
+          details.provider === "comhubai" ? "ComhubAI"
+          : details.provider === "elevenlabs" ? "ElevenLabs"
+          : "Voice provider";
+        addMessage("system", `⛔ ${providerLabel} error: ${error}`);
+        if (details.hint) {
+          addMessage("system", `💡 ${details.hint}`);
+        }
+        toast({
+          title: `${providerLabel} unavailable`,
+          description: error,
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        isLoadingRef.current = false;
+        if (isCallActiveRef.current) {
+          endCallRef.current();
+        }
+        return;
+      }
       addMessage("system", `⚠️ Error: ${error}`);
       setIsLoading(false);
       isLoadingRef.current = false;

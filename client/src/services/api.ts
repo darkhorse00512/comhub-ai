@@ -916,6 +916,31 @@ export const api = {
     }
   },
 
+  async validateVoice(payload: {
+    ttsProvider: "openai" | "elevenlabs" | "comhubai";
+    openaiVoice?: string;
+    elevenlabsApiKey?: string;
+    elevenlabsVoiceId?: string;
+    comhubaiVoiceModelId?: string;
+  }): Promise<ApiResponse<{ valid: boolean; provider: string; error?: string; voice?: { voice_id: string; name?: string; category?: string } }>> {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${API_BASE_URL}/agents/validate-voice`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok && !data?.valid) {
+        return { data: null, error: data?.error || "Voice validation failed" };
+      }
+      return { data, error: null };
+    } catch (error) {
+      console.error("Error validating voice:", error);
+      return { data: null, error: (error as Error).message };
+    }
+  },
+
   async generateAgentTTS(agentId: string, text: string): Promise<ArrayBuffer | null> {
     try {
       const headers = await getAuthHeaders();

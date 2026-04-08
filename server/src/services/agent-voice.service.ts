@@ -24,6 +24,25 @@ interface CachedVoiceSettings {
   expiresAt: number;
 }
 
+/**
+ * Thrown when the configured TTS provider (ElevenLabs / ComhubAI) fails.
+ * The call must end — we do NOT silently fall back to OpenAI, because the
+ * user explicitly chose this voice and an unannounced voice swap is worse
+ * than a clear error.
+ */
+export class TTSProviderError extends Error {
+  provider: 'elevenlabs' | 'comhubai';
+  voiceId?: string;
+  status?: number;
+  constructor(provider: 'elevenlabs' | 'comhubai', message: string, opts?: { voiceId?: string; status?: number }) {
+    super(message);
+    this.name = 'TTSProviderError';
+    this.provider = provider;
+    this.voiceId = opts?.voiceId;
+    this.status = opts?.status;
+  }
+}
+
 class AgentVoiceService {
   private supabase = getSupabaseClient();
 
@@ -165,16 +184,42 @@ class AgentVoiceService {
         return buffer;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        logger.error('ElevenLabs TTS failed, falling back to OpenAI', {
-          error: errMsg,
+        const status = (err as any)?.response?.status as number | undefined;
+        const providerLabel = voiceSettings.ttsProvider === 'comhubai' ? 'ComhubAI' : 'ElevenLabs';
+
+        let friendly: string;
+        if (status === 401) {
+          friendly = `${providerLabel} authentication failed — the API key is invalid or has been revoked.`;
+        } else if (status === 404) {
+          friendly = `${providerLabel} voice not found — the voice ID "${voiceSettings.elevenlabsVoiceId}" does not exist on this account.`;
+        } else if (status === 422) {
+          friendly = `${providerLabel} rejected the voice settings — please review your tuning values.`;
+        } else if (status === 429) {
+          friendly = `${providerLabel} quota exceeded or rate limited — try again later or upgrade your plan.`;
+        } else if (status) {
+          friendly = `${providerLabel} returned HTTP ${status}: ${errMsg}`;
+        } else {
+          friendly = `${providerLabel} TTS failed: ${errMsg}`;
+        }
+
+        logger.error('TTS provider failed — aborting call (no fallback)', {
+          provider: voiceSettings.ttsProvider,
           voiceId: voiceSettings.elevenlabsVoiceId,
+          status,
+          error: errMsg,
         });
-        this.lastTTSError = `ElevenLabs failed: ${errMsg}`;
+        this.lastTTSProvider = voiceSettings.ttsProvider;
+        this.lastTTSError = friendly;
+        throw new TTSProviderError(
+          voiceSettings.ttsProvider as 'elevenlabs' | 'comhubai',
+          friendly,
+          { voiceId: voiceSettings.elevenlabsVoiceId, status },
+        );
       }
     }
 
-    // Default / Fallback: OpenAI TTS
-    this.lastTTSProvider = 'openai-fallback';
+    // OpenAI is the explicitly chosen provider — only path that uses OpenAI now.
+    this.lastTTSProvider = 'openai';
     const voice = (voiceSettings?.openaiVoice as TTSVoice) || undefined;
     return ttsService.textToSpeech(text, voice, voiceSettings?.openaiSpeed);
   }
@@ -200,11 +245,29 @@ class AgentVoiceService {
           speed: voiceSettings.elevenlabsSpeed,
         });
       } catch (err) {
-        logger.error('ElevenLabs TTS stream failed, falling back to OpenAI stream', {
-          error: err instanceof Error ? err.message : err,
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const status = (err as any)?.response?.status as number | undefined;
+        const providerLabel = voiceSettings.ttsProvider === 'comhubai' ? 'ComhubAI' : 'ElevenLabs';
+        const friendly =
+          status === 401 ? `${providerLabel} authentication failed — the API key is invalid or has been revoked.` :
+          status === 404 ? `${providerLabel} voice not found — the voice ID "${voiceSettings.elevenlabsVoiceId}" does not exist on this account.` :
+          status === 429 ? `${providerLabel} quota exceeded or rate limited — try again later or upgrade your plan.` :
+          status ? `${providerLabel} returned HTTP ${status}: ${errMsg}` :
+          `${providerLabel} TTS failed: ${errMsg}`;
+
+        logger.error('TTS provider stream failed — aborting (no fallback)', {
+          provider: voiceSettings.ttsProvider,
           voiceId: voiceSettings.elevenlabsVoiceId,
+          status,
+          error: errMsg,
         });
-        // Fall through to OpenAI
+        this.lastTTSProvider = voiceSettings.ttsProvider;
+        this.lastTTSError = friendly;
+        throw new TTSProviderError(
+          voiceSettings.ttsProvider as 'elevenlabs' | 'comhubai',
+          friendly,
+          { voiceId: voiceSettings.elevenlabsVoiceId, status },
+        );
       }
     }
 

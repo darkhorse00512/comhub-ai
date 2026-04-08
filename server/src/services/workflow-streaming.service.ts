@@ -11,7 +11,7 @@
 
 import { Socket } from 'socket.io';
 import logger from '../utils/logger';
-import { agentVoiceService, ResolvedVoiceSettings } from './agent-voice.service';
+import { agentVoiceService, ResolvedVoiceSettings, TTSProviderError } from './agent-voice.service';
 import { WorkflowEngine, WorkflowMessage } from './workflow-engine.service';
 
 interface StreamingSession {
@@ -46,7 +46,13 @@ async function generateAndEmitAudio(
       index,
     });
   } catch (ttsErr) {
-    logger.warn('Streaming TTS failed', {
+    // For configured-provider failures (ElevenLabs / ComhubAI bad key/voice ID),
+    // do NOT swallow — propagate so the call ends with a clear error to the user.
+    if (ttsErr instanceof TTSProviderError) {
+      throw ttsErr;
+    }
+    // OpenAI fallback path failures: emit empty audio so the loop continues.
+    logger.warn('Streaming TTS failed (non-fatal)', {
       text: msg.text.substring(0, 50),
       error: ttsErr instanceof Error ? ttsErr.message : ttsErr,
     });
@@ -57,6 +63,26 @@ async function generateAndEmitAudio(
       type: msg.type,
       index,
     });
+  }
+}
+
+/** Emit a fatal voice error and tear down the session. */
+function emitFatalVoiceError(socket: Socket, sessionId: string | null, err: TTSProviderError): void {
+  socket.emit('workflow:error', {
+    fatal: true,
+    code: 'TTS_PROVIDER_ERROR',
+    provider: err.provider,
+    voiceId: err.voiceId,
+    status: err.status,
+    error: err.message,
+    hint: err.status === 401
+      ? 'Open the agent Configure → Voice & Audio tab and update the API key.'
+      : err.status === 404
+      ? 'Open the agent Configure → Voice & Audio tab and verify the Voice ID.'
+      : 'Check your voice provider configuration in the agent settings.',
+  });
+  if (sessionId) {
+    streamingSessions.delete(sessionId);
   }
 }
 
@@ -170,6 +196,16 @@ export async function handleStreamingMessage(
     }
 
   } catch (error) {
+    if (error instanceof TTSProviderError) {
+      logger.error('Voice provider error during call — ending call', {
+        sessionId,
+        provider: error.provider,
+        status: error.status,
+        message: error.message,
+      });
+      emitFatalVoiceError(socket, sessionId, error);
+      return;
+    }
     logger.error('Streaming workflow message failed', {
       sessionId,
       error: error instanceof Error ? error.message : error,
@@ -235,6 +271,16 @@ export async function startStreamingSession(
 
     return sessionId;
   } catch (error) {
+    if (error instanceof TTSProviderError) {
+      logger.error('Voice provider error during session start — call cannot begin', {
+        agentId,
+        provider: error.provider,
+        status: error.status,
+        message: error.message,
+      });
+      emitFatalVoiceError(socket, null, error);
+      return null;
+    }
     logger.error('Failed to start streaming session', {
       agentId,
       error: error instanceof Error ? error.message : error,

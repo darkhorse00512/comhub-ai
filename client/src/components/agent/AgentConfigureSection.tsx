@@ -38,6 +38,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Globe,
@@ -57,6 +59,7 @@ import {
   Pause,
   Check,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/services/api";
@@ -68,9 +71,12 @@ interface Agent {
   config: any;
 }
 
+type NavGuard = () => boolean | Promise<boolean>;
+
 interface AgentConfigureSectionProps {
   agent: Agent;
   onAgentUpdate: (agent: Agent) => void;
+  registerNavGuard?: (guard: NavGuard | null) => void;
 }
 
 const InfoTooltip = ({ text }: { text: string }) => (
@@ -86,7 +92,7 @@ const InfoTooltip = ({ text }: { text: string }) => (
   </TooltipProvider>
 );
 
-const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionProps) => {
+const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: AgentConfigureSectionProps) => {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
 
@@ -135,6 +141,33 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
 
   const [showApiKey, setShowApiKey] = useState(false);
 
+  // Snapshot of the saved baseline so we can detect unsaved changes.
+  // Re-set after each successful save.
+  const initialSnapshotRef = useRef<string>(
+    JSON.stringify({ agentName, agentDescription, settings })
+  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const isDirty =
+    JSON.stringify({ agentName, agentDescription, settings }) !== initialSnapshotRef.current;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+
+  // Confirm-leave dialog state
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const leaveResolverRef = useRef<((proceed: boolean) => void) | null>(null);
+  const askToLeave = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      leaveResolverRef.current = resolve;
+      setLeaveDialogOpen(true);
+    });
+  };
+  const handleLeaveDecision = (proceed: boolean) => {
+    setLeaveDialogOpen(false);
+    const resolver = leaveResolverRef.current;
+    leaveResolverRef.current = null;
+    resolver?.(proceed);
+  };
+
   // ComhubAI Voice Library
   const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
   const [voiceModels, setVoiceModels] = useState<any[]>([]);
@@ -143,6 +176,32 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
   const [playingModelId, setPlayingModelId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [hoverTooltip, setHoverTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  // Register the navigation guard on mount; the layout calls it before any in-app navigation.
+  useEffect(() => {
+    if (!registerNavGuard) return;
+    registerNavGuard(async () => {
+      if (!isDirtyRef.current) return true;
+      return await askToLeave();
+    });
+    return () => {
+      registerNavGuard(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerNavGuard]);
+
+  // Browser-level guard for tab close, refresh, and external navigation.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirtyRef.current) return;
+      e.preventDefault();
+      // Modern browsers ignore the custom string but show their own dialog.
+      e.returnValue = "You have unsaved configuration changes.";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
 
   // Load selected voice model info on mount if comhubai is selected
   useEffect(() => {
@@ -211,6 +270,33 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
     }
 
     setSaving(true);
+
+    // Validate the selected voice with the provider before persisting.
+    const validation = await api.validateVoice({
+      ttsProvider: settings.ttsProvider as "openai" | "elevenlabs" | "comhubai",
+      openaiVoice: settings.openaiVoice,
+      elevenlabsApiKey: settings.elevenlabsApiKey,
+      elevenlabsVoiceId: settings.elevenlabsVoiceId,
+      comhubaiVoiceModelId: settings.comhubaiVoiceModelId,
+    });
+
+    if (validation.error || validation.data?.valid === false) {
+      setSaving(false);
+      const providerLabel =
+        settings.ttsProvider === "comhubai" ? "ComhubAI"
+        : settings.ttsProvider === "elevenlabs" ? "ElevenLabs"
+        : "OpenAI";
+      toast({
+        title: `${providerLabel} voice could not be verified`,
+        description:
+          validation.data?.error ||
+          validation.error ||
+          "Please check your voice settings and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const updatedConfig = {
       ...agent.config,
       settings: {
@@ -251,6 +337,13 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
         description: agentDescription.trim(),
         config: updatedConfig,
       });
+      // Refresh the dirty-tracking baseline so the form is "clean" again.
+      initialSnapshotRef.current = JSON.stringify({
+        agentName: agentName.trim(),
+        agentDescription: agentDescription.trim(),
+        settings: { ...settings, ...updatedConfig.settings },
+      });
+      isDirtyRef.current = false;
       toast({
         title: "Settings saved",
         description: "Agent configuration updated successfully.",
@@ -272,10 +365,18 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               Manage your agent's settings
             </p>
           </div>
-          <Button onClick={handleSave} disabled={saving} className="gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {saving ? "Saving..." : "Save Configuration"}
-          </Button>
+          <div className="flex items-center gap-3">
+            {isDirty && !saving && (
+              <span className="flex items-center gap-1.5 text-xs text-amber-500">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Unsaved changes
+              </span>
+            )}
+            <Button onClick={handleSave} disabled={saving || !isDirty} className="gap-2">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? "Saving..." : "Save Configuration"}
+            </Button>
+          </div>
         </div>
 
         <Tabs defaultValue="general" className="w-full">
@@ -1226,6 +1327,40 @@ const AgentConfigureSection = ({ agent, onAgentUpdate }: AgentConfigureSectionPr
               })}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Unsaved-changes confirmation dialog */}
+      <Dialog
+        open={leaveDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) handleLeaveDecision(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Unsaved changes
+            </DialogTitle>
+            <DialogDescription>
+              You have unsaved configuration changes. If you leave now, they will be lost.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => handleLeaveDecision(false)}
+            >
+              Stay on page
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleLeaveDecision(true)}
+            >
+              Discard & leave
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

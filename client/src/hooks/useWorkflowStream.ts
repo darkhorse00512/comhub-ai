@@ -22,6 +22,15 @@ import { useAuth } from "./useAuth";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
 
+export interface WorkflowErrorDetails {
+  fatal?: boolean;
+  code?: string;
+  provider?: string;
+  voiceId?: string;
+  status?: number;
+  hint?: string;
+}
+
 export interface StreamAudioMessage {
   text: string;
   nodeLabel?: string;
@@ -44,7 +53,7 @@ interface UseWorkflowStreamOptions {
   onAnalysis?: (data: {
     collectedFields: Record<string, any>;
   }) => void;
-  onError?: (error: string) => void;
+  onError?: (error: string, details?: WorkflowErrorDetails) => void;
   onStarted?: (data: {
     sessionId: string;
     isComplete: boolean;
@@ -114,7 +123,14 @@ export function useWorkflowStream(opts: UseWorkflowStreamOptions) {
     });
 
     socket.on("workflow:error", (data) => {
-      optsRef.current.onError?.(data.error);
+      optsRef.current.onError?.(data.error, {
+        fatal: data.fatal,
+        code: data.code,
+        provider: data.provider,
+        voiceId: data.voiceId,
+        status: data.status,
+        hint: data.hint,
+      });
     });
 
     socket.on("workflow:config", (data) => {
