@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -92,18 +92,11 @@ const InfoTooltip = ({ text }: { text: string }) => (
   </TooltipProvider>
 );
 
-const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: AgentConfigureSectionProps) => {
-  const { toast } = useToast();
-  const [saving, setSaving] = useState(false);
-
+// Build the editable form-state from a persisted agent record. Numeric fields
+// are kept as strings while editing so users can clear/retype freely.
+const deriveSettingsFromAgent = (agent: Agent) => {
   const existingSettings = agent.config?.settings || {};
-
-  // Agent info
-  const [agentName, setAgentName] = useState(agent.name || "");
-  const [agentDescription, setAgentDescription] = useState(agent.description || "");
-
-  // Existing settings
-  const [settings, setSettings] = useState({
+  return {
     language: existingSettings.language || "en-US",
     ttsProvider: existingSettings.ttsProvider || "openai",
     openaiVoice: existingSettings.openaiVoice || "alloy",
@@ -137,18 +130,37 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
     elevenlabsStyle: existingSettings.elevenlabsStyle ?? 0.0,
     elevenlabsUseSpeakerBoost: existingSettings.elevenlabsUseSpeakerBoost ?? true,
     elevenlabsSpeed: existingSettings.elevenlabsSpeed ?? 1.0,
-  });
+  };
+};
+
+const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: AgentConfigureSectionProps) => {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
+  // Agent info
+  const [agentName, setAgentName] = useState(agent.name || "");
+  const [agentDescription, setAgentDescription] = useState(agent.description || "");
+
+  // Existing settings — initialised from the persisted agent.
+  const [settings, setSettings] = useState(() => deriveSettingsFromAgent(agent));
 
   const [showApiKey, setShowApiKey] = useState(false);
 
   // Snapshot of the saved baseline so we can detect unsaved changes.
-  // Re-set after each successful save.
-  const initialSnapshotRef = useRef<string>(
-    JSON.stringify({ agentName, agentDescription, settings })
+  // Re-set after each successful save. We use a state value (not just a ref)
+  // for the snapshot so re-renders pick up the new baseline immediately.
+  const buildSnapshot = (n: string, d: string, s: typeof settings) =>
+    JSON.stringify({ agentName: n.trim(), agentDescription: d.trim(), settings: s });
+
+  const [savedSnapshot, setSavedSnapshot] = useState<string>(() =>
+    buildSnapshot(agentName, agentDescription, settings)
   );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const isDirty =
-    JSON.stringify({ agentName, agentDescription, settings }) !== initialSnapshotRef.current;
+
+  const currentSnapshot = useMemo(
+    () => buildSnapshot(agentName, agentDescription, settings),
+    [agentName, agentDescription, settings]
+  );
+  const isDirty = currentSnapshot !== savedSnapshot;
   const isDirtyRef = useRef(isDirty);
   isDirtyRef.current = isDirty;
 
@@ -176,6 +188,23 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
   const [playingModelId, setPlayingModelId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [hoverTooltip, setHoverTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  // When the parent swaps in a different agent (e.g. user navigates between agents),
+  // re-hydrate the form from the new record and reset the dirty baseline.
+  // We key on agent.id so this only fires on a real agent switch, not on every
+  // parent re-render that creates a new agent object reference.
+  const lastAgentIdRef = useRef(agent.id);
+  useEffect(() => {
+    if (lastAgentIdRef.current === agent.id) return;
+    lastAgentIdRef.current = agent.id;
+    const freshSettings = deriveSettingsFromAgent(agent);
+    setAgentName(agent.name || "");
+    setAgentDescription(agent.description || "");
+    setSettings(freshSettings);
+    setSavedSnapshot(buildSnapshot(agent.name || "", agent.description || "", freshSettings));
+    setSelectedVoiceModel(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id]);
 
   // Register the navigation guard on mount; the layout calls it before any in-app navigation.
   useEffect(() => {
@@ -205,11 +234,11 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
 
   // Load selected voice model info on mount if comhubai is selected
   useEffect(() => {
-    if (settings.ttsProvider === "comhubai" && existingSettings.comhubaiVoiceModelId && !selectedVoiceModel) {
+    if (settings.ttsProvider === "comhubai" && settings.comhubaiVoiceModelId && !selectedVoiceModel) {
       (async () => {
         const result = await api.getPublicVoiceModels();
         if (result.data) {
-          const model = result.data.find((m: any) => m.id === existingSettings.comhubaiVoiceModelId);
+          const model = result.data.find((m: any) => m.id === settings.comhubaiVoiceModelId);
           if (model) setSelectedVoiceModel(model);
         }
       })();
@@ -260,7 +289,10 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
   };
 
   const handleSave = async () => {
-    if (!agentName.trim()) {
+    const trimmedName = agentName.trim();
+    const trimmedDescription = agentDescription.trim();
+
+    if (!trimmedName) {
       toast({
         title: "Error",
         description: "Agent name is required.",
@@ -318,8 +350,8 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
     };
 
     const result = await api.updateAgent(agent.id, {
-      name: agentName.trim(),
-      description: agentDescription.trim(),
+      name: trimmedName,
+      description: trimmedDescription,
       config: updatedConfig,
     });
     setSaving(false);
@@ -331,18 +363,21 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
         variant: "destructive",
       });
     } else {
+      // Normalize state to the trimmed values so the snapshot baseline below
+      // matches what the user actually sees in the inputs.
+      if (trimmedName !== agentName) setAgentName(trimmedName);
+      if (trimmedDescription !== agentDescription) setAgentDescription(trimmedDescription);
+
       onAgentUpdate({
         ...agent,
-        name: agentName.trim(),
-        description: agentDescription.trim(),
+        name: trimmedName,
+        description: trimmedDescription,
         config: updatedConfig,
       });
       // Refresh the dirty-tracking baseline so the form is "clean" again.
-      initialSnapshotRef.current = JSON.stringify({
-        agentName: agentName.trim(),
-        agentDescription: agentDescription.trim(),
-        settings: { ...settings, ...updatedConfig.settings },
-      });
+      // IMPORTANT: snapshot must mirror the live form state (which keeps numeric
+      // fields as strings while editing), not the persisted/converted config.
+      setSavedSnapshot(buildSnapshot(trimmedName, trimmedDescription, settings));
       isDirtyRef.current = false;
       toast({
         title: "Settings saved",
@@ -1067,7 +1102,13 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                         if (value === "auto") {
                           setSettings({ ...settings, speechTimeout: "auto" });
                         } else {
-                          setSettings({ ...settings, speechTimeout: settings.silenceTimeout || "2" });
+                          // When switching to custom, default to a sensible numeric
+                          // value — never reuse "auto" from silenceTimeout.
+                          const fallback =
+                            settings.silenceTimeout && settings.silenceTimeout !== "auto"
+                              ? settings.silenceTimeout
+                              : "2";
+                          setSettings({ ...settings, speechTimeout: fallback });
                         }
                       }}
                     >
