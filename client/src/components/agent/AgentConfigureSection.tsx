@@ -301,6 +301,37 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
       return;
     }
 
+    // ── Client-side validation per provider ──
+    if (settings.ttsProvider === "comhubai" && !settings.comhubaiVoiceModelId) {
+      toast({
+        title: "Voice required",
+        description: "Please select a voice from the ComhubAI Voice Library before saving.",
+        variant: "destructive",
+      });
+      // Open the voice library so the user can pick one immediately
+      openVoiceLibrary();
+      return;
+    }
+
+    if (settings.ttsProvider === "elevenlabs") {
+      if (!settings.elevenlabsApiKey.trim()) {
+        toast({
+          title: "API Key required",
+          description: "Please enter your ElevenLabs API key before saving.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!settings.elevenlabsVoiceId.trim()) {
+        toast({
+          title: "Voice ID required",
+          description: "Please enter an ElevenLabs Voice ID before saving.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setSaving(true);
 
     // Validate the selected voice with the provider before persisting.
@@ -752,7 +783,14 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                       value={settings.ttsProvider}
                       onValueChange={(value) => {
                         setSettings({ ...settings, ttsProvider: value });
-                        if (value !== "comhubai") {
+                        if (value === "comhubai") {
+                          // Automatically open the voice library so the user
+                          // picks a voice right away.
+                          if (!settings.comhubaiVoiceModelId) {
+                            // Small delay so the UI renders the comhubai section first
+                            setTimeout(() => openVoiceLibrary(), 50);
+                          }
+                        } else {
                           setSelectedVoiceModel(null);
                         }
                       }}
@@ -770,7 +808,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
 
                   {settings.ttsProvider === "comhubai" && (
                     <div className="space-y-4">
-                      {selectedVoiceModel && (
+                      {selectedVoiceModel ? (
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
                           {selectedVoiceModel.image_url ? (
                             <img
@@ -806,6 +844,11 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                             <X className="w-4 h-4" />
                           </Button>
                         </div>
+                      ) : (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span className="text-sm">No voice selected. Please choose a voice from the library below.</span>
+                        </div>
                       )}
                       <Button
                         variant="outline"
@@ -813,7 +856,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                         onClick={openVoiceLibrary}
                       >
                         <Music className="w-4 h-4" />
-                        {selectedVoiceModel ? "Change Voice" : "ComhubAI Voice Library"}
+                        {selectedVoiceModel ? "Change Voice" : "Select from Voice Library"}
                       </Button>
                     </div>
                   )}
@@ -1005,10 +1048,22 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
 
                   {settings.ttsProvider === "elevenlabs" && (
                     <div className="space-y-4 p-4 rounded-lg bg-secondary/30 border border-border">
+                      {(!settings.elevenlabsApiKey.trim() || !settings.elevenlabsVoiceId.trim()) && (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span className="text-sm">
+                            {!settings.elevenlabsApiKey.trim() && !settings.elevenlabsVoiceId.trim()
+                              ? "API Key and Voice ID are required."
+                              : !settings.elevenlabsApiKey.trim()
+                              ? "API Key is required."
+                              : "Voice ID is required."}
+                          </span>
+                        </div>
+                      )}
                       <div className="space-y-2">
                         <Label className="flex items-center gap-1.5">
                           <Key className="w-3.5 h-3.5" />
-                          ElevenLabs API Key
+                          ElevenLabs API Key <span className="text-destructive">*</span>
                         </Label>
                         <div className="relative">
                           <Input
@@ -1035,7 +1090,7 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Voice ID</Label>
+                        <Label>Voice ID <span className="text-destructive">*</span></Label>
                         <Input
                           placeholder="Enter ElevenLabs voice ID"
                           value={settings.elevenlabsVoiceId}
