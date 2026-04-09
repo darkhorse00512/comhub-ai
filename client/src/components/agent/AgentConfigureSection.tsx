@@ -784,12 +784,8 @@ const AgentConfigureSection = ({ agent, onAgentUpdate, registerNavGuard }: Agent
                       onValueChange={(value) => {
                         setSettings({ ...settings, ttsProvider: value });
                         if (value === "comhubai") {
-                          // Automatically open the voice library so the user
-                          // picks a voice right away.
-                          if (!settings.comhubaiVoiceModelId) {
-                            // Small delay so the UI renders the comhubai section first
-                            setTimeout(() => openVoiceLibrary(), 50);
-                          }
+                          // Immediately open the voice library so the user picks a voice.
+                          openVoiceLibrary();
                         } else {
                           setSelectedVoiceModel(null);
                         }
